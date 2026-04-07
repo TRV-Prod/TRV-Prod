@@ -880,7 +880,7 @@ const S={
   authScreen:'login',
 
   // ── App state ──
-  tab:'structura',
+  tab:window.innerWidth<768?'planificare':'structura',
   bomData:null,bowData:null,poData:null,obData:null,  // ob = Order Book
   bomIdx:null,bowIdx:null,
   stockIdx:null,
@@ -906,7 +906,8 @@ const S={
   zoom:{structura:100, stocuri:100, fisiere:100, orderbook:100, rapoarte:100, planificare:100},
   reportObs:{},
   eficientaPlan:100,
-  wcAvailHours:{},   // wcName -> hours/week (user input, persisted)
+  wcAvailHours:{},
+  wcLoadMode:'wip',  // 'wip' | 'total'
   wcSetupData:null,   // parsed Workcenter_Setup rows
   wcSetupIdx:null,    // wcName → {prodTeam, wcType}
   planData:new Map(),
@@ -4299,24 +4300,43 @@ function renderPlanPage(wrap){
 function calcWcLoading(){
   if(!S.planData.size||!S.bowIdx||!S.bomIdx) return new Map();
   const eff=(S.eficientaPlan||100)/100;
-  const byWC=new Map(); // wcName -> {runMin, setupMin, products:[{itemNo,qty,min}]}
+  const byWC=new Map(); // wcName -> {runMin,setupMin,totalMin, runMinTotal,setupMinTotal,totalMinFull, products}
 
   for(const [itemNo,plan] of S.planData){
     const qty=plan.totalQty;
     const needs=S.stockIdx?calcNeeds(itemNo,qty):null;
+    // WIP-aware (with stock)
     const exec=calcExecTime(itemNo,qty,needs);
-    // exec.byWC has runMin/setupMin per wc (before efficiency)
+    // Total (no stock deduction)
+    const execTotal=calcTotalExecTime(itemNo,qty);
+
     for(const [wc,t] of exec.byWC){
-      const totalMin=(t.runMin+t.setupMin)/eff;
-      if(!byWC.has(wc)) byWC.set(wc,{runMin:0,setupMin:0,totalMin:0,products:[]});
+      const wipMin=(t.runMin+t.setupMin)/eff;
+      const totRaw=execTotal.byWC.get(wc)||{runMin:0,setupMin:0};
+      const totMin=(totRaw.runMin+totRaw.setupMin)/eff;
+      if(!byWC.has(wc)) byWC.set(wc,{runMin:0,setupMin:0,totalMin:0,runMinFull:0,setupMinFull:0,totalMinFull:0,products:[]});
       const e=byWC.get(wc);
       e.runMin+=t.runMin/eff;
       e.setupMin+=t.setupMin/eff;
-      e.totalMin+=totalMin;
-      e.products.push({itemNo,qty,min:totalMin});
+      e.totalMin+=wipMin;
+      e.runMinFull+=totRaw.runMin/eff;
+      e.setupMinFull+=totRaw.setupMin/eff;
+      e.totalMinFull+=totMin;
+      e.products.push({itemNo,qty,min:wipMin,minFull:totMin});
+    }
+    // Also include WCs that appear in total but not in WIP-aware
+    for(const [wc,t] of execTotal.byWC){
+      if(!exec.byWC.has(wc)){
+        const totMin=(t.runMin+t.setupMin)/eff;
+        if(!byWC.has(wc)) byWC.set(wc,{runMin:0,setupMin:0,totalMin:0,runMinFull:0,setupMinFull:0,totalMinFull:0,products:[]});
+        const e=byWC.get(wc);
+        e.runMinFull+=t.runMin/eff;
+        e.setupMinFull+=t.setupMin/eff;
+        e.totalMinFull+=totMin;
+        e.products.push({itemNo,qty,min:0,minFull:totMin});
+      }
     }
   }
-  // Sort by totalMin desc
   return new Map([...byWC.entries()].sort((a,b)=>b[1].totalMin-a[1].totalMin));
 }
 
@@ -4337,18 +4357,33 @@ function renderWcLoadPanel(container){
 
   // Toolbar info
   const tb=dv('wc-load-toolbar');
-  tb.appendChild(sp('',`Plan: ${S.planData.size} produse · Eficienta: ${S.eficientaPlan}% · Ore disponibile/saptamana per WC (salariati × 8h × schimburi × 5 zile)`));
+  // Toolbar
+  const tb=dv('wc-load-toolbar');
+  tb.appendChild(sp('',`Plan: ${S.planData.size} produse · Eficienta: ${S.eficientaPlan}%`));
+
+  // Time mode selector
+  const modeSel=el('select','stk-sel');modeSel.style.marginLeft='12px';
+  [['wip','Cu stoc WIP (recomandat)'],['total','Fara stoc (timp total)']].forEach(([v,l])=>{
+    const o=el('option');o.value=v;o.textContent=l;if((S.wcLoadMode||'wip')===v)o.selected=true;modeSel.appendChild(o);
+  });
+  modeSel.addEventListener('change',e=>{S.wcLoadMode=e.target.value;renderWcLoadPanel(container);});
+  tb.appendChild(modeSel);
+
+  const useWip=(S.wcLoadMode||'wip')==='wip';
+
   const exportBtn=el('button','tbtn');exportBtn.innerHTML='⬇ Export Excel';exportBtn.style.marginLeft='auto';
-  exportBtn.addEventListener('click',()=>exportWcLoad(wcData));
+  exportBtn.addEventListener('click',()=>exportWcLoad(wcData,useWip));
   tb.appendChild(exportBtn);
   container.appendChild(tb);
 
   const tw=dv('wc-load-table-wrap');
   const tbl=el('table','wc-load-table');
 
-  // Header
   const thead=el('thead');const hr=el('tr');
-  ['Workcenter','Tip','Prod Team','Necesar (h)','Run (h)','Setup (h)','Disponibil (h/sapt.)','Grad incarcare','Top produse'].forEach(h=>{
+  ['Workcenter','Tip','Prod Team',
+    useWip?'Necesar WIP (h)':'Necesar Total (h)',
+    'Run (h)','Setup (h)','Total fara stoc (h)',
+    'Disponibil (h/sapt.)','Grad incarcare','Top produse'].forEach(h=>{
     const th=el('th');th.textContent=h;hr.appendChild(th);
   });
   thead.appendChild(hr);tbl.appendChild(thead);
@@ -4357,11 +4392,13 @@ function renderWcLoadPanel(container){
   let debounceT=null;
 
   for(const [wc,d] of wcData){
-    const needH=d.totalMin/60;
+    const needH=(useWip?d.totalMin:d.totalMinFull)/60;
+    const runH=(useWip?d.runMin:d.runMinFull)/60;
+    const setupH=(useWip?d.setupMin:d.setupMinFull)/60;
+    const totalFullH=d.totalMinFull/60;
     const wcMeta=S.wcSetupIdx?.[wc]||null;
     const prodTeam=wcMeta?.prodTeam||0;
     const wcType=wcMeta?.wcType||'';
-    // Auto-fill availH from prodTeam if not manually set
     const autoAvailH=prodTeam>0?8*5*prodTeam:0;
     if(prodTeam>0&&!S.wcAvailHours[wc])S.wcAvailHours[wc]=autoAvailH;
     const availH=parseFloat(S.wcAvailHours[wc])||autoAvailH;
@@ -4369,24 +4406,17 @@ function renderWcLoadPanel(container){
     const cls=pct===null?'':pct<=80?'ok':pct<=100?'warn':'over';
 
     const tr=el('tr');
-
-    // WC name
     const tdName=el('td');tdName.appendChild(sp('',wc));tr.appendChild(tdName);
-
-    // WC Type
     const tdType=el('td');tdType.style.cssText='font-size:10px;color:var(--text3)';tdType.textContent=wcType.replace(/^\d+ /,'');tr.appendChild(tdType);
-
-    // Prod Team
     const tdPT=el('td');tdPT.style.cssText='text-align:center;font-family:Arial,monospace;font-weight:700';tdPT.textContent=prodTeam||'—';tr.appendChild(tdPT);
-
-    // Necesar h
     const tdNeed=el('td');tdNeed.appendChild(sp('wc-num',needH.toFixed(1)+'h'));tr.appendChild(tdNeed);
-
-    // Run h
-    const tdRun=el('td');tdRun.appendChild(sp('wc-num',(d.runMin/60).toFixed(1)+'h'));tr.appendChild(tdRun);
-
-    // Setup h
-    const tdSetup=el('td');tdSetup.appendChild(sp('wc-num',(d.setupMin/60).toFixed(1)+'h'));tr.appendChild(tdSetup);
+    const tdRun=el('td');tdRun.appendChild(sp('wc-num',runH.toFixed(1)+'h'));tr.appendChild(tdRun);
+    const tdSetup=el('td');tdSetup.appendChild(sp('wc-num',setupH.toFixed(1)+'h'));tr.appendChild(tdSetup);
+    // Total fara stoc column
+    const tdFull=el('td');
+    const fullSpan=sp('wc-num',totalFullH.toFixed(1)+'h');
+    if(useWip&&d.totalMinFull>d.totalMin)fullSpan.style.cssText='color:var(--text3);font-size:10px';
+    tdFull.appendChild(fullSpan);tr.appendChild(tdFull);
 
     // Disponibil input
     const tdAvail=el('td');
@@ -4450,17 +4480,20 @@ function renderWcLoadPanel(container){
   tbl.appendChild(tbody);tw.appendChild(tbl);container.appendChild(tw);
 }
 
-function exportWcLoad(wcData){
+function exportWcLoad(wcData,useWip){
   const rows=[];
   for(const [wc,d] of wcData){
-    const needH=d.totalMin/60;
+    const needH=(useWip?d.totalMin:d.totalMinFull)/60;
+    const runH=(useWip?d.runMin:d.runMinFull)/60;
+    const setupH=(useWip?d.setupMin:d.setupMinFull)/60;
     const availH=parseFloat(S.wcAvailHours[wc])||0;
     const pct=availH>0?Math.round((needH/availH)*100):null;
     rows.push({
       'Workcenter':wc,
-      'Necesar (h)':+needH.toFixed(2),
-      'Run (h)':+(d.runMin/60).toFixed(2),
-      'Setup (h)':+(d.setupMin/60).toFixed(2),
+      [useWip?'Necesar cu stoc WIP (h)':'Necesar total (h)']:+needH.toFixed(2),
+      'Total fara stoc (h)':+(d.totalMinFull/60).toFixed(2),
+      'Run (h)':+runH.toFixed(2),
+      'Setup (h)':+setupH.toFixed(2),
       'Disponibil (h/sapt)':availH||'',
       'Grad incarcare (%)':pct!==null?pct:'',
     });
@@ -4468,7 +4501,7 @@ function exportWcLoad(wcData){
   if(!rows.length){alert('Nu exista date de exportat.');return;}
   const wb=XLSX.utils.book_new();
   const ws=XLSX.utils.json_to_sheet(rows);
-  ws['!cols']=[{wch:28},{wch:14},{wch:12},{wch:12},{wch:18},{wch:18}];
+  ws['!cols']=[{wch:28},{wch:22},{wch:20},{wch:12},{wch:12},{wch:18},{wch:18}];
   XLSX.utils.book_append_sheet(wb,ws,'Incarcare WC');
   XLSX.writeFile(wb,`Incarcare_WC_${new Date().toISOString().slice(0,10)}.xlsx`);
 }
@@ -5994,4 +6027,3 @@ autoLoad();
 </script>
 </body>
 </html>
-
