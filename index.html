@@ -5448,10 +5448,7 @@ function renderSubcomponentePanel(container){
   si.addEventListener('input',e=>{f.q=e.target.value;rebuild();});
   tb.appendChild(si);
 
-  // "Doar necesare" toggle
-  const onlyBtn=el('button',`stk-toggle${f.onlyNeeded?' on':''}`);onlyBtn.textContent='⚠ Doar necesare';
-  onlyBtn.addEventListener('click',()=>{f.onlyNeeded=!f.onlyNeeded;onlyBtn.className=`stk-toggle${f.onlyNeeded?' on':''}`;rebuild();});
-  tb.appendChild(onlyBtn);
+  // No "Doar necesare" button — when WC is selected, only rows with dePrelucrat>0 shown automatically
 
   // WC filter
   const wcDropBtn=el('button','tbtn');
@@ -5523,6 +5520,14 @@ function renderSubcomponentePanel(container){
   countBar.style.cssText='padding:5px 14px;background:#f0fdf4;border-bottom:1px solid #86efac;font-size:11px;color:#15803d;font-weight:600;flex-shrink:0';
   container.appendChild(countBar);
 
+  // Legend (only when no WC filter active)
+  const legendBar=dv('');legendBar.id='disp-legend';
+  legendBar.style.cssText='padding:3px 14px;background:#fafafa;border-bottom:1px solid var(--border2);font-size:10px;color:var(--text3);flex-shrink:0;display:flex;gap:16px';
+  const leg1=sp('','');leg1.style.cssText='opacity:0.45';leg1.textContent='██ Randuri estompate = De prelucrat = 0 (operatie finalizata)';
+  const leg2=sp('','');leg2.style.opacity='1';leg2.textContent='██ Randuri normale = necesita prelucrare';
+  legendBar.appendChild(leg1);legendBar.appendChild(leg2);
+  container.appendChild(legendBar);
+
   const zoomArea=dv('');zoomArea.id='zoom-area-rapoarte';
   zoomArea.style.cssText='flex:1;overflow:hidden;display:flex;flex-direction:column';
   zoomArea.style.zoom=(S.zoom.rapoarte/100).toString();
@@ -5534,13 +5539,17 @@ function renderSubcomponentePanel(container){
     return allData.filter(r=>{
       if(f.fpFilter&&f.fpFilter!=='all'&&r.itemNo!==f.fpFilter)return false;
       if(f.wcFilter&&r.wcName!==f.wcFilter)return false;
-      if(f.onlyNeeded&&r.dePrelucrat<=0)return false;
+      if(f.wcFilter&&r.dePrelucrat<=0)return false;  // auto-hide finished ops when WC selected
       if(q&&!r.itemNo.toLowerCase().includes(q)&&!r.matNo.toLowerCase().includes(q)&&!r.matName.toLowerCase().includes(q)&&!r.wcName.toLowerCase().includes(q))return false;
       return true;
     });
   }
 
-  function rebuild(){buildTable();updateCount();}
+  function rebuild(){
+    buildTable();updateCount();
+    const leg=document.getElementById('disp-legend');
+    if(leg)leg.style.display=f.wcFilter?'none':'flex';
+  }
   function updateCount(){
     const rows=getFilteredRows();
     const totalTime=rows.reduce((s,r)=>s+r.execTimeMin,0);
@@ -5584,19 +5593,21 @@ function renderSubcomponentePanel(container){
     });
     thead.appendChild(hr);tbl.appendChild(thead);
     const tbody=el('tbody');
-    let lastFP='',lastMat='';
+    let lastFP='';
     for(const r of rows){
-      const isFPHeader=r.itemNo!==lastFP;const isMatHeader=isFPHeader||r.matNo!==lastMat;
-      if(isFPHeader){lastFP=r.itemNo;lastMat='';}
-      if(isMatHeader)lastMat=r.matNo;
+      const isFPHeader=r.itemNo!==lastFP;
+      if(isFPHeader)lastFP=r.itemNo;
       const done=r.dePrelucrat<=0;
-      const tr=el('tr');tr.style.cssText=done?'background:#f0fdf4':'';
+      const tr=el('tr');
+      if(isFPHeader)tr.style.borderTop='2px solid var(--accent)';
+      // Done rows: lighter opacity (grey out) — not needed when WC filter active (they're hidden)
+      if(done)tr.style.cssText=(tr.style.cssText||'')+'opacity:0.45;';
       vc.forEach(colId=>{
         const td=el('td');td.style.width=(f.colWidths[colId]||100)+'px';
         td.style.cssText+='overflow:hidden;text-overflow:ellipsis;white-space:nowrap;vertical-align:middle;padding:5px 8px;border-bottom:1px solid var(--border2);border-right:1px solid var(--border2);font-size:12px';
         if(colId==='prio'){const s=sp('');s.style.cssText='font-weight:800;font-family:Arial,monospace;color:#92400e';s.textContent=r.prio;td.appendChild(s);}
-        else if(colId==='itemNo'){const s=sp('stk-code',r.itemNo);if(!isFPHeader)s.style.opacity='.3';td.appendChild(s);}
-        else if(colId==='matNo'){const s=sp('stk-code',r.matNo===r.itemNo?'(FP) '+r.matNo:r.matNo);if(!isMatHeader)s.style.opacity='.3';td.appendChild(s);}
+        else if(colId==='itemNo'){td.appendChild(sp('stk-code',r.itemNo));}
+        else if(colId==='matNo'){td.appendChild(sp('stk-code',r.matNo===r.itemNo?'(FP) '+r.matNo:r.matNo));}
         else if(colId==='matName'){td.textContent=r.matName;td.title=r.matName;}
         else if(colId==='matType'){const cls=r.matType==='M'?'stk-type-m':r.matType==='P'?'stk-type-b':'stk-type-d';if(r.matType)td.appendChild(sp(cls,r.matType));}
         else if(colId==='wcName'){const s=sp('');s.style.cssText='font-weight:700;font-size:12px';if(done){const tk=sp('','✓ ');tk.style.color='#16a34a';td.appendChild(tk);}td.appendChild(s);s.textContent=r.wcName;}
