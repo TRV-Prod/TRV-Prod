@@ -4355,8 +4355,6 @@ function renderWcLoadPanel(container){
   const wcData=calcWcLoading();
   const eff=(S.eficientaPlan||100)/100;
 
-  // Toolbar info
-  const tb=dv('wc-load-toolbar');
   // Toolbar
   const tb=dv('wc-load-toolbar');
   tb.appendChild(sp('',`Plan: ${S.planData.size} produse · Eficienta: ${S.eficientaPlan}%`));
