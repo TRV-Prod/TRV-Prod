@@ -1121,6 +1121,7 @@ async function sbLoadAllData(){
     if(planData.entries)S.planData=new Map(planData.entries);
     if(planData.obs)S.planObs=planData.obs;
     if(planData.wcAvailHours)S.wcAvailHours=planData.wcAvailHours;
+    if(planData.prio)S.planPrio=planData.prio;
   }
   return loaded;
 }
@@ -5993,3 +5994,4 @@ autoLoad();
 </script>
 </body>
 </html>
+
