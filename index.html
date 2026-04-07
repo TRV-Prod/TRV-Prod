@@ -920,7 +920,7 @@ const S={
     visibleCols:new Set(['prio','itemNo','itemName','customer','qty','valoare','realizare','obs','_del']),
   },
   dispozitiiFilter:{
-    q:'',wcFilter:null,onlyNeeded:true,
+    q:'',wcFilter:null,fpFilter:'',onlyNeeded:true,
     colOrder:['prio','matNo','matName','matType','fps','unQty','totalNec','onHand','wip','dePrelucrat','timp'],
     colWidths:{prio:55,matNo:140,matName:220,matType:50,fps:160,unQty:75,totalNec:90,onHand:90,wip:130,dePrelucrat:100,timp:110},
     visibleCols:new Set(['prio','matNo','matName','matType','fps','unQty','totalNec','onHand','wip','dePrelucrat','timp']),
@@ -1654,7 +1654,43 @@ function mkOpsGroup(opsId, ops, depth, color, matNo){
   if(isExpOps){
     const opsList=el('div','ops-list');
     const opChildDepth=depth+1;
-    for(const op of ops){
+
+    // Pre-compute WIP-aware needing per operation (same logic as calcExecTime)
+    const unitsNeeded=matNo===S.selFP ? S.qtyInput : Math.max(0,_needs?.get(matNo)?.needed??0);
+    const eff2=(S.efficienta||100)/100;
+    const sortedOps=[...ops].map(op=>({
+      seq:parseFloat(String(op['Ope seq']||'0').replace(',','.'))||0,
+      runT:parseFloat(String(op['Run time']||'0').replace(',','.'))||0,
+      setupT:parseFloat(String(op['Setup time']||'0').replace(',','.'))||0,
+      wcName:str(op['Ope name']||op['Ope descr']||''),
+      _orig:op,
+    })).sort((a,b)=>a.seq-b.seq);
+    const wipAtIdx=new Map();
+    if(stock){
+      for(const [poCol,wipQty] of Object.entries(stock.wipByWC||{})){
+        if(!wipQty||wipQty<=0)continue;
+        const wcNP=wcLabel(poCol).toLowerCase();
+        let bestIdx=-1;
+        for(let i=sortedOps.length-1;i>=0;i--){if(sortedOps[i].wcName.toLowerCase()===wcNP){bestIdx=i;break;}}
+        if(bestIdx>=0)wipAtIdx.set(bestIdx,(wipAtIdx.get(bestIdx)||0)+wipQty);
+      }
+    }
+    const needingPerOp=sortedOps.map((_,i)=>{
+      let done=Math.max(0,stock?.onHand||0);
+      for(const [si,wq] of wipAtIdx){if(si>i)done+=wq;}
+      return Math.max(0,unitsNeeded-done);
+    });
+
+    for(let oi=0;oi<ops.length;oi++){
+      const op=ops[oi];
+      // find this op in sortedOps
+      const si=sortedOps.findIndex(s=>s._orig===op);
+      const needing=si>=0?needingPerOp[si]:0;
+      const runT=parseFloat(String(op['Run time']||'0').replace(',','.'))||0;
+      const setupT=parseFloat(String(op['Setup time']||'0').replace(',','.'))||0;
+      const totalMin=(unitsNeeded*runT+setupT)/eff2;
+      const remMin=needing>0?(needing*runT+setupT)/eff2:0;
+
       const row=el('div','op-row');
       for(let i=0;i<opChildDepth;i++){const s2=el('div','');s2.style.cssText='width:18px;flex-shrink:0';row.appendChild(s2);}
       const hcS=el('div','');hcS.style.cssText='width:18px;flex-shrink:0';row.appendChild(hcS);
@@ -1665,6 +1701,15 @@ function mkOpsGroup(opsId, ops, depth, color, matNo){
       const ot=el('span','op-time');
       ot.innerHTML=`Run tm: <b>${fmtT(op['Run time'])}</b> min,&nbsp;Setup: <b>${fmtT(op['Setup time'])}</b> min`;
       body.appendChild(ot);
+      // Add total and remaining time after Run/Setup
+      if(unitsNeeded>0){
+        const timePart=el('span','op-time');timePart.style.cssText='margin-left:10px;font-size:10px';
+        const totStr=`<span style="color:var(--text3)">total: <b>${fmtMin(totalMin)}</b></span>`;
+        const remStr=remMin>0?`&nbsp;·&nbsp;<span style="color:#7c3aed;font-weight:700">ramas: <b>${fmtMin(remMin)}</b></span>`
+          :`&nbsp;·&nbsp;<span style="color:#15803d;font-weight:700">✓ finalizat</span>`;
+        timePart.innerHTML=totStr+remStr;
+        body.appendChild(timePart);
+      }
       if(stock){
         const opeName=str(op['Ope name']||op['Ope descr']||'');
         const matchedWC=WIP_COLS.find(wc=>wcLabel(wc).toLowerCase()===opeName.toLowerCase());
@@ -3344,7 +3389,9 @@ function getNecRows(){
     if(rs.groupFilter && rs.groupFilter.size>0 && !rs.groupFilter.has(r.group)) return false;
     for(const[col,fval] of Object.entries(rs.colFilters||{})){
       if(!fval||col==='group') continue;
-      const v = col==='matNo'?r.matNo:col==='name'?r.name:col==='unit'?r.unit:String(r[col]||'');
+      const v = col==='matNo'?r.matNo:col==='name'?r.name:col==='unit'?r.unit
+               :col==='fps'?r.fps.map(([fp])=>fp).join(' '):col==='obs'?(S.reportObs[r.matNo]||'')
+               :String(r[col]||'');
       if(!v.toLowerCase().includes(fval.toLowerCase())) return false;
     }
     return true;
@@ -3511,7 +3558,18 @@ function buildNecTable(wrap, panel){
   const fr=el('tr','nec-filter-row');
   cols.forEach(c=>{
     const th=el('th');
-    if(c.key==='obs'||c.key==='fps'){th.appendChild(dv(''));fr.appendChild(th);return;}
+    if(c.key==='obs'||c.key==='fps'){
+      const inp=el('input','nec-col-filter');inp.placeholder='...';inp.value=rs.colFilters[c.key]||'';
+      inp.setAttribute('data-nec-filter',c.key);
+      inp.addEventListener('input',e=>{
+        const col=e.target.getAttribute('data-nec-filter');
+        const ss=e.target.selectionStart,se=e.target.selectionEnd;
+        rs.colFilters[col]=e.target.value;rebuildNecBody(wrap);updateNecInfo();
+        const r2=wrap.querySelector(`input[data-nec-filter="${col}"]`);
+        if(r2){r2.focus();try{r2.setSelectionRange(ss,se);}catch(_){}}
+      });
+      th.appendChild(inp);fr.appendChild(th);return;
+    }
 
     if(c.key==='group'){
       // Multi-select dropdown for group
@@ -5222,9 +5280,17 @@ function exportPlanDetail(itemNo, plan, sortedGroups, pctDisplay, eff){
    One row per unique component (matNo), summed across all FPs in plan.
    Shows: total needed, OnHand, WIP breakdown, qty to process at WC, exec time.
 ═══════════════════════════════════════════════════════════════ */
+/* ═══════════════════════════════════════════════════════════════
+   DISPOZITII DE LUCRU
+   One row per (FP × component × WC operation).
+   Shows qty to process, WIP at that WC, WIP at preceding ops.
+═══════════════════════════════════════════════════════════════ */
 function buildDispozitiiData(){
-  const byMat=new Map();
-  if(!S.planData.size||!S.bomIdx) return byMat;
+  // Returns array of rows: {itemNo,prio,matNo,matName,matType,wcName,opNo,opSeq,
+  //   totalNec,onHand,wipAtWC,wipBefore,dePrelucrat,execTimeMin}
+  const rows=[];
+  if(!S.planData.size||!S.bomIdx) return rows;
+  const eff=(S.eficientaPlan||100)/100;
 
   const sortedPlan=[...S.planData.entries()].sort((a,b)=>{
     const pa=S.planPrio[a[0]]||'',pb=S.planPrio[b[0]]||'';
@@ -5235,79 +5301,78 @@ function buildDispozitiiData(){
     return pa.localeCompare(pb);
   });
 
+  const processComp=(itemNo,prio,matNo,matName,matType,unitsNeeded)=>{
+    const rawOps=S.bowIdx?.get(`${itemNo}__${matNo}`)||[];
+    if(!rawOps.length) return;
+    const ops=rawOps.map(op=>({
+      seq:parseFloat(String(op['Ope seq']||'0').replace(',','.'))||0,
+      opNoNum:parseFloat(String(op['Operation no']||'0').replace(',','.'))||0,
+      opNo:str(op['Operation no']||''),
+      wcName:str(op['Ope name']||op['Ope descr']||'?'),
+      runT:parseFloat(String(op['Run time']||'0').replace(',','.'))||0,
+      setupT:parseFloat(String(op['Setup time']||'0').replace(',','.'))||0,
+    })).sort((a,b)=>a.seq-b.seq);
+    const stock=S.stockIdx?.get(matNo)||{onHand:0,wipByWC:{}};
+    const onHand=Math.max(0,stock.onHand);
+    const wipByWC=stock.wipByWC||{};
+    // Build wipAtIdx: opIdx → qty of WIP at that op stage
+    const wipAtIdx=new Map();
+    for(const [poCol,wipQty] of Object.entries(wipByWC)){
+      if(!wipQty||wipQty<=0)continue;
+      const wcNamePO=wcLabel(poCol).toLowerCase();
+      let bestIdx=-1;
+      for(let i=ops.length-1;i>=0;i--){if(ops[i].wcName.toLowerCase()===wcNamePO){bestIdx=i;break;}}
+      if(bestIdx<0)continue;
+      wipAtIdx.set(bestIdx,(wipAtIdx.get(bestIdx)||0)+wipQty);
+    }
+    for(let i=0;i<ops.length;i++){
+      const op=ops[i];
+      let alreadyDone=onHand;
+      let wipBefore=0,wipAtWC=wipAtIdx.get(i)||0;
+      for(const [seqIdx,wq] of wipAtIdx){
+        if(seqIdx>i)alreadyDone+=wq;
+        if(seqIdx<i)wipBefore+=wq;
+      }
+      const dePrelucrat=Math.max(0,unitsNeeded-alreadyDone);
+      const execTimeMin=dePrelucrat>0?(dePrelucrat*op.runT+op.setupT)/eff:0;
+      const totalMin=unitsNeeded>0?(unitsNeeded*op.runT+op.setupT)/eff:0;
+      rows.push({
+        itemNo,prio,matNo,matName,matType,
+        wcName:op.wcName,opNo:op.opNo,opSeq:op.seq,opNoNum:op.opNoNum,
+        totalNec:unitsNeeded,onHand,
+        wipAtWC,wipBefore,wipTotal:Math.max(0,stock.totalWIP||0),
+        dePrelucrat,execTimeMin,totalMin,
+        wipByWC,
+      });
+    }
+  };
+
   for(const [itemNo,plan] of sortedPlan){
     const prio=S.planPrio[itemNo]||'';
     const planQ=plan.totalQty;
-
-    // Walk BOM recursively — defined as const to avoid strict-mode block function error
+    const stockFP=S.stockIdx?.get(itemNo)||{onHand:0};
+    const effectiveQty=Math.max(0,planQ-Math.max(0,stockFP.onHand));
+    if(effectiveQty<=0)continue;
+    // Process FP's own ops
+    const stFP=S.stockIdx?.get(itemNo)||{};
+    processComp(itemNo,prio,itemNo,stFP.name||itemNo,stFP.type||'M',planQ); // use full planQ for FP own ops
+    // Process BOM children
     const walkBOM=(compNo,parentQty,vis)=>{
       const key=`${itemNo}__${compNo}`;
-      const rows=S.bomIdx?.get(key)||[];
-      for(const row of rows){
-        const matNo=str(row['Material no']);
-        if(!matNo)continue;
+      const bomRows=S.bomIdx?.get(key)||[];
+      for(const row of bomRows){
+        const matNo=str(row['Material no']);if(!matNo)continue;
         const unQty=parseFloat(row['Material qty'])||1;
-        const needed=parentQty*unQty;
-        const st=S.stockIdx?.get(matNo)||{onHand:0,totalWIP:0,type:'',name:'',wipByWC:{}};
-        const rawOps=S.bowIdx?.get(`${itemNo}__${matNo}`)||[];
-        const ops=rawOps.map(op=>({
-          opNo:str(op['Operation no']||''),
-          opNoNum:parseFloat(str(op['Operation no']||'0'))||0,
-          wcName:str(op['Ope name']||op['Ope descr']||''),
-          runT:parseFloat(String(op['Run time']||'0').replace(',','.'))||0,
-          setupT:parseFloat(String(op['Setup time']||'0').replace(',','.'))||0,
-          seq:parseFloat(String(op['Ope seq']||'0').replace(',','.'))||0,
-        })).sort((a,b)=>a.seq-b.seq);
-
-        if(!byMat.has(matNo)){
-          byMat.set(matNo,{matNo,matName:st.name||'',matType:st.type||'',
-            entries:[],totalNeeded:0,onHand:st.onHand,totalWIP:Math.max(0,st.totalWIP),
-            wipByWC:st.wipByWC||{},net:0,ops});
-        }
-        const m=byMat.get(matNo);
-        m.entries.push({itemNo,prio,unQty,planQ,needed});
-        m.totalNeeded+=needed;
-        m.net=Math.max(0,m.totalNeeded-Math.max(0,m.onHand)-Math.max(0,m.totalWIP));
-
-        if(!vis.has(matNo)&&(S.bomIdx?.get(`${itemNo}__${matNo}`)||[]).length>0){
-          walkBOM(matNo,needed,new Set([...vis,matNo]));
-        }
+        const neededQty=parentQty*unQty;
+        const st=S.stockIdx?.get(matNo)||{onHand:0,type:'',name:''};
+        if(st.type!=='P')processComp(itemNo,prio,matNo,st.name||'',st.type||'',neededQty);
+        if(!vis.has(matNo)&&(S.bomIdx?.get(`${itemNo}__${matNo}`)||[]).length>0)
+          walkBOM(matNo,neededQty,new Set([...vis,matNo]));
       }
     };
-    walkBOM(itemNo,planQ,new Set([itemNo]));
+    walkBOM(itemNo,effectiveQty,new Set([itemNo]));
   }
-  return byMat;
-}
-
-function calcDispWcTime(matData,wcFilter,eff){
-  // For selected WC: calc qty to process = WIP-aware
-  // and exec time based on that qty
-  if(!wcFilter||!matData.ops.length) return{qtyToProcess:0,runMin:0,setupMin:0,totalMin:0};
-  const ops=matData.ops;
-  const onHand=Math.max(0,matData.onHand);
-  const wipByWC=matData.wipByWC||{};
-  const wipAtIdx=new Map();
-  for(const [poCol,wipQty] of Object.entries(wipByWC)){
-    if(!wipQty||wipQty<=0)continue;
-    const wcNamePO=wcLabel(poCol).toLowerCase();
-    let bestIdx=-1;
-    for(let i=ops.length-1;i>=0;i--){if(ops[i].wcName.toLowerCase()===wcNamePO){bestIdx=i;break;}}
-    if(bestIdx<0)continue;
-    wipAtIdx.set(bestIdx,(wipAtIdx.get(bestIdx)||0)+wipQty);
-  }
-  let runMin=0,setupMin=0,qtyToProcess=0;
-  for(let i=0;i<ops.length;i++){
-    const op=ops[i];
-    if(op.wcName!==wcFilter)continue;
-    let alreadyDone=onHand;
-    for(const [seqIdx,wq] of wipAtIdx){if(seqIdx>i)alreadyDone+=wq;}
-    const needing=Math.max(0,matData.totalNeeded-alreadyDone);
-    if(needing<=0)continue;
-    qtyToProcess=Math.max(qtyToProcess,needing);
-    runMin+=(needing*op.runT)/eff;
-    setupMin+=op.setupT/eff;
-  }
-  return{qtyToProcess,runMin,setupMin,totalMin:runMin+setupMin};
+  return rows;
 }
 
 function renderSubcomponentePanel(container){
@@ -5316,25 +5381,42 @@ function renderSubcomponentePanel(container){
   if(!S.bomIdx){container.appendChild(mkEmpty('Dispozitii de lucru','Incarcati fisierul BOM.'));return;}
 
   const eff=(S.eficientaPlan||100)/100;
-  const f=S.dispozitiiFilter; // persistent state
-  const allData=buildDispozitiiData();
-  const allWCs=[...new Set([...allData.values()].flatMap(m=>m.ops.map(o=>o.wcName).filter(Boolean)))].sort();
+  const f=S.dispozitiiFilter;
+  const LABELS={prio:'Prio',itemNo:'Produs Final',matNo:'Componenta',matName:'Denumire',matType:'Tip',
+    wcName:'Workcenter',opNo:'Op no',totalNec:'Total nec.',onHand:'On Hand',
+    wipAtWC:'WIP la WC',wipBefore:'WIP precedent',dePrelucrat:'De prelucrat',execTimeMin:'Timp exec.'};
 
-  const LABELS={prio:'Prio',matNo:'Cod Material',matName:'Denumire',matType:'Tip',fps:'Prod. Finale',
-    unQty:'Un Qty',totalNec:'Total necesar',onHand:'On Hand',wip:'WIP',
-    dePrelucrat:'De prelucrat',timp:'Timp exec.'};
-  const visCols=()=>f.colOrder.filter(c=>f.visibleCols.has(c));
+  // Rebuild colOrder/visibleCols for new columns
+  const ALL_COLS=['prio','itemNo','matNo','matName','matType','wcName','opNo','totalNec','onHand','wipAtWC','wipBefore','dePrelucrat','execTimeMin'];
+  if(f.colOrder.length<ALL_COLS.length||!f.colOrder.includes('wcName')){
+    f.colOrder=ALL_COLS;
+    f.colWidths={prio:55,itemNo:150,matNo:140,matName:200,matType:50,wcName:170,opNo:80,totalNec:90,onHand:85,wipAtWC:95,wipBefore:110,dePrelucrat:100,execTimeMin:105};
+    f.visibleCols=new Set(['prio','itemNo','matNo','matName','matType','wcName','totalNec','onHand','wipAtWC','wipBefore','dePrelucrat','execTimeMin']);
+  }
+
+  const allData=buildDispozitiiData();
+  const allFPs=[...new Set(allData.map(r=>r.itemNo))].sort();
+  const allWCs=[...new Set(allData.map(r=>r.wcName).filter(Boolean))].sort();
 
   // ── Toolbar ──
   const tb=dv('sub-rep-toolbar');
-  // Title
-  const tit=sp('');tit.style.cssText='font-size:13px;font-weight:700;color:var(--text);margin-right:8px;white-space:nowrap';
+  const tit=sp('');tit.style.cssText='font-size:13px;font-weight:700;color:var(--text);white-space:nowrap';
   tit.textContent='Dispozitii de lucru';tb.appendChild(tit);
 
-  const si=el('input','stk-search');si.placeholder='Cauta cod, denumire...';si.value=f.q;
+  // FP dropdown filter
+  const fpSel=el('select','stk-sel');
+  const fpAll=el('option');fpAll.value='all';fpAll.textContent='Toate prod. finale';fpSel.appendChild(fpAll);
+  allFPs.forEach(fp=>{const o=el('option');o.value=fp;o.textContent=fp;if(f.fpFilter===fp)o.selected=true;fpSel.appendChild(o);});
+  fpSel.value=f.fpFilter||'all';
+  fpSel.addEventListener('change',e=>{f.fpFilter=e.target.value;rebuild();});
+  tb.appendChild(fpSel);
+
+  // Search box
+  const si=el('input','stk-search');si.placeholder='Cauta cod, denumire...';si.value=f.q||'';
   si.addEventListener('input',e=>{f.q=e.target.value;rebuild();});
   tb.appendChild(si);
 
+  // "Doar necesare" toggle
   const onlyBtn=el('button',`stk-toggle${f.onlyNeeded?' on':''}`);onlyBtn.textContent='⚠ Doar necesare';
   onlyBtn.addEventListener('click',()=>{f.onlyNeeded=!f.onlyNeeded;onlyBtn.className=`stk-toggle${f.onlyNeeded?' on':''}`;rebuild();});
   tb.appendChild(onlyBtn);
@@ -5385,31 +5467,19 @@ function renderSubcomponentePanel(container){
   tb.appendChild(colBtn);
 
   const printBtn=el('button','tbtn');printBtn.textContent='🖨 Printeaza';
-  printBtn.addEventListener('click',()=>window.print());
+  printBtn.addEventListener('click',()=>printDispozitii(getFilteredRows(),f,LABELS));
   tb.appendChild(printBtn);
 
   const expBtn=el('button','tbtn');expBtn.textContent='⬇ Export Excel';
   expBtn.addEventListener('click',()=>{
-    const rows=getFilteredRows();
-    if(!rows.length){alert('Nicio data de exportat.');return;}
-    const out=rows.map(([matNo,m])=>{
-      const wt=f.wcFilter?calcDispWcTime(m,f.wcFilter,eff):{qtyToProcess:m.net,runMin:0,setupMin:0,totalMin:0};
-      const fps=[...new Set(m.entries.map(e=>e.itemNo))].join(', ');
-      const prios=[...new Set(m.entries.map(e=>e.prio).filter(Boolean))].join(', ');
-      const unQtys=[...new Set(m.entries.map(e=>e.unQty.toFixed(4)))].join(', ');
-      const wipStr=Object.entries(m.wipByWC).filter(([,v])=>v>0).map(([wc,v])=>`${wcLabel(wc)}: ${fmtN(v)}`).join('; ');
-      return{
-        'Prio':prios,'Cod Material':matNo,'Denumire':m.matName,'Tip':m.matType,
-        'Prod. Finale':fps,'Un Qty':unQtys,'Total necesar':+m.totalNeeded.toFixed(2),
-        'On Hand':+m.onHand.toFixed(2),'WIP':+m.totalWIP.toFixed(2),'WIP detaliu':wipStr,
-        'Net necesar':+m.net.toFixed(2),
-        ...(f.wcFilter?{[`De prelucrat (${f.wcFilter})`]:+wt.qtyToProcess.toFixed(2),
-          [`Timp run (min)`]:+wt.runMin.toFixed(2),[`Timp setup (min)`]:+wt.setupMin.toFixed(2),
-          [`Timp total (min)`]:+wt.totalMin.toFixed(2)}:{}),
-      };
-    });
-    const wb=XLSX.utils.book_new();
-    const ws=XLSX.utils.json_to_sheet(out);
+    const rows=getFilteredRows();if(!rows.length){alert('Nicio data.');return;}
+    const out=rows.map(r=>({
+      'Prio':r.prio,'Produs Final':r.itemNo,'Componenta':r.matNo,'Denumire':r.matName,'Tip':r.matType,
+      'Workcenter':r.wcName,'Op no':r.opNo,'Total nec.':+r.totalNec.toFixed(2),'On Hand':+r.onHand.toFixed(2),
+      'WIP la WC':+r.wipAtWC.toFixed(2),'WIP precedent':+r.wipBefore.toFixed(2),
+      'De prelucrat':+r.dePrelucrat.toFixed(2),'Timp exec. (min)':+r.execTimeMin.toFixed(2),
+    }));
+    const wb=XLSX.utils.book_new();const ws=XLSX.utils.json_to_sheet(out);
     XLSX.utils.book_append_sheet(wb,ws,f.wcFilter?`DL ${f.wcFilter}`.substring(0,31):'Dispozitii lucru');
     XLSX.writeFile(wb,`Dispozitii_lucru_${new Date().toISOString().slice(0,10)}.xlsx`);
   });
@@ -5417,64 +5487,48 @@ function renderSubcomponentePanel(container){
   tb.appendChild(mkZoomCtrl('rapoarte'));
   container.appendChild(tb);
 
-  // Count bar
   const countBar=dv('');countBar.id='sub-count-bar';
   countBar.style.cssText='padding:5px 14px;background:#f0fdf4;border-bottom:1px solid #86efac;font-size:11px;color:#15803d;font-weight:600;flex-shrink:0';
   container.appendChild(countBar);
 
-  // Zoom area + table
   const zoomArea=dv('');zoomArea.id='zoom-area-rapoarte';
   zoomArea.style.cssText='flex:1;overflow:hidden;display:flex;flex-direction:column';
   zoomArea.style.zoom=(S.zoom.rapoarte/100).toString();
   const tableWrap=dv('sub-rep-wrap');tableWrap.style.cssText='flex:1;overflow:auto';
-  zoomArea.appendChild(tableWrap);
-  container.appendChild(zoomArea);
+  zoomArea.appendChild(tableWrap);container.appendChild(zoomArea);
 
   function getFilteredRows(){
-    const q=f.q.toLowerCase();
-    return [...allData.entries()].filter(([matNo,m])=>{
-      if(q&&!matNo.toLowerCase().includes(q)&&!m.matName.toLowerCase().includes(q)&&
-         !m.entries.some(e=>e.itemNo.toLowerCase().includes(q)))return false;
-      if(f.onlyNeeded&&m.net<=0)return false;
-      if(f.wcFilter){
-        const wt=calcDispWcTime(m,f.wcFilter,eff);
-        if(wt.qtyToProcess<=0)return false;
-      }
+    const q=(f.q||'').toLowerCase();
+    return allData.filter(r=>{
+      if(f.fpFilter&&f.fpFilter!=='all'&&r.itemNo!==f.fpFilter)return false;
+      if(f.wcFilter&&r.wcName!==f.wcFilter)return false;
+      if(f.onlyNeeded&&r.dePrelucrat<=0)return false;
+      if(q&&!r.itemNo.toLowerCase().includes(q)&&!r.matNo.toLowerCase().includes(q)&&!r.matName.toLowerCase().includes(q)&&!r.wcName.toLowerCase().includes(q))return false;
       return true;
     });
   }
 
-  function rebuild(){
-    buildTable();
+  function rebuild(){buildTable();updateCount();}
+  function updateCount(){
     const rows=getFilteredRows();
-    const totalNet=rows.reduce((s,[,m])=>s+m.net,0);
-    let timeSummary='';
-    if(f.wcFilter){
-      const totalTime=rows.reduce((s,[,m])=>s+calcDispWcTime(m,f.wcFilter,eff).totalMin,0);
-      timeSummary=` · Timp total ${f.wcFilter}: ${fmtMin(totalTime)}`;
-    }
-    const cb=document.getElementById('sub-count-bar');
-    if(cb)cb.textContent=`${rows.length.toLocaleString()} componente · Net total: ${fmtN(totalNet)} buc${timeSummary}`;
+    const totalTime=rows.reduce((s,r)=>s+r.execTimeMin,0);
+    let summary=`${rows.length.toLocaleString()} operatii`;
+    if(f.wcFilter)summary+=` la ${f.wcFilter} · Timp total: ${fmtMin(totalTime)}`;
+    const cb=document.getElementById('sub-count-bar');if(cb)cb.textContent=summary;
   }
 
   function buildTable(){
     tableWrap.innerHTML='';
-    const vc=visCols();
+    const vc=f.colOrder.filter(c=>f.visibleCols.has(c));
     const rows=getFilteredRows();
     const tbl=el('table','sub-rep-table');tbl.style.tableLayout='fixed';
     const thead=el('thead');
-    // Sort/drag header row
     const hr=el('tr');let dragSrc=null;
     vc.forEach(colId=>{
-      const w=f.colWidths[colId]||120;
+      const w=f.colWidths[colId]||100;
       const th=el('th');th.style.width=w+'px';th.setAttribute('data-col',colId);
       const inner=dv('sub-rep-th-inner');
-      let lbl=LABELS[colId]||colId;
-      if(colId==='dePrelucrat'&&f.wcFilter)lbl=`De prelucrat\n(${f.wcFilter})`;
-      if(colId==='timp'&&f.wcFilter)lbl=`Timp\n(${f.wcFilter})`;
-      const lspan=sp('');lspan.style.cssText='white-space:pre;font-size:9px;font-weight:700;color:var(--text3);letter-spacing:.06em;text-transform:uppercase';
-      lspan.textContent=lbl;
-      inner.appendChild(lspan);
+      inner.appendChild(sp('',LABELS[colId]||colId));
       const rh=el('div','plan-col-rh');
       rh.addEventListener('mousedown',e=>{
         e.stopPropagation();e.preventDefault();rh.classList.add('dragging');
@@ -5496,83 +5550,83 @@ function renderSubcomponentePanel(container){
       });
       hr.appendChild(th);
     });
-    thead.appendChild(hr);
-    tbl.appendChild(thead);
-    // Body
+    thead.appendChild(hr);tbl.appendChild(thead);
     const tbody=el('tbody');
-    for(const [matNo,m] of rows){
-      const wt=f.wcFilter?calcDispWcTime(m,f.wcFilter,eff):{qtyToProcess:m.net,runMin:0,setupMin:0,totalMin:0};
-      const prios=[...new Set(m.entries.map(e=>e.prio).filter(Boolean))].join(', ');
-      const fps=[...new Set(m.entries.map(e=>e.itemNo))];
-      const unQty=m.entries.length>0?m.entries[0].unQty:0;
-      const tr=el('tr');
-      if(m.net<=0)tr.style.background='#f0fdf4';
+    let lastFP='',lastMat='';
+    for(const r of rows){
+      const isFPHeader=r.itemNo!==lastFP;const isMatHeader=isFPHeader||r.matNo!==lastMat;
+      if(isFPHeader){lastFP=r.itemNo;lastMat='';}
+      if(isMatHeader)lastMat=r.matNo;
+      const done=r.dePrelucrat<=0;
+      const tr=el('tr');tr.style.cssText=done?'background:#f0fdf4':'';
       vc.forEach(colId=>{
-        const td=el('td');td.style.width=(f.colWidths[colId]||120)+'px';
-        td.style.cssText+='overflow:hidden;text-overflow:ellipsis;white-space:nowrap;vertical-align:middle;padding:5px 10px;border-bottom:1px solid var(--border2);border-right:1px solid var(--border2);font-size:12px';
-        if(colId==='prio'){const s=sp('');s.style.cssText='font-weight:800;font-family:Arial,monospace;color:#92400e;font-size:13px';s.textContent=prios;td.appendChild(s);}
-        else if(colId==='matNo'){td.appendChild(sp('stk-code',matNo));}
-        else if(colId==='matName'){td.textContent=m.matName;td.title=m.matName;}
-        else if(colId==='matType'){const cls=m.matType==='M'?'stk-type-m':m.matType==='P'?'stk-type-b':'stk-type-d';if(m.matType)td.appendChild(sp(cls,m.matType));}
-        else if(colId==='fps'){
-          const wrap2=dv('');wrap2.style.cssText='display:flex;flex-wrap:wrap;gap:3px';
-          fps.slice(0,3).forEach(fp=>{wrap2.appendChild(sp('stk-fp-pill',fp));});
-          if(fps.length>3)wrap2.appendChild(sp('stk-fp-more',`+${fps.length-3}`));
-          td.appendChild(wrap2);
+        const td=el('td');td.style.width=(f.colWidths[colId]||100)+'px';
+        td.style.cssText+='overflow:hidden;text-overflow:ellipsis;white-space:nowrap;vertical-align:middle;padding:5px 8px;border-bottom:1px solid var(--border2);border-right:1px solid var(--border2);font-size:12px';
+        if(colId==='prio'){const s=sp('');s.style.cssText='font-weight:800;font-family:Arial,monospace;color:#92400e';s.textContent=r.prio;td.appendChild(s);}
+        else if(colId==='itemNo'){const s=sp('stk-code',r.itemNo);if(!isFPHeader)s.style.opacity='.3';td.appendChild(s);}
+        else if(colId==='matNo'){const s=sp('stk-code',r.matNo===r.itemNo?'(FP) '+r.matNo:r.matNo);if(!isMatHeader)s.style.opacity='.3';td.appendChild(s);}
+        else if(colId==='matName'){td.textContent=r.matName;td.title=r.matName;}
+        else if(colId==='matType'){const cls=r.matType==='M'?'stk-type-m':r.matType==='P'?'stk-type-b':'stk-type-d';if(r.matType)td.appendChild(sp(cls,r.matType));}
+        else if(colId==='wcName'){const s=sp('');s.style.cssText='font-weight:700;font-size:12px';if(done){const tk=sp('','✓ ');tk.style.color='#16a34a';td.appendChild(tk);}td.appendChild(s);s.textContent=r.wcName;}
+        else if(colId==='opNo'){td.style.cssText+='font-family:Arial,monospace;color:var(--text3)';td.textContent=r.opNo;}
+        else if(colId==='totalNec'){const s=sp('pdm-num',fmtN(r.totalNec));s.style.cssText='display:block;text-align:right';td.appendChild(s);}
+        else if(colId==='onHand'){const s=sp('pdm-num',fmtN(r.onHand));s.style.cssText=`display:block;text-align:right;color:${r.onHand<0?'#dc2626':r.onHand>0?'#15803d':'var(--text3)'}`;td.appendChild(s);}
+        else if(colId==='wipAtWC'){
+          if(r.wipAtWC>0){const s=sp('stk-badge stk-wip',`🔄 ${fmtN(r.wipAtWC)}`);td.appendChild(s);}
+          else{td.style.color='var(--text4)';td.textContent='—';}
         }
-        else if(colId==='unQty'){const s=sp('pdm-num',fmtN(unQty));s.style.cssText='display:block;text-align:right;color:var(--text3)';td.appendChild(s);}
-        else if(colId==='totalNec'){const s=sp('pdm-num',fmtN(m.totalNeeded));s.style.cssText='display:block;text-align:right;font-weight:600';td.appendChild(s);}
-        else if(colId==='onHand'){const s=sp('pdm-num',fmtN(m.onHand));s.style.cssText=`display:block;text-align:right;color:${m.onHand<0?'#dc2626':m.onHand>0?'#15803d':'var(--text3)'}`;td.appendChild(s);}
-        else if(colId==='wip'){
-          if(m.totalWIP>0){
-            const wrap2=dv('');wrap2.style.cssText='display:flex;flex-wrap:wrap;gap:2px';
-            const entries=Object.entries(m.wipByWC).filter(([,v])=>v>0).sort((a,b)=>b[1]-a[1]);
-            entries.slice(0,3).forEach(([wc,v])=>{
-              const pill=sp('stk-wip-pill',`${wcLabel(wc)}: ${fmtN(v)}`);
-              if(f.wcFilter&&wcLabel(wc)===f.wcFilter)pill.style.cssText='background:#dbeafe;border-color:#93c5fd;color:#1e40af;font-size:9px;font-family:Arial,monospace;padding:0 4px;border-radius:2px;border:1px solid;font-weight:700';
-              wrap2.appendChild(pill);
-            });
-            if(entries.length>3)wrap2.appendChild(sp('stk-fp-more',`+${entries.length-3}`));
-            td.appendChild(wrap2);
-          } else {const s=sp('');s.style.cssText='color:var(--text4);font-size:11px';s.textContent='—';td.appendChild(s);}
+        else if(colId==='wipBefore'){
+          if(r.wipBefore>0){const s=sp('pdm-num',fmtN(r.wipBefore));s.style.cssText='display:block;text-align:right;color:#d97706;font-weight:600';td.appendChild(s);}
+          else{td.style.color='var(--text4)';td.textContent='—';}
         }
-        else if(colId==='dePrelucrat'){
-          if(f.wcFilter){
-            const s=sp('pdm-num',fmtN(wt.qtyToProcess));
-            s.style.cssText=`display:block;text-align:right;font-weight:800;font-size:13px;color:${wt.qtyToProcess>0?'#dc2626':'#15803d'}`;td.appendChild(s);
-          } else {
-            const s=sp('pdm-num',fmtN(m.net));s.style.cssText=`display:block;text-align:right;font-weight:700;color:${m.net>0?'#dc2626':'#15803d'}`;td.appendChild(s);
-          }
-        }
-        else if(colId==='timp'){
-          if(f.wcFilter&&wt.totalMin>0){
-            const s=sp('pdm-num',fmtMin(wt.totalMin));s.style.cssText='display:block;text-align:right;font-weight:700;color:#7c3aed';td.appendChild(s);
-            if(wt.setupMin>0.01){const sub=dv('');sub.style.cssText='font-size:9.5px;color:var(--text3);text-align:right';sub.textContent=`setup: ${fmtMin(wt.setupMin)}`;td.appendChild(sub);}
-          } else if(!f.wcFilter){
-            const ops=m.ops||[];
-            const totalRunT=ops.reduce((s,op)=>s+op.runT,0);
-            const totalSetupT=ops.reduce((s,op)=>s+op.setupT,0);
-            const totalMin=ops.length>0?(m.net*totalRunT+totalSetupT)/eff:0;
-            const s=sp('pdm-num',totalMin>0?fmtMin(totalMin):'—');s.style.cssText='display:block;text-align:right;color:#7c3aed';td.appendChild(s);
-          } else {td.textContent='—';}
+        else if(colId==='dePrelucrat'){const s=sp('pdm-num',fmtN(r.dePrelucrat));s.style.cssText=`display:block;text-align:right;font-weight:800;color:${r.dePrelucrat>0?'#dc2626':'#15803d'}`;td.appendChild(s);}
+        else if(colId==='execTimeMin'){
+          if(r.execTimeMin>0.01){const s=sp('pdm-num',fmtMin(r.execTimeMin));s.style.cssText='display:block;text-align:right;font-weight:700;color:#7c3aed';td.appendChild(s);}
+          else{const s=sp('pdm-done',done?'✓':'—');td.appendChild(s);}
         }
         tr.appendChild(td);
       });
       tbody.appendChild(tr);
     }
-    if(!rows.length){
-      const tr=el('tr');const td=el('td');td.colSpan=vc.length;
-      td.style.cssText='text-align:center;padding:24px;color:var(--text3);font-size:12px';
-      td.textContent='Niciun component corespunde filtrelor.';tr.appendChild(td);tbody.appendChild(tr);
-    }
+    if(!rows.length){const tr=el('tr');const td=el('td');td.colSpan=vc.length;td.style.cssText='text-align:center;padding:24px;color:var(--text3);font-size:12px';td.textContent='Niciun rezultat.';tr.appendChild(td);tbody.appendChild(tr);}
     tbl.appendChild(tbody);tableWrap.appendChild(tbl);
   }
   rebuild();
 }
 
-/* ═══════════════════════════════════════════════════════════════
-   VERIFICARE STOCURI PRODUSE PLANIFICATE
-═══════════════════════════════════════════════════════════════ */
+function printDispozitii(rows,f,LABELS){
+  const vc=f.colOrder.filter(c=>f.visibleCols.has(c));
+  const printWin=window.open('','_blank','width=1100,height=800');
+  if(!printWin){alert('Permite popup-urile pentru printare.');return;}
+  const hdrRow=vc.map(c=>`<th>${LABELS[c]||c}</th>`).join('');
+  const bodyRows=rows.map(r=>{
+    const vals={
+      prio:r.prio,itemNo:r.itemNo,matNo:r.matNo===r.itemNo?'(FP) '+r.matNo:r.matNo,
+      matName:r.matName,matType:r.matType,wcName:r.wcName,opNo:r.opNo,
+      totalNec:fmtN(r.totalNec),onHand:fmtN(r.onHand),
+      wipAtWC:r.wipAtWC>0?fmtN(r.wipAtWC):'—',wipBefore:r.wipBefore>0?fmtN(r.wipBefore):'—',
+      dePrelucrat:`<span style="color:${r.dePrelucrat>0?'#dc2626':'#15803d'};font-weight:700">${fmtN(r.dePrelucrat)}</span>`,
+      execTimeMin:r.execTimeMin>0.01?fmtMin(r.execTimeMin):'—',
+    };
+    return '<tr>'+vc.map(c=>`<td>${vals[c]??''}</td>`).join('')+'</tr>';
+  }).join('');
+  const title=f.wcFilter?`Plan de lucru — ${f.wcFilter}`:`Dispozitii de lucru${f.fpFilter&&f.fpFilter!=='all'?' — '+f.fpFilter:''}`;
+  printWin.document.write(`<!DOCTYPE html><html lang="ro"><head><meta charset="UTF-8"/><title>${title}</title>
+<style>*{box-sizing:border-box;margin:0;padding:0}body{font-family:Arial,sans-serif;font-size:9.5pt;padding:14px}
+h2{font-size:12pt;margin-bottom:3px}p.sub{font-size:8.5pt;color:#666;margin-bottom:8px}
+table{width:100%;border-collapse:collapse}th{background:#f0f0f0;border:1px solid #999;padding:3px 5px;font-size:7.5pt;font-weight:700;text-transform:uppercase;letter-spacing:.04em;text-align:left}
+td{border:1px solid #ccc;padding:3px 5px;vertical-align:middle}tr:nth-child(even) td{background:#f9f9f9}
+@media print{@page{size:landscape;margin:8mm}}
+</style></head><body>
+<h2>${title}</h2>
+<p class="sub">Data: ${new Date().toLocaleDateString('ro-RO')} · ${rows.length} operatii · Eficienta: ${S.eficientaPlan}%${f.wcFilter?' · WC: '+f.wcFilter:''}</p>
+<table><thead><tr>${hdrRow}</tr></thead><tbody>${bodyRows}</tbody></table>
+</body></html>`);
+  printWin.document.close();
+  setTimeout(()=>{printWin.focus();printWin.print();},400);
+}
+
+
 function buildVerificareStocuriData(){
   const byMat=new Map(); // matNo → {matNo,matName,matType,onHand,totalWIP,wipByWC,fpList,necPlan}
   if(!S.planData.size||!S.bomIdx) return byMat;
