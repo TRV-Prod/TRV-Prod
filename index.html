@@ -6322,12 +6322,15 @@ function renderPwcTab(){
     const schedKeys=ps.scheduled.filter(k=>grpData.find(r=>`${r.matNo}||${r.wcName}`===k));
     ps.scheduled=schedKeys;
     const schedMin=schedKeys.reduce((s,k)=>{const r=grpData.find(r=>`${r.matNo}||${r.wcName}`===k);return s+(r?.execTimeMin||0);},0);
-    const pct=availMin>0?Math.min(100,schedMin/availMin*100):0;
-    const barColor=pct<=80?'#16a34a':pct<=100?'#d97706':'#dc2626';
+    const realPct=availMin>0?schedMin/availMin*100:0;  // can exceed 100%
+    const barFillPct=Math.min(100,realPct);             // bar width capped at 100%
+    const barColor=realPct<75?'#16a34a':realPct<=100?'#d97706':'#dc2626';
     if(availMin>0){
       const progWrap=dv('pwc-prog-wrap');
-      const progFill=dv('pwc-prog-fill');progFill.style.cssText=`width:${pct.toFixed(1)}%;background:${barColor}`;
-      const progLbl=dv('pwc-prog-lbl');progLbl.textContent=`${pct.toFixed(0)}% · ${fmtMin(schedMin)}/${fmtMin(availMin)}`;
+      const progFill=dv('pwc-prog-fill');progFill.style.cssText=`width:${barFillPct.toFixed(1)}%;background:${barColor}`;
+      const progLbl=dv('pwc-prog-lbl');
+      progLbl.textContent=`${realPct.toFixed(0)}% · ${fmtMin(schedMin)} / ${fmtMin(availMin)}`;
+      if(realPct>100)progLbl.style.color='#fff'; // ensure readable on red
       progWrap.appendChild(progFill);progWrap.appendChild(progLbl);
       planHdr.appendChild(progWrap);
     }
