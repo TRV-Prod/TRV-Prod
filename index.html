@@ -616,39 +616,48 @@ button { font-family: var(--sans); }
 }
 /* ── PROGRAMARE WORKCENTER ── */
 .pwc-page{flex:1;display:flex;flex-direction:column;overflow:hidden}
-.pwc-toolbar{display:flex;align-items:center;gap:8px;padding:8px 14px;background:#fff;border-bottom:1px solid var(--border);flex-shrink:0;flex-wrap:wrap}
+.pwc-toolbar{display:flex;align-items:center;gap:10px;padding:8px 14px;background:#fff;border-bottom:1px solid var(--border);flex-shrink:0;flex-wrap:wrap}
 .pwc-body{flex:1;display:flex;overflow:hidden}
-.pwc-sidebar{width:260px;flex-shrink:0;border-right:1px solid var(--border);display:flex;flex-direction:column;overflow:hidden;background:#f8f9fb}
-.pwc-sidebar-title{padding:10px 14px 6px;font-size:10px;font-weight:700;color:var(--text3);letter-spacing:.07em;text-transform:uppercase;flex-shrink:0}
-.pwc-group-list{flex:1;overflow-y:auto}
-.pwc-group-item{padding:8px 14px;cursor:pointer;border-left:3px solid transparent;transition:all .1s;user-select:none}
-.pwc-group-item:hover{background:#eff6ff}
-.pwc-group-item.active{background:#dbeafe;border-left-color:var(--accent);color:var(--accent)}
-.pwc-group-name{font-size:12px;font-weight:700}
-.pwc-group-meta{font-size:10px;color:var(--text3);margin-top:1px}
-.pwc-group-item.active .pwc-group-meta{color:#1d4ed8}
-.pwc-main{flex:1;display:flex;flex-direction:column;overflow:hidden}
-.pwc-sched-area{height:180px;flex-shrink:0;border-bottom:2px solid var(--border);background:#f0f4ff;display:flex;flex-direction:column;padding:10px 14px;overflow:hidden}
-.pwc-sched-title{font-size:10px;font-weight:700;color:var(--text3);letter-spacing:.07em;text-transform:uppercase;margin-bottom:8px;display:flex;align-items:center;gap:8px}
-.pwc-progress-bar-wrap{height:28px;background:#e2e8f0;border-radius:6px;overflow:hidden;position:relative;margin-bottom:4px}
-.pwc-progress-fill{height:100%;border-radius:6px;transition:width .4s,background .3s}
-.pwc-progress-label{position:absolute;right:8px;top:50%;transform:translateY(-50%);font-size:11px;font-weight:700;color:#fff;text-shadow:0 1px 2px rgba(0,0,0,.3)}
-.pwc-sched-items{flex:1;overflow-x:auto;display:flex;gap:6px;align-items:flex-start;padding:4px 0}
-.pwc-sched-pill{background:#fff;border:1px solid var(--border);border-radius:5px;padding:4px 8px;font-size:11px;cursor:pointer;white-space:nowrap;display:flex;gap:6px;align-items:center;flex-shrink:0;box-shadow:0 1px 3px rgba(0,0,0,.08)}
-.pwc-sched-pill:hover{border-color:#dc2626;background:#fee2e2}
-.pwc-sched-pill .pill-time{font-family:Arial,monospace;font-weight:700;color:#7c3aed;font-size:10px}
-.pwc-drop-zone{border:2px dashed var(--border);border-radius:6px;padding:6px 12px;font-size:11px;color:var(--text3);display:flex;align-items:center;gap:6px;margin-left:4px;flex-shrink:0;min-width:140px;transition:all .2s;background:#fff}
-.pwc-drop-zone.drag-over{border-color:var(--accent);background:#eff6ff;color:var(--accent)}
-.pwc-table-area{flex:1;overflow:auto}
-.pwc-table{width:max-content;min-width:100%;border-collapse:collapse;font-size:12px}
-.pwc-table thead{position:sticky;top:0;z-index:4}
-.pwc-table th{background:#f8f9fb;border-bottom:2px solid var(--border);border-right:1px solid var(--border2);padding:5px 8px;font-size:9px;font-weight:700;color:var(--text3);letter-spacing:.06em;text-transform:uppercase;white-space:nowrap;user-select:none;cursor:grab}
-.pwc-table td{padding:4px 8px;border-bottom:1px solid var(--border2);border-right:1px solid var(--border2);vertical-align:middle;white-space:nowrap}
-.pwc-table tr:hover td{background:#f8f9fb}
-.pwc-draggable{cursor:grab}.pwc-draggable:active{cursor:grabbing}
-.pwc-drag-handle{color:var(--text3);margin-right:4px;font-size:10px}
-.pwc-in-sched td{background:#eff6ff!important;opacity:.6}
-.pwc-avail-info{font-size:11px;color:var(--text3);margin-top:3px}
+/* Left panel - 20% - source cards */
+.pwc-cards-panel{width:20%;min-width:180px;max-width:280px;flex-shrink:0;border-right:1px solid var(--border);display:flex;flex-direction:column;overflow:hidden;background:#f8f9fb}
+.pwc-cards-title{padding:8px 10px 4px;font-size:9.5px;font-weight:700;color:var(--text3);letter-spacing:.07em;text-transform:uppercase;flex-shrink:0;border-bottom:1px solid var(--border2)}
+.pwc-cards-scroll{flex:1;overflow-y:auto;padding:6px;display:grid;grid-template-columns:1fr 1fr;gap:5px;align-content:start}
+.pwc-comp-card{background:#fff;border:1.5px solid var(--border);border-radius:6px;padding:6px 8px;cursor:grab;user-select:none;transition:all .15s;font-size:11px}
+.pwc-comp-card:hover{border-color:var(--accent);background:#eff6ff;transform:translateY(-1px);box-shadow:0 2px 8px rgba(30,64,175,.12)}
+.pwc-comp-card:active{cursor:grabbing;transform:translateY(0)}
+.pwc-comp-card.in-plan{opacity:.45;background:#f0fdf4;border-color:#86efac;cursor:default}
+.pwc-card-code{font-family:Arial,monospace;font-size:10px;font-weight:700;color:var(--accent);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.pwc-card-fp{font-size:9px;color:var(--text3);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;margin-top:1px}
+.pwc-card-qty{font-size:10px;font-weight:700;color:#dc2626;margin-top:2px}
+.pwc-card-time{font-size:9px;color:#7c3aed;font-weight:600}
+/* Right panel - 80% */
+.pwc-plan-panel{flex:1;display:flex;flex-direction:column;overflow:hidden}
+.pwc-plan-header{padding:8px 14px;background:#f0f4ff;border-bottom:2px solid var(--accent);flex-shrink:0;display:flex;align-items:center;gap:12px}
+.pwc-plan-title{font-size:13px;font-weight:800;color:var(--accent)}
+.pwc-plan-meta{font-size:11px;color:#1d4ed8}
+/* Progress bar */
+.pwc-prog-wrap{position:relative;height:22px;background:#e2e8f0;border-radius:4px;overflow:hidden;flex:1;max-width:320px}
+.pwc-prog-fill{height:100%;border-radius:4px;transition:width .4s,background .3s}
+.pwc-prog-lbl{position:absolute;right:6px;top:50%;transform:translateY(-50%);font-size:10px;font-weight:700;color:#fff;text-shadow:0 1px 2px rgba(0,0,0,.4)}
+/* Drop zone */
+.pwc-drop-zone{flex:1;display:flex;flex-direction:column;overflow:hidden;position:relative}
+.pwc-drop-hint{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;color:var(--text3);font-size:13px;pointer-events:none;opacity:.5}
+.pwc-drop-hint.hidden{display:none}
+.pwc-drop-zone.drag-over{background:#eff6ff}
+/* Plan table */
+.pwc-plan-table-wrap{flex:1;overflow:auto}
+.pwc-plan-table{width:100%;border-collapse:collapse;font-size:12px}
+.pwc-plan-table thead{position:sticky;top:0;z-index:4}
+.pwc-plan-table th{background:#f0f4ff;border-bottom:2px solid var(--accent);border-right:1px solid var(--border2);padding:5px 8px;font-size:9px;font-weight:700;color:#1d4ed8;letter-spacing:.06em;text-transform:uppercase;white-space:nowrap}
+.pwc-plan-table td{padding:5px 8px;border-bottom:1px solid var(--border2);border-right:1px solid var(--border2);vertical-align:middle;white-space:nowrap}
+.pwc-plan-table tr:hover td{background:#f0f4ff}
+.pwc-plan-table tr.pwc-grp-sep td{background:#f0f4ff;font-weight:700;font-size:10px;color:#1d4ed8;padding:3px 8px;border-bottom:1px solid var(--accent)}
+.pwc-remove-row{cursor:pointer;color:#dc2626;font-weight:700;padding:0 4px;border:none;background:none;font-size:14px}
+.pwc-draggable{cursor:grab}
+@media print{
+  .pwc-cards-panel,.pwc-toolbar{display:none!important}
+  .pwc-plan-panel{width:100%!important}
+}
 .vs-inp{width:100%;height:28px;border:1px solid var(--border);border-radius:3px;padding:0 6px;font-size:12px;outline:none;background:#fffbeb;transition:border .15s}
 .vs-inp:focus{border-color:var(--accent);background:#fff}
 .vs-obs{width:100%;min-height:28px;border:1px solid var(--border);border-radius:3px;padding:3px 6px;font-size:11px;outline:none;background:#fffbeb;resize:vertical;font-family:inherit;line-height:1.4}
@@ -6095,11 +6104,8 @@ tr:nth-child(even) td{background:#f9f9f9}
    PROGRAMARE WORKCENTER
 ═══════════════════════════════════════════════════════════════ */
 function buildPwcData(eff){
-  // Returns array: {prio,matNo,matName,matType,wcName,wcGroup,opNo,opNoNum,opSeq,
-  //   totalNec,onHand,wipAtWC,wipBefore,dePrelucrat,runT,setupT,runMin,setupMin,execTimeMin,fps[]}
-  const byKey=new Map(); // `${matNo}||${wcName}` → row
+  const byKey=new Map();
   if(!S.planData.size||!S.bomIdx||!S.bowIdx) return[];
-
   const sortedPlan=[...S.planData.entries()].sort((a,b)=>{
     const pa=S.planPrio[a[0]]||'',pb=S.planPrio[b[0]]||'';
     if(!pa&&!pb)return a[0].localeCompare(b[0]);
@@ -6108,10 +6114,8 @@ function buildPwcData(eff){
     if(!isNaN(na)&&!isNaN(nb))return na-nb;
     return pa.localeCompare(pb);
   });
-
   const processComp=(itemNo,prio,matNo,unitsNeeded)=>{
-    const rawOps=S.bowIdx?.get(`${itemNo}__${matNo}`)||[];
-    if(!rawOps.length)return;
+    const rawOps=S.bowIdx?.get(`${itemNo}__${matNo}`)||[];if(!rawOps.length)return;
     const ops=rawOps.map(op=>({
       seq:parseFloat(String(op['Ope seq']||'0').replace(',','.'))||0,
       opNoNum:parseFloat(String(op['Operation no']||'0').replace(',','.'))||0,
@@ -6120,7 +6124,6 @@ function buildPwcData(eff){
       runT:parseFloat(String(op['Run time']||'0').replace(',','.'))||0,
       setupT:parseFloat(String(op['Setup time']||'0').replace(',','.'))||0,
     })).sort((a,b)=>a.seq-b.seq);
-
     const stock=S.stockIdx?.get(matNo)||{onHand:0,wipByWC:{}};
     const onHand=Math.max(0,stock.onHand);
     const wipByWC=stock.wipByWC||{};
@@ -6133,57 +6136,33 @@ function buildPwcData(eff){
       if(bestIdx<0)continue;
       wipAtIdx.set(bestIdx,(wipAtIdx.get(bestIdx)||0)+wipQty);
     }
-    const st=S.stockIdx?.get(matNo)||{onHand:0,totalWIP:0,name:'',type:''};
-
+    const st=S.stockIdx?.get(matNo)||{onHand:0,name:'',type:''};
     for(let i=0;i<ops.length;i++){
       const op=ops[i];
-      let alreadyDone=onHand;
-      let wipBefore=0,wipAtWC=wipAtIdx.get(i)||0;
-      for(const [seqIdx,wq] of wipAtIdx){
-        if(seqIdx>i)alreadyDone+=wq;
-        if(seqIdx<i)wipBefore+=wq;
-      }
+      let alreadyDone=onHand;let wipBefore=0;const wipAtWC=wipAtIdx.get(i)||0;
+      for(const [seqIdx,wq] of wipAtIdx){if(seqIdx>i)alreadyDone+=wq;if(seqIdx<i)wipBefore+=wq;}
       const dePrelucrat=Math.max(0,unitsNeeded-alreadyDone);
       const runMin=dePrelucrat>0?(dePrelucrat*op.runT)/eff:0;
       const setupMin=dePrelucrat>0?op.setupT/eff:0;
-      const execTimeMin=runMin+setupMin;
-      const wcGroup=S.wcSetupIdx?.[op.wcName]?.wcType||'';
-
+      const wcMeta=S.wcSetupIdx?.[op.wcName];
+      const wcGroup=wcMeta?.wcType||'';
       const key=`${matNo}||${op.wcName}`;
-      if(!byKey.has(key)){
-        byKey.set(key,{
-          prio,matNo,matName:st.name||'',matType:st.type||'',
-          wcName:op.wcName,wcGroup,opNo:op.opNo,opNoNum:op.opNoNum,opSeq:op.seq,
-          totalNec:0,onHand:st.onHand,wipAtWC:0,wipBefore:0,
-          dePrelucrat:0,runT:op.runT,setupT:op.setupT,
-          runMin:0,setupMin:0,execTimeMin:0,
-          fps:[],inSched:false,
-        });
-      }
+      if(!byKey.has(key)){byKey.set(key,{prio,matNo,matName:st.name||'',matType:st.type||'',wcName:op.wcName,wcGroup,opNo:op.opNo,opNoNum:op.opNoNum,opSeq:op.seq,totalNec:0,onHand:st.onHand,wipAtWC:0,wipBefore:0,dePrelucrat:0,runT:op.runT,setupT:op.setupT,runMin:0,setupMin:0,execTimeMin:0,fps:[],fpDetails:[]});}
       const row=byKey.get(key);
-      row.totalNec+=unitsNeeded;
-      row.wipAtWC=wipAtWC; // same component — same WIP
-      row.wipBefore=wipBefore;
-      row.dePrelucrat+=dePrelucrat;
-      row.runMin+=runMin;
-      row.setupMin+=setupMin;
-      row.execTimeMin+=execTimeMin;
-      if(!row.fps.includes(itemNo))row.fps.push(itemNo);
-      // Keep highest prio (numerically lowest or alphabetically first)
+      row.totalNec+=unitsNeeded;row.wipAtWC=wipAtWC;row.wipBefore=wipBefore;row.dePrelucrat+=dePrelucrat;row.runMin+=runMin;row.setupMin+=setupMin;row.execTimeMin+=runMin+setupMin;
+      if(!row.fps.includes(itemNo)){row.fps.push(itemNo);row.fpDetails.push({itemNo,prio,qty:unitsNeeded,dePrelucrat,execTimeMin:runMin+setupMin});}
+      else{const fd=row.fpDetails.find(f=>f.itemNo===itemNo);if(fd){fd.qty+=unitsNeeded;fd.dePrelucrat+=dePrelucrat;fd.execTimeMin+=runMin+setupMin;}}
       const cp=parseFloat(prio),rp=parseFloat(row.prio);
       if(!row.prio||(prio&&(!isNaN(cp)&&!isNaN(rp)?cp<rp:prio<row.prio)))row.prio=prio;
     }
   };
-
   for(const [itemNo,plan] of sortedPlan){
     const prio=S.planPrio[itemNo]||'';
     const planQ=plan.totalQty;
     const stockFP=S.stockIdx?.get(itemNo)||{onHand:0};
     const effectiveQty=Math.max(0,planQ-Math.max(0,stockFP.onHand));
     if(effectiveQty<=0)continue;
-    // FP own ops
     processComp(itemNo,prio,itemNo,planQ);
-    // Walk BOM
     const walkBOM=(compNo,parentQty,vis)=>{
       const key=`${itemNo}__${compNo}`;
       const bomRows=S.bomIdx?.get(key)||[];
@@ -6191,16 +6170,14 @@ function buildPwcData(eff){
         const matNo=str(row['Material no']);if(!matNo)continue;
         const unQty=parseFloat(row['Material qty'])||1;
         const neededQty=parentQty*unQty;
-        const st=S.stockIdx?.get(matNo)||{type:''};
-        if(st.type!=='P')processComp(itemNo,prio,matNo,neededQty);
-        if(!vis.has(matNo)&&(S.bomIdx?.get(`${itemNo}__${matNo}`)||[]).length>0)
-          walkBOM(matNo,neededQty,new Set([...vis,matNo]));
+        const st2=S.stockIdx?.get(matNo)||{type:''};
+        if(st2.type!=='P')processComp(itemNo,prio,matNo,neededQty);
+        if(!vis.has(matNo)&&(S.bomIdx?.get(`${itemNo}__${matNo}`)||[]).length>0)walkBOM(matNo,neededQty,new Set([...vis,matNo]));
       }
     };
     walkBOM(itemNo,effectiveQty,new Set([itemNo]));
   }
-  // Sort by prio asc, then matNo
-  const arr=[...byKey.values()].sort((a,b)=>{
+  return [...byKey.values()].sort((a,b)=>{
     const pa=a.prio||'',pb=b.prio||'';
     if(!pa&&!pb)return a.matNo.localeCompare(b.matNo);
     if(!pa)return 1;if(!pb)return -1;
@@ -6208,18 +6185,15 @@ function buildPwcData(eff){
     if(!isNaN(na)&&!isNaN(nb))return na-nb;
     return pa.localeCompare(pb)||a.matNo.localeCompare(b.matNo);
   });
-  return arr;
 }
 
 function getWcGroups(){
   if(!S.wcSetupIdx)return[];
-  const groups=new Map(); // wcType → {label,wcs:[],totalTeam}
+  const groups=new Map();
   for(const [wcName,d] of Object.entries(S.wcSetupIdx)){
-    const g=d.wcType||'(necunoscut)';
+    const g=d.wcType||'';if(!g)continue;
     if(!groups.has(g))groups.set(g,{label:g.replace(/^\d+ /,''),wcType:g,wcs:[],totalTeam:0});
-    const grp=groups.get(g);
-    grp.wcs.push(wcName);
-    grp.totalTeam+=d.prodTeam||0;
+    const grp=groups.get(g);grp.wcs.push(wcName);grp.totalTeam+=d.prodTeam||0;
   }
   return [...groups.values()].sort((a,b)=>a.wcType.localeCompare(b.wcType));
 }
@@ -6227,197 +6201,175 @@ function getWcGroups(){
 function renderPwcTab(){
   const page=dv('pwc-page');
   const ps=S.pwcState;
-
   if(!S.planData.size){page.appendChild(mkEmpty('Programare Workcenter','Adaugati produse in Planificare.'));return page;}
   if(!S.bomIdx||!S.bowIdx){page.appendChild(mkEmpty('Programare Workcenter','Incarcati fisierele BOM si BOW.'));return page;}
 
+  const groups=getWcGroups();
+  if(!ps.selectedGroup&&groups.length>0)ps.selectedGroup=groups[0].wcType;
+  if(!ps.scheduled)ps.scheduled=[];
+
   // ── Toolbar ──
   const tb=dv('pwc-toolbar');
+  tb.appendChild(sp('','Workcenter Group:'));
+  const grpSel=el('select','stk-sel');grpSel.style.minWidth='180px';
+  const optAll=el('option');optAll.value='';optAll.textContent='Toate grupurile';grpSel.appendChild(optAll);
+  groups.forEach(g=>{const o=el('option');o.value=g.wcType;o.textContent=g.label+` (${g.totalTeam} echipe · ${(g.totalTeam*8).toFixed(0)}h)`;if(ps.selectedGroup===g.wcType)o.selected=true;grpSel.appendChild(o);});
+  grpSel.addEventListener('change',e=>{ps.selectedGroup=e.target.value;ps.scheduled=[];rebuild();});
+  tb.appendChild(grpSel);
   tb.appendChild(sp('','Eficienta:'));
-  const effInp=el('input','plan-eff-inp');effInp.type='number';effInp.min='1';effInp.max='100';effInp.step='1';
-  effInp.value=String(ps.eff||100);effInp.style.width='64px';
+  const effInp=el('input','plan-eff-inp');effInp.type='number';effInp.min='1';effInp.max='100';effInp.step='1';effInp.value=String(ps.eff||100);effInp.style.width='60px';
   effInp.addEventListener('input',e=>{ps.eff=Math.min(100,Math.max(1,parseInt(e.target.value)||100));rebuild();});
   tb.appendChild(effInp);tb.appendChild(sp('','%'));
-  const exportBtn=el('button','tbtn');exportBtn.textContent='⬇ Export Excel';exportBtn.style.marginLeft='auto';
-  exportBtn.addEventListener('click',()=>exportPwc());
+  const printBtn=el('button','tbtn');printBtn.textContent='🖨 Printeaza';
+  printBtn.addEventListener('click',()=>window.print());
+  tb.appendChild(printBtn);
+  const exportBtn=el('button','tbtn');exportBtn.textContent='⬇ Export Excel';
+  exportBtn.addEventListener('click',()=>exportPwcPlan());
   tb.appendChild(exportBtn);
   page.appendChild(tb);
 
   const body=dv('pwc-body');
+  page.appendChild(body);
 
-  // ── Sidebar ──
-  const sidebar=dv('pwc-sidebar');
-  const sbTitle=dv('pwc-sidebar-title');sbTitle.textContent='Workcenter Group';sidebar.appendChild(sbTitle);
-  const groupList=dv('pwc-group-list');
-  const groups=getWcGroups();
-
-  // Auto-select first group
-  if(!ps.selectedGroup&&groups.length>0)ps.selectedGroup=groups[0].wcType;
-
-  groups.forEach(g=>{
-    const item=dv(`pwc-group-item${ps.selectedGroup===g.wcType?' active':''}`);
-    const nameEl=dv('pwc-group-name');nameEl.textContent=g.label;item.appendChild(nameEl);
-    const metaEl=dv('pwc-group-meta');
-    const availH=(g.totalTeam*8).toFixed(0);
-    metaEl.textContent=`${g.wcs.length} WC · ${g.totalTeam} echipe · ${availH}h disponibil`;
-    item.appendChild(metaEl);
-    item.addEventListener('click',()=>{ps.selectedGroup=g.wcType;ps.scheduled=[];buildMain();});
-    groupList.appendChild(item);
-  });
-  sidebar.appendChild(groupList);
-  body.appendChild(sidebar);
-
-  // ── Main panel ──
-  const main=dv('pwc-main');
-
-  function buildMain(){
-    main.innerHTML='';
-    // Update sidebar active state
-    groupList.querySelectorAll('.pwc-group-item').forEach((item,i)=>{
-      item.className=`pwc-group-item${ps.selectedGroup===groups[i]?.wcType?' active':''}`;
-    });
-
+  function rebuild(){
+    body.innerHTML='';
     const eff=(ps.eff||100)/100;
     const allData=buildPwcData(eff);
-    const grpData=ps.selectedGroup?allData.filter(r=>r.wcGroup===ps.selectedGroup):allData;
-    const activeData=grpData.filter(r=>r.dePrelucrat>0);
-    const curGroup=groups.find(g=>g.wcType===ps.selectedGroup);
-    const availH=curGroup?(curGroup.totalTeam*8):0;
+    const curGroup=groups.find(g=>g.wcType===ps.selectedGroup)||null;
+    const grpData=ps.selectedGroup?allData.filter(r=>r.wcGroup===ps.selectedGroup&&r.dePrelucrat>0):allData.filter(r=>r.dePrelucrat>0);
+    const availH=curGroup?curGroup.totalTeam*8:0;
     const availMin=availH*60;
 
-    // ── Scheduling area ──
-    const schedArea=dv('pwc-sched-area');
-    const schedTitle=dv('pwc-sched-title');
-    schedTitle.textContent=`Plan ${curGroup?.label||''} · Disponibil: ${availH}h (${curGroup?.totalTeam||0} echipe × 8h)`;
-    schedArea.appendChild(schedTitle);
+    // ── Left: source cards panel (20%) ──
+    const cardsPanel=dv('pwc-cards-panel');
+    const cardsTitle=dv('pwc-cards-title');
+    cardsTitle.textContent=`${grpData.length} componente de prelucrat`;
+    cardsPanel.appendChild(cardsTitle);
+    const cardsScroll=dv('pwc-cards-scroll');
+    grpData.forEach(r=>{
+      const key=`${r.matNo}||${r.wcName}`;
+      const inPlan=ps.scheduled.includes(key);
+      const card=dv(`pwc-comp-card${inPlan?' in-plan':''}`);
+      card.setAttribute('draggable',inPlan?'false':'true');
+      card.title=`${r.matNo} · ${r.wcName}\nDe prelucrat: ${fmtN(r.dePrelucrat)} buc\nTimp: ${fmtMin(r.execTimeMin)}\nProduse finale: ${r.fps.join(', ')}`;
+      card.addEventListener('dragstart',e=>{if(inPlan)return;e.dataTransfer.setData('text/plain',key);e.dataTransfer.effectAllowed='copy';});
+      const codeEl=dv('pwc-card-code');codeEl.textContent=r.matNo;card.appendChild(codeEl);
+      const fpEl=dv('pwc-card-fp');fpEl.textContent=r.fps.slice(0,2).join(', ')+(r.fps.length>2?` +${r.fps.length-2}`:'');card.appendChild(fpEl);
+      const qtyEl=dv('pwc-card-qty');qtyEl.textContent=fmtN(r.dePrelucrat)+' buc';card.appendChild(qtyEl);
+      const timeEl=dv('pwc-card-time');timeEl.textContent=fmtMin(r.execTimeMin)+' ('+r.wcName+')';card.appendChild(timeEl);
+      cardsScroll.appendChild(card);
+    });
+    cardsPanel.appendChild(cardsScroll);
+    body.appendChild(cardsPanel);
+
+    // ── Right: plan panel (80%) ──
+    const planPanel=dv('pwc-plan-panel');
+    // Header with title, progress bar, and stats
+    const planHdr=dv('pwc-plan-header');
+    const planTitle=dv('pwc-plan-title');
+    planTitle.textContent=`Plan de lucru zilnic — ${curGroup?curGroup.label:'Toate grupurile'}`;
+    planHdr.appendChild(planTitle);
 
     // Progress bar
-    const schedItems=ps.scheduled.filter(key=>allData.find(r=>`${r.matNo}||${r.wcName}`===key&&r.dePrelucrat>0));
-    ps.scheduled=schedItems;
-    const scheduledMin=schedItems.reduce((s,key)=>{const r=allData.find(r=>`${r.matNo}||${r.wcName}`===key);return s+(r?.execTimeMin||0);},0);
-    const pct=availMin>0?Math.min(100,scheduledMin/availMin*100):0;
+    const schedKeys=ps.scheduled.filter(k=>grpData.find(r=>`${r.matNo}||${r.wcName}`===k));
+    ps.scheduled=schedKeys;
+    const schedMin=schedKeys.reduce((s,k)=>{const r=grpData.find(r=>`${r.matNo}||${r.wcName}`===k);return s+(r?.execTimeMin||0);},0);
+    const pct=availMin>0?Math.min(100,schedMin/availMin*100):0;
     const barColor=pct<=80?'#16a34a':pct<=100?'#d97706':'#dc2626';
+    if(availMin>0){
+      const progWrap=dv('pwc-prog-wrap');
+      const progFill=dv('pwc-prog-fill');progFill.style.cssText=`width:${pct.toFixed(1)}%;background:${barColor}`;
+      const progLbl=dv('pwc-prog-lbl');progLbl.textContent=`${pct.toFixed(0)}% · ${fmtMin(schedMin)}/${fmtMin(availMin)}`;
+      progWrap.appendChild(progFill);progWrap.appendChild(progLbl);
+      planHdr.appendChild(progWrap);
+    }
+    const metaEl=dv('pwc-plan-meta');
+    metaEl.textContent=`${schedKeys.length} componente · ${fmtMin(schedMin)} programat${availMin>0?' · Ramas: '+fmtMin(Math.max(0,availMin-schedMin)):''}`;
+    planHdr.appendChild(metaEl);
+    planPanel.appendChild(planHdr);
 
-    const progWrap=dv('pwc-progress-bar-wrap');
-    const progFill=dv('pwc-progress-fill');progFill.style.cssText=`width:${pct}%;background:${barColor}`;
-    const progLbl=dv('pwc-progress-label');progLbl.textContent=`${pct.toFixed(1)}% · ${fmtMin(scheduledMin)} / ${fmtMin(availMin)}`;
-    progWrap.appendChild(progFill);progWrap.appendChild(progLbl);
-    schedArea.appendChild(progWrap);
-
-    const availInfo=dv('pwc-avail-info');
-    availInfo.textContent=`Programat: ${fmtMin(scheduledMin)} · Ramas disponibil: ${fmtMin(Math.max(0,availMin-scheduledMin))}`;
-    schedArea.appendChild(availInfo);
-
-    // Scheduled pills row
-    const pillsRow=dv('pwc-sched-items');
     // Drop zone
-    const dropZone=dv('pwc-drop-zone');dropZone.textContent='↖ Trage componente aici';
+    const dropZone=dv('pwc-drop-zone');
+    const hint=dv('pwc-drop-hint');
+    hint.innerHTML='<div style="font-size:32px">↖</div><div>Trage casete din stânga pentru a programa componente</div>';
+    if(schedKeys.length>0)hint.classList.add('hidden');
+    dropZone.appendChild(hint);
     dropZone.addEventListener('dragover',e=>{e.preventDefault();dropZone.classList.add('drag-over');});
-    dropZone.addEventListener('dragleave',()=>dropZone.classList.remove('drag-over'));
+    dropZone.addEventListener('dragleave',e=>{if(!dropZone.contains(e.relatedTarget))dropZone.classList.remove('drag-over');});
     dropZone.addEventListener('drop',e=>{
       e.preventDefault();dropZone.classList.remove('drag-over');
       const key=e.dataTransfer.getData('text/plain');
-      if(key&&!ps.scheduled.includes(key)){ps.scheduled.push(key);buildMain();}
+      if(key&&!ps.scheduled.includes(key)){ps.scheduled.push(key);rebuild();}
     });
-    pillsRow.appendChild(dropZone);
 
-    schedItems.forEach(key=>{
-      const r=allData.find(r=>`${r.matNo}||${r.wcName}`===key);if(!r)return;
-      const pill=dv('pwc-sched-pill');
-      const nameSpan=sp('');nameSpan.style.cssText='font-weight:600;max-width:120px;overflow:hidden;text-overflow:ellipsis';nameSpan.textContent=r.matNo;
-      const timeSpan=sp('pill-time',fmtMin(r.execTimeMin));
-      const removeBtn=sp('');removeBtn.style.cssText='color:#dc2626;cursor:pointer;margin-left:4px;font-weight:700';removeBtn.textContent='×';
-      removeBtn.addEventListener('click',()=>{ps.scheduled=ps.scheduled.filter(k=>k!==key);buildMain();});
-      pill.appendChild(nameSpan);pill.appendChild(timeSpan);pill.appendChild(removeBtn);
-      pillsRow.appendChild(pill);
-    });
-    schedArea.appendChild(pillsRow);
-    main.appendChild(schedArea);
-
-    // ── Table ──
-    const tableArea=dv('pwc-table-area');
-    if(!activeData.length){
-      const msg=dv('');msg.style.cssText='padding:24px;text-align:center;color:var(--text3);font-size:12px';
-      msg.textContent=ps.selectedGroup?`Nu exista componente de prelucrat in ${curGroup?.label||ps.selectedGroup}.`:'Selectati un Workcenter Group din sidebar.';
-      tableArea.appendChild(msg);main.appendChild(tableArea);return;
+    // Plan table (if items scheduled)
+    if(schedKeys.length>0){
+      const tableWrap=dv('pwc-plan-table-wrap');
+      const tbl=el('table','pwc-plan-table');
+      const thead=el('thead');const hr=el('tr');
+      ['','Prio','Componenta','Denumire','Produs Final','Cant. nec.','On Hand','De executat','Timp exec.'].forEach(h=>{
+        const th=el('th');th.textContent=h;hr.appendChild(th);
+      });
+      thead.appendChild(hr);tbl.appendChild(thead);
+      const tbody=el('tbody');
+      // Sort scheduled by prio
+      const schedSorted=[...schedKeys].sort((a,b)=>{
+        const ra=grpData.find(r=>`${r.matNo}||${r.wcName}`===a);
+        const rb=grpData.find(r=>`${r.matNo}||${r.wcName}`===b);
+        const pa=ra?.prio||'',pb=rb?.prio||'';
+        if(!pa&&!pb)return 0;if(!pa)return 1;if(!pb)return -1;
+        const na=parseFloat(pa),nb=parseFloat(pb);
+        if(!isNaN(na)&&!isNaN(nb))return na-nb;
+        return pa.localeCompare(pb);
+      });
+      schedSorted.forEach(key=>{
+        const r=grpData.find(r=>`${r.matNo}||${r.wcName}`===key);if(!r)return;
+        // Group separator row
+        const sepTr=el('tr','pwc-grp-sep');
+        const sepTd=el('td');sepTd.colSpan=9;
+        sepTd.textContent=`${r.matNo}${r.matName?' — '+r.matName:''} · ${r.wcName} · De executat total: ${fmtN(r.dePrelucrat)} buc · ${fmtMin(r.execTimeMin)}`;
+        const removeBtn=el('button','pwc-remove-row');removeBtn.textContent='×';removeBtn.title='Scoate din plan';
+        removeBtn.addEventListener('click',()=>{ps.scheduled=ps.scheduled.filter(k=>k!==key);rebuild();});
+        sepTd.appendChild(removeBtn);sepTr.appendChild(sepTd);tbody.appendChild(sepTr);
+        // Detail rows per FP
+        r.fpDetails.forEach(fd=>{
+          const tr=el('tr');
+          const tdR=el('td');tdR.textContent='';tr.appendChild(tdR); // empty remove col
+          const tdPrio=el('td');const ps2=sp('');ps2.style.cssText='font-weight:800;font-family:Arial,monospace;color:#92400e';ps2.textContent=fd.prio;tdPrio.appendChild(ps2);tr.appendChild(tdPrio);
+          const tdMat=el('td');tdMat.appendChild(sp('stk-code',r.matNo));tr.appendChild(tdMat);
+          const tdNm=el('td');tdNm.style.maxWidth='200px';tdNm.style.overflow='hidden';tdNm.style.textOverflow='ellipsis';tdNm.textContent=r.matName;tr.appendChild(tdNm);
+          const tdFP=el('td');tdFP.appendChild(sp('stk-fp-pill',fd.itemNo));tr.appendChild(tdFP);
+          const num=(v,col)=>{const td2=el('td');const s=sp('pdm-num',fmtN(v));if(col)s.style.color=col;s.style.cssText=(s.style.cssText||'')+'display:block;text-align:right';td2.appendChild(s);return td2;};
+          tr.appendChild(num(fd.qty));
+          tr.appendChild(num(r.onHand,r.onHand<0?'#dc2626':r.onHand>0?'#15803d':'var(--text3)'));
+          tr.appendChild(num(fd.dePrelucrat,fd.dePrelucrat>0?'#dc2626':'#15803d'));
+          const tdT=el('td');const tS=sp('pdm-num',fmtMin(fd.execTimeMin));tS.style.cssText='font-weight:700;color:#7c3aed;display:block;text-align:right';tdT.appendChild(tS);tr.appendChild(tdT);
+          tbody.appendChild(tr);
+        });
+      });
+      tbl.appendChild(tbody);tableWrap.appendChild(tbl);
+      dropZone.appendChild(tableWrap);
     }
+    planPanel.appendChild(dropZone);
+    body.appendChild(planPanel);
 
-    const tbl=el('table','pwc-table');
-    const thead=el('thead');const hr=el('tr');
-    ['','Prio','Componenta','Denumire','Tip','Workcenter','Total nec.','On Hand','WIP la WC','WIP preced.','De prelucrat','Status','Run+Setup','Timp exec.','Prod. Finale'].forEach(h=>{
-      const th=el('th');th.textContent=h;hr.appendChild(th);
-    });
-    thead.appendChild(hr);tbl.appendChild(thead);
-    const tbody=el('tbody');
-    for(const r of activeData){
-      const key=`${r.matNo}||${r.wcName}`;
-      const inSched=ps.scheduled.includes(key);
-      const status=r.dePrelucrat-r.wipAtWC; // positive = need more work; negative = WIP covers it
-      const tr=el('tr',inSched?'pwc-in-sched':'pwc-draggable');
-      tr.setAttribute('draggable','true');
-      tr.addEventListener('dragstart',e=>{e.dataTransfer.setData('text/plain',key);tr.style.opacity='.5';});
-      tr.addEventListener('dragend',()=>{tr.style.opacity='1';});
-
-      // Drag handle
-      const tdH=el('td');tdH.style.cursor='grab';const hsp=sp('pwc-drag-handle','⠿');tdH.appendChild(hsp);tr.appendChild(tdH);
-      // Prio
-      const tdP=el('td');const ps2=sp('');ps2.style.cssText='font-weight:800;font-family:Arial,monospace;color:#92400e';ps2.textContent=r.prio;tdP.appendChild(ps2);tr.appendChild(tdP);
-      // Mat code
-      const tdM=el('td');tdM.appendChild(sp('stk-code',r.matNo));tr.appendChild(tdM);
-      // Name
-      const tdN=el('td');tdN.textContent=r.matName;tdN.title=r.matName;tr.appendChild(tdN);
-      // Type
-      const tdT=el('td');const tc=r.matType==='M'?'stk-type-m':r.matType==='P'?'stk-type-b':'stk-type-d';if(r.matType)tdT.appendChild(sp(tc,r.matType));tr.appendChild(tdT);
-      // WC
-      const tdWC=el('td');tdWC.style.fontWeight='600';tdWC.textContent=r.wcName;tr.appendChild(tdWC);
-      // Nums
-      const num=(v,col='var(--text)')=>{const td2=el('td');const s=sp('pdm-num',fmtN(v));s.style.cssText=`display:block;text-align:right;color:${col}`;td2.appendChild(s);return td2;};
-      tr.appendChild(num(r.totalNec));
-      tr.appendChild(num(r.onHand,r.onHand<0?'#dc2626':r.onHand>0?'#15803d':'var(--text3)'));
-      tr.appendChild(num(r.wipAtWC,r.wipAtWC>0?'#d97706':'var(--text3)'));
-      tr.appendChild(num(r.wipBefore,r.wipBefore>0?'#d97706':'var(--text3)'));
-      tr.appendChild(num(r.dePrelucrat,r.dePrelucrat>0?'#dc2626':'#15803d'));
-      // Status
-      const tdSt=el('td');const stS=sp('pdm-num',(status>0?'+':'')+fmtN(status));stS.style.cssText=`font-weight:700;color:${status>0?'#dc2626':status<0?'#15803d':'var(--text3)'}`;tdSt.appendChild(stS);tr.appendChild(tdSt);
-      // Run+Setup hint
-      const tdRS=el('td');tdRS.style.cssText='font-size:10px;color:var(--text3)';tdRS.textContent=`${fmtMin(r.runMin)} + ${fmtMin(r.setupMin)}`;tr.appendChild(tdRS);
-      // Exec time
-      const tdE=el('td');const eS=sp('pdm-num',fmtMin(r.execTimeMin));eS.style.cssText='font-weight:700;color:#7c3aed';tdE.appendChild(eS);tr.appendChild(tdE);
-      // FPs
-      const tdFP=el('td');const fpW=dv('');fpW.style.cssText='display:flex;flex-wrap:wrap;gap:2px';
-      r.fps.slice(0,3).forEach(fp=>fpW.appendChild(sp('stk-fp-pill',fp)));
-      if(r.fps.length>3)fpW.appendChild(sp('stk-fp-more',`+${r.fps.length-3}`));
-      tdFP.appendChild(fpW);tr.appendChild(tdFP);
-      tbody.appendChild(tr);
+    function exportPwcPlan(){
+      const rows=[];
+      schedSorted?.forEach(key=>{
+        const r=grpData.find(r=>`${r.matNo}||${r.wcName}`===key);if(!r)return;
+        r.fpDetails.forEach(fd=>{
+          rows.push({'Prio':fd.prio,'Componenta':r.matNo,'Denumire':r.matName,'Produs Final':fd.itemNo,'Cant. nec.':+fd.qty.toFixed(2),'On Hand':+r.onHand.toFixed(2),'De executat':+fd.dePrelucrat.toFixed(2),'Timp exec. (min)':+fd.execTimeMin.toFixed(2),'Workcenter':r.wcName});
+        });
+      });
+      if(!rows.length){alert('Nu exista date.');return;}
+      const wb=XLSX.utils.book_new();const ws=XLSX.utils.json_to_sheet(rows);
+      XLSX.utils.book_append_sheet(wb,ws,'Plan WC');
+      XLSX.writeFile(wb,`Plan_WC_${new Date().toISOString().slice(0,10)}.xlsx`);
     }
-    tbl.appendChild(tbody);tableArea.appendChild(tbl);
-    main.appendChild(tableArea);
+    exportBtn.onclick=exportPwcPlan;
   }
 
-  buildMain();
-  body.appendChild(main);
-  page.appendChild(body);
-
-  function exportPwc(){
-    const eff=(ps.eff||100)/100;
-    const allData=buildPwcData(eff);
-    const grpData=ps.selectedGroup?allData.filter(r=>r.wcGroup===ps.selectedGroup):allData;
-    const rows=grpData.filter(r=>r.dePrelucrat>0).map(r=>({
-      'Prio':r.prio,'Componenta':r.matNo,'Denumire':r.matName,'Tip':r.matType,
-      'Workcenter':r.wcName,'WC Group':r.wcGroup.replace(/^\d+ /,''),
-      'Total nec.':+r.totalNec.toFixed(2),'On Hand':+r.onHand.toFixed(2),
-      'WIP la WC':+r.wipAtWC.toFixed(2),'WIP precedent':+r.wipBefore.toFixed(2),
-      'De prelucrat':+r.dePrelucrat.toFixed(2),'Status':+(r.dePrelucrat-r.wipAtWC).toFixed(2),
-      'Run (min)':+r.runMin.toFixed(2),'Setup (min)':+r.setupMin.toFixed(2),'Timp total (min)':+r.execTimeMin.toFixed(2),
-      'Prod. Finale':r.fps.join(', '),
-    }));
-    if(!rows.length){alert('Nu exista date.');return;}
-    const wb=XLSX.utils.book_new();
-    const ws=XLSX.utils.json_to_sheet(rows);
-    XLSX.utils.book_append_sheet(wb,ws,'Programare WC');
-    XLSX.writeFile(wb,`Programare_WC_${new Date().toISOString().slice(0,10)}.xlsx`);
-  }
-
+  rebuild();
   return page;
 }
 
