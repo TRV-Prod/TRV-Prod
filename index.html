@@ -621,7 +621,7 @@ button { font-family: var(--sans); }
 /* Left panel - 20% - source cards */
 .pwc-cards-panel{width:20%;min-width:180px;max-width:280px;flex-shrink:0;border-right:1px solid var(--border);display:flex;flex-direction:column;overflow:hidden;background:#f8f9fb}
 .pwc-cards-title{padding:8px 10px 4px;font-size:9.5px;font-weight:700;color:var(--text3);letter-spacing:.07em;text-transform:uppercase;flex-shrink:0;border-bottom:1px solid var(--border2)}
-.pwc-cards-scroll{flex:1;overflow-y:auto;padding:6px;display:grid;grid-template-columns:1fr 1fr;gap:5px;align-content:start}
+.pwc-cards-scroll{flex:1;overflow-y:auto;padding:6px;display:flex;flex-direction:column;gap:5px;align-content:start}
 .pwc-comp-card{background:#fff;border:1.5px solid var(--border);border-radius:6px;padding:6px 8px;cursor:grab;user-select:none;transition:all .15s;font-size:11px}
 .pwc-comp-card:hover{border-color:var(--accent);background:#eff6ff;transform:translateY(-1px);box-shadow:0 2px 8px rgba(30,64,175,.12)}
 .pwc-comp-card:active{cursor:grabbing;transform:translateY(0)}
@@ -1215,7 +1215,8 @@ function applyWcSetup(rows,ts){
     const wcName=String(r['Workcenter name']||'').trim();
     const prodTeam=parseFloat(r['Prod Team'])||0;
     const wcType=String(r['Workcenter Type']||'').trim();
-    if(wcName){idx[wcName]={wcNo,prodTeam,wcType};}
+    const wcGroup=String(r['Workcenter Group']||r['Workcenter Type']||'').trim();
+    if(wcName){idx[wcName]={wcNo,prodTeam,wcType,wcGroup};}
   }
   S.wcSetupIdx=idx;
   // Pre-populate wcAvailHours from prodTeam (8h * 5 days * prodTeam)
@@ -2386,7 +2387,7 @@ function renderFisiereTab(){
    {key:'bow',icon:'⚙',title:'TRV-Product structure – BOW',desc:'Operatiile de productie asociate fiecarei componente (operatii, timpi)'},
    {key:'po',icon:'📊',title:'Planning Overview',desc:'Stocuri On Hand, WIP per workcenter, comenzi deschise'},
    {key:'ob',icon:'📦',title:'Open Order Lines',desc:'Comenzi deschise: Entry/Confirm/Request dt, cantitati, clienti, preturi'},
-   {key:'wcs',icon:'🔧',title:'Workcenter Setup',desc:'Tipul de workcenter (Initial/Intermediary/Final), numarul de echipe (Prod Team) pentru calculul capacitatii'},
+   {key:'wcs',icon:'🔧',title:'Workcenter Setup',desc:'Workcenter Type (Initial/Intermediary/Final Op), numarul de echipe (Prod Team) pentru calculul capacitatii'},
    {key:'intransit',icon:'🚚',title:'In Transit',desc:'Produse finite expediate, neinca receptionate de client. Se scad din stocul On Hand al produselor finale.'}]
   .forEach(fc=>{
     const loaded=fc.key==='bom'?!!S.bomData:fc.key==='bow'?!!S.bowData:fc.key==='po'?!!S.poData:fc.key==='wcs'?!!S.wcSetupData:fc.key==='intransit'?!!S.inTransitData:!!S.obData;
@@ -6145,7 +6146,7 @@ function buildPwcData(eff){
       const runMin=dePrelucrat>0?(dePrelucrat*op.runT)/eff:0;
       const setupMin=dePrelucrat>0?op.setupT/eff:0;
       const wcMeta=S.wcSetupIdx?.[op.wcName];
-      const wcGroup=wcMeta?.wcType||'';
+      const wcGroup=wcMeta?.wcGroup||'';
       const key=`${matNo}||${op.wcName}`;
       if(!byKey.has(key)){byKey.set(key,{prio,matNo,matName:st.name||'',matType:st.type||'',wcName:op.wcName,wcGroup,opNo:op.opNo,opNoNum:op.opNoNum,opSeq:op.seq,totalNec:0,onHand:st.onHand,wipAtWC:0,wipBefore:0,dePrelucrat:0,runT:op.runT,setupT:op.setupT,runMin:0,setupMin:0,execTimeMin:0,fps:[],fpDetails:[]});}
       const row=byKey.get(key);
@@ -6191,11 +6192,11 @@ function getWcGroups(){
   if(!S.wcSetupIdx)return[];
   const groups=new Map();
   for(const [wcName,d] of Object.entries(S.wcSetupIdx)){
-    const g=d.wcType||'';if(!g)continue;
-    if(!groups.has(g))groups.set(g,{label:g.replace(/^\d+ /,''),wcType:g,wcs:[],totalTeam:0});
+    const g=d.wcGroup||d.wcType||'';if(!g)continue;
+    if(!groups.has(g))groups.set(g,{label:g.replace(/^\d+ /,''),wcGroup:g,wcs:[],totalTeam:0});
     const grp=groups.get(g);grp.wcs.push(wcName);grp.totalTeam+=d.prodTeam||0;
   }
-  return [...groups.values()].sort((a,b)=>a.wcType.localeCompare(b.wcType));
+  return [...groups.values()].sort((a,b)=>a.wcGroup.localeCompare(b.wcGroup));
 }
 
 function renderPwcTab(){
@@ -6205,15 +6206,15 @@ function renderPwcTab(){
   if(!S.bomIdx||!S.bowIdx){page.appendChild(mkEmpty('Programare Workcenter','Incarcati fisierele BOM si BOW.'));return page;}
 
   const groups=getWcGroups();
-  if(!ps.selectedGroup&&groups.length>0)ps.selectedGroup=groups[0].wcType;
+  if(!ps.selectedGroup&&groups.length>0)ps.selectedGroup=groups[0].wcGroup;
   if(!ps.scheduled)ps.scheduled=[];
 
   // ── Toolbar ──
   const tb=dv('pwc-toolbar');
   tb.appendChild(sp('','Workcenter Group:'));
   const grpSel=el('select','stk-sel');grpSel.style.minWidth='180px';
-  const optAll=el('option');optAll.value='';optAll.textContent='Toate grupurile';grpSel.appendChild(optAll);
-  groups.forEach(g=>{const o=el('option');o.value=g.wcType;o.textContent=g.label+` (${g.totalTeam} echipe · ${(g.totalTeam*8).toFixed(0)}h)`;if(ps.selectedGroup===g.wcType)o.selected=true;grpSel.appendChild(o);});
+  const optAll=el('option');optAll.value='';optAll.textContent='Toate tipurile';grpSel.appendChild(optAll);
+  groups.forEach(g=>{const o=el('option');o.value=g.wcGroup;o.textContent=g.label+` (${g.totalTeam} echipe · ${(g.totalTeam*8).toFixed(0)}h)`;if(ps.selectedGroup===g.wcGroup)o.selected=true;grpSel.appendChild(o);});
   grpSel.addEventListener('change',e=>{ps.selectedGroup=e.target.value;ps.scheduled=[];rebuild();});
   tb.appendChild(grpSel);
   tb.appendChild(sp('','Eficienta:'));
@@ -6235,7 +6236,7 @@ function renderPwcTab(){
     body.innerHTML='';
     const eff=(ps.eff||100)/100;
     const allData=buildPwcData(eff);
-    const curGroup=groups.find(g=>g.wcType===ps.selectedGroup)||null;
+    const curGroup=groups.find(g=>g.wcGroup===ps.selectedGroup)||null;
     const grpData=ps.selectedGroup?allData.filter(r=>r.wcGroup===ps.selectedGroup&&r.dePrelucrat>0):allData.filter(r=>r.dePrelucrat>0);
     const availH=curGroup?curGroup.totalTeam*8:0;
     const availMin=availH*60;
@@ -6249,8 +6250,9 @@ function renderPwcTab(){
     grpData.forEach(r=>{
       const key=`${r.matNo}||${r.wcName}`;
       const inPlan=ps.scheduled.includes(key);
-      const card=dv(`pwc-comp-card${inPlan?' in-plan':''}`);
-      card.setAttribute('draggable',inPlan?'false':'true');
+      if(inPlan)return; // hide already-scheduled cards from sidebar
+      const card=dv('pwc-comp-card');
+      card.setAttribute('draggable','true');
       card.title=`${r.matNo} · ${r.wcName}\nDe prelucrat: ${fmtN(r.dePrelucrat)} buc\nTimp: ${fmtMin(r.execTimeMin)}\nProduse finale: ${r.fps.join(', ')}`;
       card.addEventListener('dragstart',e=>{if(inPlan)return;e.dataTransfer.setData('text/plain',key);e.dataTransfer.effectAllowed='copy';});
       const codeEl=dv('pwc-card-code');codeEl.textContent=r.matNo;card.appendChild(codeEl);
@@ -6322,19 +6324,19 @@ function renderPwcTab(){
         if(!isNaN(na)&&!isNaN(nb))return na-nb;
         return pa.localeCompare(pb);
       });
-      schedSorted.forEach(key=>{
+      schedSorted.forEach((key,idx2)=>{
         const r=grpData.find(r=>`${r.matNo}||${r.wcName}`===key);if(!r)return;
-        // Group separator row
-        const sepTr=el('tr','pwc-grp-sep');
-        const sepTd=el('td');sepTd.colSpan=9;
-        sepTd.textContent=`${r.matNo}${r.matName?' — '+r.matName:''} · ${r.wcName} · De executat total: ${fmtN(r.dePrelucrat)} buc · ${fmtMin(r.execTimeMin)}`;
-        const removeBtn=el('button','pwc-remove-row');removeBtn.textContent='×';removeBtn.title='Scoate din plan';
-        removeBtn.addEventListener('click',()=>{ps.scheduled=ps.scheduled.filter(k=>k!==key);rebuild();});
-        sepTd.appendChild(removeBtn);sepTr.appendChild(sepTd);tbody.appendChild(sepTr);
-        // Detail rows per FP
-        r.fpDetails.forEach(fd=>{
+        // Detail rows per FP — first row gets trash icon
+        r.fpDetails.forEach((fd,fdIdx)=>{
           const tr=el('tr');
-          const tdR=el('td');tdR.textContent='';tr.appendChild(tdR); // empty remove col
+          const tdR=el('td');tdR.style.width='28px';
+          if(fdIdx===0){
+            const removeBtn=el('button','pwc-remove-row');removeBtn.title='Scoate din plan';
+            removeBtn.textContent='🗑';removeBtn.style.cssText='font-size:13px;background:none;border:none;cursor:pointer;color:#dc2626;padding:0 2px';
+            removeBtn.addEventListener('click',()=>{ps.scheduled=ps.scheduled.filter(k=>k!==key);rebuild();});
+            tdR.appendChild(removeBtn);
+          }
+          tr.appendChild(tdR); // trash or empty
           const tdPrio=el('td');const ps2=sp('');ps2.style.cssText='font-weight:800;font-family:Arial,monospace;color:#92400e';ps2.textContent=fd.prio;tdPrio.appendChild(ps2);tr.appendChild(tdPrio);
           const tdMat=el('td');tdMat.appendChild(sp('stk-code',r.matNo));tr.appendChild(tdMat);
           const tdNm=el('td');tdNm.style.maxWidth='200px';tdNm.style.overflow='hidden';tdNm.style.textOverflow='ellipsis';tdNm.textContent=r.matName;tr.appendChild(tdNm);
