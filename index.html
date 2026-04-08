@@ -6326,28 +6326,27 @@ function renderPwcTab(){
       });
       schedSorted.forEach((key,idx2)=>{
         const r=grpData.find(r=>`${r.matNo}||${r.wcName}`===key);if(!r)return;
-        // Detail rows per FP — first row gets trash icon
-        r.fpDetails.forEach((fd,fdIdx)=>{
-          const tr=el('tr');
-          const tdR=el('td');tdR.style.width='28px';
-          if(fdIdx===0){
-            const removeBtn=el('button','pwc-remove-row');removeBtn.title='Scoate din plan';
-            removeBtn.textContent='🗑';removeBtn.style.cssText='font-size:13px;background:none;border:none;cursor:pointer;color:#dc2626;padding:0 2px';
-            removeBtn.addEventListener('click',()=>{ps.scheduled=ps.scheduled.filter(k=>k!==key);rebuild();});
-            tdR.appendChild(removeBtn);
-          }
-          tr.appendChild(tdR); // trash or empty
-          const tdPrio=el('td');const ps2=sp('');ps2.style.cssText='font-weight:800;font-family:Arial,monospace;color:#92400e';ps2.textContent=fd.prio;tdPrio.appendChild(ps2);tr.appendChild(tdPrio);
-          const tdMat=el('td');tdMat.appendChild(sp('stk-code',r.matNo));tr.appendChild(tdMat);
-          const tdNm=el('td');tdNm.style.maxWidth='200px';tdNm.style.overflow='hidden';tdNm.style.textOverflow='ellipsis';tdNm.textContent=r.matName;tr.appendChild(tdNm);
-          const tdFP=el('td');tdFP.appendChild(sp('stk-fp-pill',fd.itemNo));tr.appendChild(tdFP);
-          const num=(v,col)=>{const td2=el('td');const s=sp('pdm-num',fmtN(v));if(col)s.style.color=col;s.style.cssText=(s.style.cssText||'')+'display:block;text-align:right';td2.appendChild(s);return td2;};
-          tr.appendChild(num(fd.qty));
-          tr.appendChild(num(r.onHand,r.onHand<0?'#dc2626':r.onHand>0?'#15803d':'var(--text3)'));
-          tr.appendChild(num(fd.dePrelucrat,fd.dePrelucrat>0?'#dc2626':'#15803d'));
-          const tdT=el('td');const tS=sp('pdm-num',fmtMin(fd.execTimeMin));tS.style.cssText='font-weight:700;color:#7c3aed;display:block;text-align:right';tdT.appendChild(tS);tr.appendChild(tdT);
-          tbody.appendChild(tr);
-        });
+        // Single aggregated row per component (quantities already summed across all FPs)
+        const tr=el('tr');
+        const tdR=el('td');tdR.style.width='28px';
+        const removeBtn=el('button','pwc-remove-row');removeBtn.title='Scoate din plan';
+        removeBtn.textContent='🗑';removeBtn.style.cssText='font-size:13px;background:none;border:none;cursor:pointer;color:#dc2626;padding:0 2px';
+        removeBtn.addEventListener('click',()=>{ps.scheduled=ps.scheduled.filter(k=>k!==key);rebuild();});
+        tdR.appendChild(removeBtn);tr.appendChild(tdR);
+        const tdPrio=el('td');const pS=sp('');pS.style.cssText='font-weight:800;font-family:Arial,monospace;color:#92400e';pS.textContent=r.prio;tdPrio.appendChild(pS);tr.appendChild(tdPrio);
+        const tdMat=el('td');tdMat.appendChild(sp('stk-code',r.matNo));tr.appendChild(tdMat);
+        const tdNm=el('td');tdNm.style.cssText='max-width:200px;overflow:hidden;text-overflow:ellipsis';tdNm.textContent=r.matName;tr.appendChild(tdNm);
+        // FPs as pills (for info)
+        const tdFP=el('td');const fpW=dv('');fpW.style.cssText='display:flex;flex-wrap:wrap;gap:2px';
+        r.fps.slice(0,3).forEach(fp=>fpW.appendChild(sp('stk-fp-pill',fp)));
+        if(r.fps.length>3)fpW.appendChild(sp('stk-fp-more',`+${r.fps.length-3}`));
+        tdFP.appendChild(fpW);tr.appendChild(tdFP);
+        const num=(v,col)=>{const td2=el('td');const s=sp('pdm-num',fmtN(v));if(col)s.style.color=col;s.style.cssText=(s.style.cssText||'')+'display:block;text-align:right';td2.appendChild(s);return td2;};
+        tr.appendChild(num(r.totalNec));
+        tr.appendChild(num(r.onHand,r.onHand<0?'#dc2626':r.onHand>0?'#15803d':'var(--text3)'));
+        tr.appendChild(num(r.dePrelucrat,r.dePrelucrat>0?'#dc2626':'#15803d'));
+        const tdT=el('td');const tS=sp('pdm-num',fmtMin(r.execTimeMin));tS.style.cssText='font-weight:700;color:#7c3aed;display:block;text-align:right';tdT.appendChild(tS);tr.appendChild(tdT);
+        tbody.appendChild(tr);
       });
       tbl.appendChild(tbody);tableWrap.appendChild(tbl);
       dropZone.appendChild(tableWrap);
@@ -6359,9 +6358,11 @@ function renderPwcTab(){
       const rows=[];
       schedSorted?.forEach(key=>{
         const r=grpData.find(r=>`${r.matNo}||${r.wcName}`===key);if(!r)return;
-        r.fpDetails.forEach(fd=>{
-          rows.push({'Prio':fd.prio,'Componenta':r.matNo,'Denumire':r.matName,'Produs Final':fd.itemNo,'Cant. nec.':+fd.qty.toFixed(2),'On Hand':+r.onHand.toFixed(2),'De executat':+fd.dePrelucrat.toFixed(2),'Timp exec. (min)':+fd.execTimeMin.toFixed(2),'Workcenter':r.wcName});
-        });
+        rows.push({'Prio':r.prio,'Componenta':r.matNo,'Denumire':r.matName,
+          'Produse Finale':r.fps.join(', '),'Cant. nec.':+r.totalNec.toFixed(2),
+          'On Hand':+r.onHand.toFixed(2),'De executat':+r.dePrelucrat.toFixed(2),
+          'Run (min)':+r.runMin.toFixed(2),'Setup (min)':+r.setupMin.toFixed(2),
+          'Timp exec. (min)':+r.execTimeMin.toFixed(2),'Workcenter':r.wcName});
       });
       if(!rows.length){alert('Nu exista date.');return;}
       const wb=XLSX.utils.book_new();const ws=XLSX.utils.json_to_sheet(rows);
