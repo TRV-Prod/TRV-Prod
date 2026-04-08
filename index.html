@@ -908,6 +908,8 @@ const S={
   eficientaPlan:100,
   wcAvailHours:{},
   wcLoadMode:'wip',  // 'wip' | 'total'
+  inTransitData:null,  // parsed In_transit rows
+  inTransitIdx:null,   // itemNo → transitQty (sum)
   wcSetupData:null,   // parsed Workcenter_Setup rows
   wcSetupIdx:null,    // wcName → {prodTeam, wcType}
   planData:new Map(),
@@ -1112,6 +1114,8 @@ async function sbLoadAllData(){
     {k:'po', label:'Planning Overview',apply:(r,t)=>applyPo(r,t)},
     {k:'ob', label:'Order Book',apply:(r,t)=>applyOb(r,t)},
     {k:'wcs',label:'Workcenter Setup',apply:(r,t)=>applyWcSetup(r,t)},
+    {k:'intransit',label:'In Transit',apply:(r,t)=>applyInTransit(r,t)},
+    {k:'intransit',label:'In Transit',apply:(r,t)=>applyInTransit(r,t)},
   ]){
     S.loadMsg=`Se incarca ${label}...`;setLoadMsg(S.loadMsg);await yieldFrame();
     const data=await sbDownload(cfg,`data-${k}.json`);
@@ -1175,6 +1179,33 @@ function applyWcSetup(rows,ts){
     if(d.prodTeam>0&&!S.wcAvailHours[wcName]){
       S.wcAvailHours[wcName]=8*5*d.prodTeam;
     }
+  }
+}
+
+function applyInTransit(rows,ts){
+  S.inTransitData=rows;
+  S.inTransitData._ts=ts;
+  const idx={};
+  for(const r of rows){
+    const item=String(r['Item']||'').trim();
+    const qty=parseFloat(r['Qty']);
+    if(!item||item==='Total'||isNaN(qty)||qty<=0)continue;
+    idx[item]=(idx[item]||0)+qty;
+  }
+  S.inTransitIdx=idx;
+  // Apply corrections to stockIdx if already loaded
+  applyInTransitToStock();
+}
+
+function applyInTransitToStock(){
+  if(!S.stockIdx||!S.inTransitIdx)return;
+  // Apply transit deductions to onHand — store original if not already stored
+  for(const [itemNo,transitQty] of Object.entries(S.inTransitIdx)){
+    const st=S.stockIdx.get(itemNo);
+    if(!st)continue;
+    // Store the original onHand (from PO) only once
+    if(st._origOnHand===undefined)st._origOnHand=st.onHand;
+    st.onHand=st._origOnHand-transitQty;
   }
 }
 
@@ -1265,6 +1296,8 @@ function applyPo(rows,ts){
     }
   }
   S.stockIdx=idx;
+  // Apply any already-loaded transit corrections
+  applyInTransitToStock();
 }
 
 function applyOb(rows,ts){
@@ -1329,6 +1362,8 @@ async function loadFromIndexedDB(){
   if(wcse){S.loadMsg='Se incarca Workcenter Setup...';setLoadMsg(S.loadMsg);await yieldFrame();applyWcSetup(wcse.rows,wcse.ts);await yieldFrame();}
   const vsData=await dbLoad('stocVerif');
   if(vsData?.inputs)S.stocVerifInputs=vsData.inputs;
+  const ite=await dbLoad('intransit');
+  if(ite){S.loadMsg='Se incarca In Transit...';setLoadMsg(S.loadMsg);await yieldFrame();applyInTransit(ite.rows,ite.ts);await yieldFrame();}
   const plane=await dbLoad('plan');
   if(plane?.entries){
     S.planData=new Map(plane.entries);
@@ -2305,10 +2340,11 @@ function renderFisiereTab(){
    {key:'bow',icon:'⚙',title:'TRV-Product structure – BOW',desc:'Operatiile de productie asociate fiecarei componente (operatii, timpi)'},
    {key:'po',icon:'📊',title:'Planning Overview',desc:'Stocuri On Hand, WIP per workcenter, comenzi deschise'},
    {key:'ob',icon:'📦',title:'Open Order Lines',desc:'Comenzi deschise: Entry/Confirm/Request dt, cantitati, clienti, preturi'},
-   {key:'wcs',icon:'🔧',title:'Workcenter Setup',desc:'Tipul de workcenter (Initial/Intermediary/Final), numarul de echipe (Prod Team) pentru calculul capacitatii'}]
+   {key:'wcs',icon:'🔧',title:'Workcenter Setup',desc:'Tipul de workcenter (Initial/Intermediary/Final), numarul de echipe (Prod Team) pentru calculul capacitatii'},
+   {key:'intransit',icon:'🚚',title:'In Transit',desc:'Produse finite expediate, neinca receptionate de client. Se scad din stocul On Hand al produselor finale.'}]
   .forEach(fc=>{
-    const loaded=fc.key==='bom'?!!S.bomData:fc.key==='bow'?!!S.bowData:fc.key==='po'?!!S.poData:fc.key==='wcs'?!!S.wcSetupData:!!S.obData;
-    const meta=fc.key==='wcs'?{rows:S.wcSetupData?.length||0,ts:S.wcSetupData?._ts}:(S.meta[fc.key]||{rows:0,ts:null});
+    const loaded=fc.key==='bom'?!!S.bomData:fc.key==='bow'?!!S.bowData:fc.key==='po'?!!S.poData:fc.key==='wcs'?!!S.wcSetupData:fc.key==='intransit'?!!S.inTransitData:!!S.obData;
+    const meta=fc.key==='wcs'?{rows:S.wcSetupData?.length||0,ts:S.wcSetupData?._ts}:fc.key==='intransit'?{rows:S.inTransitData?.length||0,ts:S.inTransitData?._ts}:(S.meta[fc.key]||{rows:0,ts:null});
     const card=dv(`file-card${loaded?' loaded':''}`);
     const fch=dv('fc-header');
     fch.appendChild(sp('fc-icon',fc.icon));
@@ -2340,8 +2376,8 @@ function renderFisiereTab(){
         const buf=await readFileAsBuffer(file);
         const rows=parseBuffer(new Uint8Array(buf));
         const ts=Date.now();
-        if(fc.key==='bom')applyBom(rows,ts);else if(fc.key==='bow')applyBow(rows,ts);else if(fc.key==='po')applyPo(rows,ts);else if(fc.key==='wcs'){applyWcSetup(rows,ts);rows._ts=ts;}else applyOb(rows,ts);
-        if(fc.key==='wcs'){await dbSave('wcs',{rows,ts});}else{await dbSave(fc.key,{rows,ts});}
+        if(fc.key==='bom')applyBom(rows,ts);else if(fc.key==='bow')applyBow(rows,ts);else if(fc.key==='po')applyPo(rows,ts);else if(fc.key==='wcs'){applyWcSetup(rows,ts);rows._ts=ts;}else if(fc.key==='intransit'){applyInTransit(rows,ts);rows._ts=ts;}else applyOb(rows,ts);
+        if(fc.key==='wcs'||fc.key==='intransit'){await dbSave(fc.key,{rows,ts});}else{await dbSave(fc.key,{rows,ts});}
         if(S.sbCfg&&S.session?.role==='admin'){
           lbl.innerHTML='';lbl.appendChild(el('span','spin-sm'));lbl.appendChild(document.createTextNode(' Sincronizare Supabase...'));
           try{await sbSaveData(fc.key,rows,ts);}catch(e){console.warn('Supabase sync:',e);}
