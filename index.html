@@ -6241,20 +6241,66 @@ function renderPwcTab(){
     const availH=curGroup?curGroup.totalTeam*8:0;
     const availMin=availH*60;
 
+    // Compute WIP for the selected group (sum of WIP across all WCs in the group)
+    const grpWcNames=curGroup?curGroup.wcs:[];
+    // For each component, sum WIP from all WCs in the group
+    const getWipForGroup=(matNo)=>{
+      const st=S.stockIdx?.get(matNo)||{wipByWC:{}};
+      let total=0;
+      for(const [poCol,wipQty] of Object.entries(st.wipByWC||{})){
+        if(!wipQty||wipQty<=0)continue;
+        const wc=wcLabel(poCol);
+        if(!ps.selectedGroup||grpWcNames.some(g=>g.toLowerCase()===wc.toLowerCase()))total+=wipQty;
+      }
+      return total;
+    };
+
+    // Track selected cards for multi-select
+    if(!ps.selected)ps.selected=new Set();
+
     // ── Left: source cards panel (20%) ──
     const cardsPanel=dv('pwc-cards-panel');
+
+    // Cards toolbar: select all / add selected
+    const cardsTb=dv('');cardsTb.style.cssText='display:flex;gap:4px;padding:5px 6px;background:#fff;border-bottom:1px solid var(--border2);flex-shrink:0;flex-wrap:wrap';
+    const availCards=grpData.filter(r=>!ps.scheduled.includes(`${r.matNo}||${r.wcName}`));
+    const addAllBtn=el('button','tbtn');addAllBtn.style.cssText='font-size:10px;height:24px;padding:0 8px';
+    addAllBtn.textContent='+ Adauga toate';
+    addAllBtn.addEventListener('click',()=>{
+      availCards.forEach(r=>{const k=`${r.matNo}||${r.wcName}`;if(!ps.scheduled.includes(k))ps.scheduled.push(k);});
+      ps.selected=new Set();rebuild();
+    });
+    const addSelBtn=el('button','tbtn');addSelBtn.style.cssText='font-size:10px;height:24px;padding:0 8px';
+    addSelBtn.textContent='+ Selectate';
+    addSelBtn.addEventListener('click',()=>{
+      ps.selected.forEach(k=>{if(!ps.scheduled.includes(k))ps.scheduled.push(k);});
+      ps.selected=new Set();rebuild();
+    });
+    const rmAllBtn=el('button','tbtn');rmAllBtn.style.cssText='font-size:10px;height:24px;padding:0 8px;color:#dc2626';
+    rmAllBtn.textContent='✕ Elimina toate';
+    rmAllBtn.addEventListener('click',()=>{ps.scheduled=[];ps.selected=new Set();rebuild();});
+    cardsTb.appendChild(addAllBtn);cardsTb.appendChild(addSelBtn);cardsTb.appendChild(rmAllBtn);
+    cardsPanel.appendChild(cardsTb);
+
     const cardsTitle=dv('pwc-cards-title');
-    cardsTitle.textContent=`${grpData.length} componente de prelucrat`;
+    cardsTitle.textContent=`${availCards.length} componente de prelucrat`;
     cardsPanel.appendChild(cardsTitle);
+
     const cardsScroll=dv('pwc-cards-scroll');
-    grpData.forEach(r=>{
+    availCards.forEach(r=>{
       const key=`${r.matNo}||${r.wcName}`;
-      const inPlan=ps.scheduled.includes(key);
-      if(inPlan)return; // hide already-scheduled cards from sidebar
-      const card=dv('pwc-comp-card');
+      const isSel=ps.selected.has(key);
+      const card=dv(`pwc-comp-card${isSel?' selected':''}`);
+      if(isSel)card.style.cssText='border-color:var(--accent);background:#dbeafe;box-shadow:0 0 0 2px #bfdbfe';
       card.setAttribute('draggable','true');
       card.title=`${r.matNo} · ${r.wcName}\nDe prelucrat: ${fmtN(r.dePrelucrat)} buc\nTimp: ${fmtMin(r.execTimeMin)}\nProduse finale: ${r.fps.join(', ')}`;
-      card.addEventListener('dragstart',e=>{if(inPlan)return;e.dataTransfer.setData('text/plain',key);e.dataTransfer.effectAllowed='copy';});
+      // Click = toggle select; drag = add to plan
+      card.addEventListener('click',e=>{
+        e.stopPropagation();
+        if(ps.selected.has(key))ps.selected.delete(key);else ps.selected.add(key);
+        rebuild();
+      });
+      card.addEventListener('dragstart',e=>{e.dataTransfer.setData('text/plain',key);e.dataTransfer.effectAllowed='copy';});
       const codeEl=dv('pwc-card-code');codeEl.textContent=r.matNo;card.appendChild(codeEl);
       const fpEl=dv('pwc-card-fp');fpEl.textContent=r.fps.slice(0,2).join(', ')+(r.fps.length>2?` +${r.fps.length-2}`:'');card.appendChild(fpEl);
       const qtyEl=dv('pwc-card-qty');qtyEl.textContent=fmtN(r.dePrelucrat)+' buc';card.appendChild(qtyEl);
@@ -6309,7 +6355,7 @@ function renderPwcTab(){
       const tableWrap=dv('pwc-plan-table-wrap');
       const tbl=el('table','pwc-plan-table');
       const thead=el('thead');const hr=el('tr');
-      ['','Prio','Componenta','Denumire','Produs Final','Cant. nec.','On Hand','De executat','Timp exec.'].forEach(h=>{
+      ['','Prio','Componenta','Denumire','Prod. Finale','Cant. nec.','On Hand','WIP Grup','De executat','Timp exec.'].forEach(h=>{
         const th=el('th');th.textContent=h;hr.appendChild(th);
       });
       thead.appendChild(hr);tbl.appendChild(thead);
@@ -6344,6 +6390,8 @@ function renderPwcTab(){
         const num=(v,col)=>{const td2=el('td');const s=sp('pdm-num',fmtN(v));if(col)s.style.color=col;s.style.cssText=(s.style.cssText||'')+'display:block;text-align:right';td2.appendChild(s);return td2;};
         tr.appendChild(num(r.totalNec));
         tr.appendChild(num(r.onHand,r.onHand<0?'#dc2626':r.onHand>0?'#15803d':'var(--text3)'));
+        const wipGrp=getWipForGroup(r.matNo);
+        tr.appendChild(num(wipGrp,wipGrp>0?'#d97706':'var(--text3)'));
         tr.appendChild(num(r.dePrelucrat,r.dePrelucrat>0?'#dc2626':'#15803d'));
         const tdT=el('td');const tS=sp('pdm-num',fmtMin(r.execTimeMin));tS.style.cssText='font-weight:700;color:#7c3aed;display:block;text-align:right';tdT.appendChild(tS);tr.appendChild(tdT);
         tbody.appendChild(tr);
@@ -6360,7 +6408,8 @@ function renderPwcTab(){
         const r=grpData.find(r=>`${r.matNo}||${r.wcName}`===key);if(!r)return;
         rows.push({'Prio':r.prio,'Componenta':r.matNo,'Denumire':r.matName,
           'Produse Finale':r.fps.join(', '),'Cant. nec.':+r.totalNec.toFixed(2),
-          'On Hand':+r.onHand.toFixed(2),'De executat':+r.dePrelucrat.toFixed(2),
+          'On Hand':+r.onHand.toFixed(2),'WIP Grup':+getWipForGroup(r.matNo).toFixed(2),
+          'De executat':+r.dePrelucrat.toFixed(2),
           'Run (min)':+r.runMin.toFixed(2),'Setup (min)':+r.setupMin.toFixed(2),
           'Timp exec. (min)':+r.execTimeMin.toFixed(2),'Workcenter':r.wcName});
       });
