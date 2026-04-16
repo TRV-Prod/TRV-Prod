@@ -5118,7 +5118,12 @@ ${bodyHTML}
     if(seenOps.has(key))return;seenOps.add(key);
     const rawOps=S.bowIdx?.get(key)||[];
     const st=S.stockIdx?.get(matNo)||{onHand:0,totalWIP:0,wipByWC:{}};
-    const needing=matNo===itemNo?effectiveQty:Math.max(0,needs?.get(matNo)?.net??needs?.get(matNo)?.needed??0);
+    // Use WIP-aware needing: from calcNeeds net, or effectiveQty for FP but reduced by WIP
+    // For the FP itself: actual pieces still needed = what calcExecTime computes as non-zero
+    const rawNeeding=matNo===itemNo?effectiveQty:Math.max(0,needs?.get(matNo)?.net??needs?.get(matNo)?.needed??0);
+    // WIP-aware: subtract WIP that's already past this component's operations
+    const stForComp=S.stockIdx?.get(matNo)||{onHand:0,totalWIP:0};
+    const needing=Math.max(0,rawNeeding-Math.max(0,stForComp.onHand)-Math.max(0,stForComp.totalWIP));
     for(const op of rawOps){
       const opNoNum=parseFloat(String(op['Operation no']||'0').replace(',','.'))||0;
       const wcName=str(op['Ope name']||op['Ope descr']||'?');
@@ -5224,9 +5229,9 @@ ${bodyHTML}
         sepTr.appendChild(sepTd);sepTbody.appendChild(sepTr);tbl.appendChild(sepTbody);
       }
       const isPreFinalOp=typeKey.includes('Initial')||typeKey.includes('Intermediary');
-      // effectiveDone: only if time is 0 AND no component still needs pieces
-      const anyStillNeeded=grp.compStocks&&grp.compStocks.some(cs=>cs.needing>0);
-      const effectiveDone=(grp.sumRem<=0.01&&!anyStillNeeded)||(cascadeFinalized&&isPreFinalOp);
+      // effectiveDone: sumRem already accounts for WIP correctly (from calcExecTime)
+      // Don't override with anyStillNeeded — needing in compStocks is raw, not WIP-adjusted
+      const effectiveDone=grp.sumRem<=0.01||(cascadeFinalized&&isPreFinalOp);
       const rawDonePct=grp.sumTotal>0?(1-grp.sumRem/grp.sumTotal)*100:100;
       const donePctFinal=effectiveDone?100:Math.max(0,Math.round(rawDonePct*100)/100);
       const donePctDisplay=donePctFinal===100?'100%':donePctFinal.toFixed(2)+'%';
