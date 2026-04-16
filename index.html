@@ -1603,10 +1603,11 @@ function calcExecTime(fpCode, inputQty, needs){
   const byWC = new Map(); // wcName → {runMin, setupMin}
 
   function acc(wcName, units, runT, setupT){
-    if(!byWC.has(wcName)) byWC.set(wcName,{runMin:0,setupMin:0});
+    if(!byWC.has(wcName)) byWC.set(wcName,{runMin:0,setupMin:0,needingQty:0});
     const e=byWC.get(wcName);
     e.runMin   += units * runT;
     e.setupMin += setupT;
+    e.needingQty += units;
   }
 
   function addOpsForComponent(fpCtxCode, matNo, unitsNeeded){
@@ -5230,8 +5231,10 @@ ${bodyHTML}
       }
       const isPreFinalOp=typeKey.includes('Initial')||typeKey.includes('Intermediary');
       // effectiveDone: sumRem already accounts for WIP correctly (from calcExecTime)
-      // Don't override with anyStillNeeded — needing in compStocks is raw, not WIP-adjusted
-      const effectiveDone=grp.sumRem<=0.01||(cascadeFinalized&&isPreFinalOp);
+      // BUT: if op has needing>0 but runT=setupT=0 (e.g. Subcontracting), sumRem=0 yet work is pending
+      const wcEntry=execTime.byWC.get(g.wcName)||{runMin:0,setupMin:0,needingQty:0};
+      const stillPending=wcEntry.needingQty>0;  // pieces still need this op
+      const effectiveDone=(grp.sumRem<=0.01&&!stillPending)||(cascadeFinalized&&isPreFinalOp);
       const rawDonePct=grp.sumTotal>0?(1-grp.sumRem/grp.sumTotal)*100:100;
       const donePctFinal=effectiveDone?100:Math.max(0,Math.round(rawDonePct*100)/100);
       const donePctDisplay=donePctFinal===100?'100%':donePctFinal.toFixed(2)+'%';
@@ -5244,17 +5247,21 @@ ${bodyHTML}
       const tbody=el('tbody');tbody.className='pdm-op-group-body';
       tbody.setAttribute('data-grp',grpId);tbody.setAttribute('data-rem',grp.sumRem.toFixed(4));
 
-      const tr=el('tr','pdm-op-row');if(done)tr.style.background='#f0fdf4';
+      const tr=el('tr','pdm-op-row');
+      if(done)tr.style.background='#f0fdf4';
+      else if(stillPending&&grp.sumRem<=0.01)tr.style.background='#fff9f0'; // in-progress highlight
       const toggle=sp('pdm-op-toggle','▶');
       const tdTog=el('td');tdTog.style.width='16px';tdTog.appendChild(toggle);tr.appendChild(tdTog);
 
       const tdOp=el('td');tdOp.style.cssText='font-family:Arial,monospace;font-size:11px;color:var(--text3)';tdOp.textContent=grp.opNo;tr.appendChild(tdOp);
       const tdWc=el('td');tdWc.style.fontWeight='700';
       if(done){const tick=sp('','✓ ');tick.style.color='#16a34a';tdWc.appendChild(tick);}
+      else if(stillPending&&grp.sumRem<=0.01){const ic=sp('','⏳ ');ic.style.color='#d97706';tdWc.appendChild(ic);}
       tdWc.appendChild(document.createTextNode(grp.wcName));tr.appendChild(tdWc);
       const tdTot=el('td');tdTot.appendChild(sp('pdm-num',fmtMin(grp.sumTotal)));tr.appendChild(tdTot);
       const tdRem=el('td');
       if(done){tdRem.appendChild(sp('pdm-done','Finalizat'));}
+      else if(stillPending&&grp.sumRem<=0.01){const s=sp('pdm-done','În curs');s.style.color='#d97706';tdRem.appendChild(s);}
       else tdRem.appendChild(sp('pdm-num rem',fmtMin(grp.sumRem)));
       tr.appendChild(tdRem);
       const tdPct=el('td');tdPct.appendChild(sp('pdm-num',donePctDisplay));tdPct.lastChild.style.cssText=`color:${c};font-weight:700`;tr.appendChild(tdPct);
