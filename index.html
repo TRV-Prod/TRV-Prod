@@ -5224,7 +5224,9 @@ ${bodyHTML}
         sepTr.appendChild(sepTd);sepTbody.appendChild(sepTr);tbl.appendChild(sepTbody);
       }
       const isPreFinalOp=typeKey.includes('Initial')||typeKey.includes('Intermediary');
-      const effectiveDone=grp.sumRem<=0.01||(cascadeFinalized&&isPreFinalOp);
+      // effectiveDone: only if time is 0 AND no component still needs pieces
+      const anyStillNeeded=grp.compStocks&&grp.compStocks.some(cs=>cs.needing>0);
+      const effectiveDone=(grp.sumRem<=0.01&&!anyStillNeeded)||(cascadeFinalized&&isPreFinalOp);
       const rawDonePct=grp.sumTotal>0?(1-grp.sumRem/grp.sumTotal)*100:100;
       const donePctFinal=effectiveDone?100:Math.max(0,Math.round(rawDonePct*100)/100);
       const donePctDisplay=donePctFinal===100?'100%':donePctFinal.toFixed(2)+'%';
@@ -6168,16 +6170,22 @@ function buildPwcData(eff){
     const effectiveQty=Math.max(0,planQ-Math.max(0,stockFP.onHand));
     if(effectiveQty<=0)continue;
     processComp(itemNo,prio,itemNo,planQ);
+    // Use calcNeeds to get stock-aware needed quantities for all components
+    const needs=S.stockIdx?calcNeeds(itemNo,effectiveQty):null;
     const walkBOM=(compNo,parentQty,vis)=>{
       const key=`${itemNo}__${compNo}`;
       const bomRows=S.bomIdx?.get(key)||[];
       for(const row of bomRows){
         const matNo=str(row['Material no']);if(!matNo)continue;
         const unQty=parseFloat(row['Material qty'])||1;
-        const neededQty=parentQty*unQty;
+        // Use calcNeeds result if available (stock-aware), else fall back to raw qty
+        const needEntry=needs?.get(matNo);
+        const neededQty=needEntry?needEntry.needed:parentQty*unQty;
+        if(neededQty<=0)continue; // skip if stock covers this component
         const st2=S.stockIdx?.get(matNo)||{type:''};
         if(st2.type!=='P')processComp(itemNo,prio,matNo,neededQty);
-        if(!vis.has(matNo)&&(S.bomIdx?.get(`${itemNo}__${matNo}`)||[]).length>0)walkBOM(matNo,neededQty,new Set([...vis,matNo]));
+        if(!vis.has(matNo)&&(S.bomIdx?.get(`${itemNo}__${matNo}`)||[]).length>0)
+          walkBOM(matNo,neededQty,new Set([...vis,matNo]));
       }
     };
     walkBOM(itemNo,effectiveQty,new Set([itemNo]));
