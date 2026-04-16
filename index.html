@@ -6178,10 +6178,18 @@ function buildPwcData(eff){
       for(const row of bomRows){
         const matNo=str(row['Material no']);if(!matNo)continue;
         const unQty=parseFloat(row['Material qty'])||1;
-        // Use calcNeeds result if available (stock-aware), else fall back to raw qty
-        const needEntry=needs?.get(matNo);
-        const neededQty=needEntry?needEntry.needed:parentQty*unQty;
-        if(neededQty<=0)continue; // skip if stock covers this component
+        // If needs map exists: use net (stock-deducted) quantity
+        // If component not in needs map at all → parent was fully covered → skip
+        let neededQty;
+        if(needs){
+          const needEntry=needs.get(matNo);
+          if(!needEntry)continue; // not in needs = parent stock covered this branch
+          neededQty=needEntry.net; // net = after deducting onHand + WIP
+          if(neededQty<=0)continue; // skip if stock covers this component
+        } else {
+          neededQty=parentQty*unQty;
+          if(neededQty<=0)continue;
+        }
         const st2=S.stockIdx?.get(matNo)||{type:''};
         if(st2.type!=='P')processComp(itemNo,prio,matNo,neededQty);
         if(!vis.has(matNo)&&(S.bomIdx?.get(`${itemNo}__${matNo}`)||[]).length>0)
