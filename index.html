@@ -990,7 +990,7 @@ const S={
     colWidths:{prio:55,matNo:140,matName:220,matType:50,fps:160,unQty:75,totalNec:90,onHand:90,wip:130,dePrelucrat:100,timp:110},
     visibleCols:new Set(['prio','matNo','matName','matType','fps','unQty','totalNec','onHand','wip','dePrelucrat','timp']),
   },
-  pwcState:{eff:100,selectedGroup:null,scheduled:[],notes:{},onlyWipCovered:false},  // Programare WC state
+  pwcState:{eff:100,selectedGroup:null,scheduledByGroup:{},notes:{},onlyWipCovered:false},  // Programare WC state
   stocVerifInputs:{},  // matNo → {cantFizica:'', obs:''}
   stocVerifFilter:{
     fpFilter:'all', tipFilter:'all', colFilters:{},
@@ -1190,7 +1190,7 @@ async function sbLoadAllData(){
     if(planData.obs)S.planObs=planData.obs;
     if(planData.wcAvailHours)S.wcAvailHours=planData.wcAvailHours;
     if(planData.prio)S.planPrio=planData.prio;
-    if(planData.pwcScheduled)S.pwcState.scheduled=planData.pwcScheduled;
+    if(planData.pwcScheduled)S.pwcState.scheduledByGroup=planData.pwcScheduled;
     if(planData.pwcNotes)S.pwcState.notes=planData.pwcNotes;
   }
   return loaded;
@@ -1198,7 +1198,7 @@ async function sbLoadAllData(){
 
 async function sbSavePlan(){
   const cfg=S.sbCfg;if(!cfg)return;
-  await sbUpload(cfg,'data-plan.json',{entries:[...S.planData.entries()],obs:S.planObs,wcAvailHours:S.wcAvailHours,prio:S.planPrio,pwcScheduled:S.pwcState.scheduled,pwcNotes:S.pwcState.notes});
+  await sbUpload(cfg,'data-plan.json',{entries:[...S.planData.entries()],obs:S.planObs,wcAvailHours:S.wcAvailHours,prio:S.planPrio,pwcScheduled:S.pwcState.scheduledByGroup,pwcNotes:S.pwcState.notes});
 }
 
 /* ── XLSX (only used on fresh upload, not on DB restore) ── */
@@ -1436,7 +1436,7 @@ async function loadFromIndexedDB(){
     if(plane.obs)S.planObs=plane.obs;
     if(plane.wcAvailHours)S.wcAvailHours=plane.wcAvailHours;
       if(plane.prio)S.planPrio=plane.prio;
-    if(plane.pwcScheduled)S.pwcState.scheduled=plane.pwcScheduled;
+    if(plane.pwcScheduled)S.pwcState.scheduledByGroup=plane.pwcScheduled;
     if(plane.pwcNotes)S.pwcState.notes=plane.pwcNotes;
   }
 }
@@ -3905,7 +3905,7 @@ function showToast(msg,type='ok',dur=2500){
 }
 
 async function savePlan(){
-  await dbSave('plan',{entries:[...S.planData.entries()],obs:S.planObs,wcAvailHours:S.wcAvailHours,prio:S.planPrio,pwcScheduled:S.pwcState.scheduled,pwcNotes:S.pwcState.notes});
+  await dbSave('plan',{entries:[...S.planData.entries()],obs:S.planObs,wcAvailHours:S.wcAvailHours,prio:S.planPrio,pwcScheduled:S.pwcState.scheduledByGroup,pwcNotes:S.pwcState.notes});
   if(S.sbCfg&&S.session){
     sbSavePlan()
       .then(()=>showToast('✓ Plan sincronizat'))
@@ -6296,7 +6296,7 @@ function renderPwcTab(){
 
   const groups=getWcGroups();
   if(!ps.selectedGroup&&groups.length>0)ps.selectedGroup=groups[0].wcGroup;
-  if(!ps.scheduled)ps.scheduled=[];
+  if(!ps.scheduledByGroup)ps.scheduledByGroup={};
 
   // ── Toolbar ──
   const tb=dv('pwc-toolbar');
@@ -6326,6 +6326,9 @@ function renderPwcTab(){
     const eff=(ps.eff||100)/100;
     const allData=buildPwcData(eff);
     const curGroup=groups.find(g=>g.wcGroup===ps.selectedGroup)||null;
+    const grp=ps.selectedGroup||'__all__';
+    // Per-group scheduled list — always a fresh array reference from state
+    if(!ps.scheduledByGroup[grp])ps.scheduledByGroup[grp]=[];
     let grpData=ps.selectedGroup?allData.filter(r=>r.wcGroup===ps.selectedGroup&&r.dePrelucrat>0):allData.filter(r=>r.dePrelucrat>0);
     const availH=curGroup?curGroup.totalTeam*8:0;
     const availMin=availH*60;
@@ -6347,31 +6350,31 @@ function renderPwcTab(){
     if(ps.onlyWipCovered)grpData=grpData.filter(r=>getWipForGroup(r.matNo)>=r.dePrelucrat&&r.dePrelucrat>0);
 
     // Track selected cards for multi-select
-    if(!ps.selected)ps.selected=new Set();
+    if(!ps.selected||!(ps.selected instanceof Set))ps.selected=new Set();
 
     // ── Left: source cards panel (20%) ──
     const cardsPanel=dv('pwc-cards-panel');
 
     // Cards toolbar: select all / add selected
     const cardsTb=dv('');cardsTb.style.cssText='display:flex;gap:4px;padding:5px 6px;background:#fff;border-bottom:1px solid var(--border2);flex-shrink:0;flex-wrap:wrap';
-    const availCards=grpData.filter(r=>!ps.scheduled.includes(`${r.matNo}||${r.wcName}`));
+    const sched=ps.scheduledByGroup[grp];
+    const availCards=grpData.filter(r=>!sched.includes(`${r.matNo}||${r.wcName}`));
     const addAllBtn=el('button','tbtn');addAllBtn.style.cssText='font-size:10px;height:24px;padding:0 8px';
     addAllBtn.textContent='+ Adauga toate';
     addAllBtn.addEventListener('click',()=>{
-      availCards.forEach(r=>{const k=`${r.matNo}||${r.wcName}`;if(!ps.scheduled.includes(k))ps.scheduled.push(k);});
+      availCards.forEach(r=>{const k=`${r.matNo}||${r.wcName}`;if(!ps.scheduledByGroup[grp].includes(k))ps.scheduledByGroup[grp].push(k);});
       ps.selected=new Set();savePlan();rebuild();
     });
     const addSelBtn=el('button','tbtn');addSelBtn.style.cssText='font-size:10px;height:24px;padding:0 8px';
     addSelBtn.textContent='+ Selectate';
     addSelBtn.addEventListener('click',()=>{
-      ps.selected.forEach(k=>{if(!ps.scheduled.includes(k))ps.scheduled.push(k);});
+      ps.selected.forEach(k=>{if(!ps.scheduledByGroup[grp].includes(k))ps.scheduledByGroup[grp].push(k);});
       ps.selected=new Set();savePlan();rebuild();
     });
     const rmAllBtn=el('button','tbtn');rmAllBtn.style.cssText='font-size:10px;height:24px;padding:0 8px;color:#dc2626';
     rmAllBtn.textContent='✕ Elimina toate';
     rmAllBtn.addEventListener('click',()=>{
-      const grpKeys=new Set(grpData.map(r=>`${r.matNo}||${r.wcName}`));
-      ps.scheduled=ps.scheduled.filter(k=>!grpKeys.has(k));
+      ps.scheduledByGroup[grp]=[];
       ps.selected=new Set();rebuild();
     });
     const wipToggle=el('button',`stk-toggle${ps.onlyWipCovered?' on':''}`);
@@ -6426,9 +6429,8 @@ function renderPwcTab(){
     planTitle.textContent=`Plan de lucru zilnic — ${curGroup?curGroup.label:'Toate grupurile'}`;
     planHdr.appendChild(planTitle);
 
-    // Progress bar — show only keys relevant to current group (don't mutate ps.scheduled)
-    const schedKeys=ps.scheduled.filter(k=>grpData.find(r=>`${r.matNo}||${r.wcName}`===k));
-    // DON'T overwrite ps.scheduled — it contains items from ALL groups
+    // Progress bar — use per-group scheduled list directly
+    const schedKeys=ps.scheduledByGroup[grp].filter(k=>allData.find(r=>`${r.matNo}||${r.wcName}`===k));
     const schedMin=schedKeys.reduce((s,k)=>{const r=grpData.find(r=>`${r.matNo}||${r.wcName}`===k);return s+(r?.execTimeMin||0);},0);
     const realPct=availMin>0?schedMin/availMin*100:0;  // can exceed 100%
     const barFillPct=Math.min(100,realPct);             // bar width capped at 100%
@@ -6458,7 +6460,7 @@ function renderPwcTab(){
     dropZone.addEventListener('drop',e=>{
       e.preventDefault();dropZone.classList.remove('drag-over');
       const key=e.dataTransfer.getData('text/plain');
-      if(key&&!ps.scheduled.includes(key)){ps.scheduled.push(key);savePlan();rebuild();}
+      if(key&&!ps.scheduledByGroup[grp].includes(key)){ps.scheduledByGroup[grp].push(key);savePlan();rebuild();}
     });
 
     // Plan table (if items scheduled)
@@ -6488,7 +6490,7 @@ function renderPwcTab(){
         const tdR=el('td');tdR.style.width='28px';
         const removeBtn=el('button','pwc-remove-row');removeBtn.title='Scoate din plan';
         removeBtn.textContent='🗑';removeBtn.style.cssText='font-size:13px;background:none;border:none;cursor:pointer;color:#dc2626;padding:0 2px';
-        removeBtn.addEventListener('click',()=>{ps.scheduled=ps.scheduled.filter(k=>k!==key);delete ps.notes[key];savePlan();rebuild();});
+        removeBtn.addEventListener('click',()=>{ps.scheduledByGroup[grp]=ps.scheduledByGroup[grp].filter(k=>k!==key);delete ps.notes[key];savePlan();rebuild();});
         tdR.appendChild(removeBtn);tr.appendChild(tdR);
         const tdPrio=el('td');const pS=sp('');pS.style.cssText='font-weight:800;font-family:Arial,monospace;color:#92400e';pS.textContent=r.prio;tdPrio.appendChild(pS);tr.appendChild(tdPrio);
         const tdMat=el('td');tdMat.appendChild(sp('stk-code',r.matNo));tr.appendChild(tdMat);
