@@ -6304,7 +6304,7 @@ function renderPwcTab(){
   const grpSel=el('select','stk-sel');grpSel.style.minWidth='180px';
   const optAll=el('option');optAll.value='';optAll.textContent='Toate tipurile';grpSel.appendChild(optAll);
   groups.forEach(g=>{const o=el('option');o.value=g.wcGroup;o.textContent=g.label+` (${g.totalTeam} echipe · ${(g.totalTeam*8).toFixed(0)}h)`;if(ps.selectedGroup===g.wcGroup)o.selected=true;grpSel.appendChild(o);});
-  grpSel.addEventListener('change',e=>{ps.selectedGroup=e.target.value;ps.scheduled=[];rebuild();});
+  grpSel.addEventListener('change',e=>{ps.selectedGroup=e.target.value;ps.selected=new Set();rebuild();});
   tb.appendChild(grpSel);
   tb.appendChild(sp('','Eficienta:'));
   const effInp=el('input','plan-eff-inp');effInp.type='number';effInp.min='1';effInp.max='100';effInp.step='1';effInp.value=String(ps.eff||100);effInp.style.width='60px';
