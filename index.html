@@ -6369,7 +6369,11 @@ function renderPwcTab(){
     });
     const rmAllBtn=el('button','tbtn');rmAllBtn.style.cssText='font-size:10px;height:24px;padding:0 8px;color:#dc2626';
     rmAllBtn.textContent='✕ Elimina toate';
-    rmAllBtn.addEventListener('click',()=>{ps.scheduled=[];ps.selected=new Set();rebuild();});
+    rmAllBtn.addEventListener('click',()=>{
+      const grpKeys=new Set(grpData.map(r=>`${r.matNo}||${r.wcName}`));
+      ps.scheduled=ps.scheduled.filter(k=>!grpKeys.has(k));
+      ps.selected=new Set();rebuild();
+    });
     const wipToggle=el('button',`stk-toggle${ps.onlyWipCovered?' on':''}`);
     wipToggle.style.cssText='font-size:10px;height:24px;padding:0 7px';
     wipToggle.textContent='🔄 Doar WIP ≥ De exec.';
@@ -6378,7 +6382,11 @@ function renderPwcTab(){
     addAllBtn._save=true;addSelBtn._save=true;rmAllBtn._save=true;
     addAllBtn.addEventListener('click',()=>savePlan(),true);
     addSelBtn.addEventListener('click',()=>savePlan(),true);
-    rmAllBtn.addEventListener('click',()=>{ps.notes={};savePlan();},true);
+    rmAllBtn.addEventListener('click',()=>{
+      const grpKeys2=new Set(grpData.map(r=>`${r.matNo}||${r.wcName}`));
+      grpKeys2.forEach(k=>delete ps.notes[k]);
+      savePlan();
+    },true);
     cardsTb.appendChild(addAllBtn);cardsTb.appendChild(addSelBtn);cardsTb.appendChild(rmAllBtn);cardsTb.appendChild(wipToggle);
     cardsPanel.appendChild(cardsTb);
 
@@ -6418,9 +6426,9 @@ function renderPwcTab(){
     planTitle.textContent=`Plan de lucru zilnic — ${curGroup?curGroup.label:'Toate grupurile'}`;
     planHdr.appendChild(planTitle);
 
-    // Progress bar
+    // Progress bar — show only keys relevant to current group (don't mutate ps.scheduled)
     const schedKeys=ps.scheduled.filter(k=>grpData.find(r=>`${r.matNo}||${r.wcName}`===k));
-    ps.scheduled=schedKeys;
+    // DON'T overwrite ps.scheduled — it contains items from ALL groups
     const schedMin=schedKeys.reduce((s,k)=>{const r=grpData.find(r=>`${r.matNo}||${r.wcName}`===k);return s+(r?.execTimeMin||0);},0);
     const realPct=availMin>0?schedMin/availMin*100:0;  // can exceed 100%
     const barFillPct=Math.min(100,realPct);             // bar width capped at 100%
@@ -6450,7 +6458,7 @@ function renderPwcTab(){
     dropZone.addEventListener('drop',e=>{
       e.preventDefault();dropZone.classList.remove('drag-over');
       const key=e.dataTransfer.getData('text/plain');
-      if(key&&!ps.scheduled.includes(key)){ps.scheduled.push(key);rebuild();}
+      if(key&&!ps.scheduled.includes(key)){ps.scheduled.push(key);savePlan();rebuild();}
     });
 
     // Plan table (if items scheduled)
