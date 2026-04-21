@@ -4296,8 +4296,8 @@ function _buildPlanTbody(wrap){
         const pctEl=sp('plan-real-pct',pctDisplay);pctEl.style.color=pctColor;
         cell2.appendChild(pctEl);
         const stockR=S.stockIdx?.get(itemNo)||{onHand:0,totalWIP:0};
-        const avail=Math.min(Math.max(0,stockR.onHand)+Math.max(0,stockR.totalWIP),plan.totalQty);
-        cell2.appendChild(sp('plan-real-sub',`stoc: ${Math.round(avail)} / ${plan.totalQty} buc`));
+        const onHandDisp=Math.round(Math.max(0,stockR.onHand));
+        cell2.appendChild(sp('plan-real-sub',`stoc: ${onHandDisp} / ${plan.totalQty} buc`));
         if(execRemMin>0){const rem=sp('plan-real-sub',`ramas: ${fmtMin(execRemMin)}`);rem.style.color='#7c3aed';rem.style.fontWeight='600';cell2.appendChild(rem);}
         td.appendChild(cell2);
       }
@@ -5193,9 +5193,15 @@ ${bodyHTML}
       const m=opMeta.get(opNoNum);
       // Add component stock info for sub-row display (deduplicate by matNo per op group)
       if(!m.compStocks.find(cs=>cs.matNo===matNo)){
+        // Find WIP specifically at THIS workcenter (not subsequent ones)
+        const wipAtThisWC=Object.entries(st.wipByWC||{})
+          .filter(([poCol])=>wcLabel(poCol).toLowerCase()===wcName.toLowerCase())
+          .reduce((s,[,q])=>s+Math.max(0,q),0);
         m.compStocks.push({
           matNo,needing,
-          onHand:st.onHand,totalWIP:Math.max(0,st.totalWIP),wipByWC:st.wipByWC||{}
+          onHand:st.onHand,totalWIP:Math.max(0,st.totalWIP),wipByWC:st.wipByWC||{},
+          wipAtThisWC, // WIP only at this specific WC
+          thisWcName:wcName,
         });
       }
     }
@@ -5348,17 +5354,19 @@ ${bodyHTML}
         const tdSQ=el('td');tdSQ.colSpan=2;
         const stockDetail=dv('');stockDetail.style.cssText='font-size:10.5px;display:flex;flex-wrap:wrap;gap:6px';
         const oh=Math.max(0,comp.onHand);
-        const wip=comp.totalWIP;
+        const wipAtThisWC=comp.wipAtThisWC||0;
+        const totalWipAfter=comp.totalWIP-wipAtThisWC; // WIP at subsequent ops (already past this op)
         if(oh>0){const ohBadge=sp('stk-badge stk-oh',`📦 On Hand: ${fmtN(oh)}`);stockDetail.appendChild(ohBadge);}
-        if(wip>0){
-          const wipBadge=sp('stk-badge stk-wip',`🔄 WIP: ${fmtN(wip)}`);
+        if(wipAtThisWC>0){
+          // Show WIP currently AT this WC
+          const wipBadge=sp('stk-badge stk-wip',`🔄 WIP ${comp.thisWcName||'la WC'}: ${fmtN(wipAtThisWC)}`);
           stockDetail.appendChild(wipBadge);
-          const wipEntries=Object.entries(comp.wipByWC||{}).filter(([,q])=>q>0);
-          if(wipEntries.length>0){
-            const wcDetail=sp('','');wcDetail.style.cssText='font-size:9.5px;color:var(--text3);display:block;margin-top:2px;width:100%';
-            wcDetail.textContent='  '+wipEntries.map(([wc,q])=>`${wcLabel(wc)}: ${fmtN(q)}`).join(' · ');
-            stockDetail.appendChild(wcDetail);
-          }
+        }
+        if(totalWipAfter>0){
+          // Show WIP at subsequent operations (informational, greyed)
+          const wipAfterBadge=sp('','');wipAfterBadge.style.cssText='font-size:9.5px;color:var(--text3);padding:1px 4px;border-radius:2px;background:#f1f5f9';
+          wipAfterBadge.textContent=`WIP ops ulterioare: ${fmtN(totalWipAfter)}`;
+          stockDetail.appendChild(wipAfterBadge);
         }
         if(!compDone&&!fullyOnHand){
           const needBadge=sp('','');needBadge.style.cssText='font-size:10px;color:#dc2626;font-weight:600';
