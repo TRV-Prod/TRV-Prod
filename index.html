@@ -5211,14 +5211,12 @@ ${bodyHTML}
   };
   gatherOps(itemNo);
 
-  // Step 2: Sort by WC type order, then by opNoNum
-  const TYPE_ORDER={'1 Initial Op':0,'2 Intermediary Op':1,'3 Final Op':2,'3 Final Op ':2};
-  const sortedGroups=[...opMeta.values()].sort((a,b)=>{
-    const ta=TYPE_ORDER[(a.wcType||'').trim()]??99;
-    const tb=TYPE_ORDER[(b.wcType||'').trim()]??99;
-    if(ta!==tb)return ta-tb;
-    return a.opNoNum-b.opNoNum;
-  });
+  // Step 2: Sort strictly by Ope seq (matches BOW execution order, same as Structura)
+  const sortedGroups=[...opMeta.values()].sort((a,b)=>a.seq-b.seq);
+
+  // Build wcName → seq lookup for WIP filtering in sub-rows
+  const wcSeqLookup=new Map(); // wcName (lowercase) → seq
+  sortedGroups.forEach(g=>{ if(!wcSeqLookup.has(g.wcName.toLowerCase())) wcSeqLookup.set(g.wcName.toLowerCase(),g.seq); });
 
   // Step 3: Compute group times from execTime.byWC and totalExecTime.byWC (same as Structura)
   sortedGroups.forEach(g=>{
@@ -5354,20 +5352,24 @@ ${bodyHTML}
         const tdSQ=el('td');tdSQ.colSpan=2;
         const stockDetail=dv('');stockDetail.style.cssText='font-size:10.5px;display:flex;flex-wrap:wrap;gap:6px';
         const oh=Math.max(0,comp.onHand);
-        const wipAtThisWC=comp.wipAtThisWC||0;
-        const totalWipAfter=comp.totalWIP-wipAtThisWC; // WIP at subsequent ops (already past this op)
         if(oh>0){const ohBadge=sp('stk-badge stk-oh',`📦 On Hand: ${fmtN(oh)}`);stockDetail.appendChild(ohBadge);}
-        if(wipAtThisWC>0){
-          // Show WIP currently AT this WC
-          const wipBadge=sp('stk-badge stk-wip',`🔄 WIP ${comp.thisWcName||'la WC'}: ${fmtN(wipAtThisWC)}`);
-          stockDetail.appendChild(wipBadge);
-        }
-        if(totalWipAfter>0){
-          // Show WIP at subsequent operations (informational, greyed)
-          const wipAfterBadge=sp('','');wipAfterBadge.style.cssText='font-size:9.5px;color:var(--text3);padding:1px 4px;border-radius:2px;background:#f1f5f9';
-          wipAfterBadge.textContent=`WIP ops ulterioare: ${fmtN(totalWipAfter)}`;
-          stockDetail.appendChild(wipAfterBadge);
-        }
+        // Show WIP at WCs with seq ≤ this op's seq (pieces still needing this operation)
+        // WIP at subsequent ops means those pieces have already done this op → not relevant
+        const opSeq=grp.seq;
+        const wipEntries=Object.entries(comp.wipByWC||{})
+          .map(([poCol,qty])=>({wc:wcLabel(poCol),qty:Math.max(0,qty||0)}))
+          .filter(({wc,qty})=>{
+            const s=wcSeqLookup.get(wc.toLowerCase());
+            return s===undefined||s<=opSeq; // include if seq ≤ this op (or unknown)
+          })
+          .sort((a,b)=>(wcSeqLookup.get(a.wc.toLowerCase())??99)-(wcSeqLookup.get(b.wc.toLowerCase())??99));
+        wipEntries.forEach(({wc,qty})=>{
+          if(qty>=0){ // show even if 0 (to inform operator)
+            const wipBadge=sp('stk-badge stk-wip',`🔄 WIP ${wc}: ${fmtN(qty)}`);
+            if(qty===0)wipBadge.style.opacity='0.55';
+            stockDetail.appendChild(wipBadge);
+          }
+        });
         if(!compDone&&!fullyOnHand){
           const needBadge=sp('','');needBadge.style.cssText='font-size:10px;color:#dc2626;font-weight:600';
           needBadge.textContent=`⚠ Mai trebuie: ${fmtN(comp.needing)} buc`;
