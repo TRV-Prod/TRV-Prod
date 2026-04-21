@@ -6225,9 +6225,16 @@ function buildPwcData(eff){
       const key=`${matNo}||${op.wcName}`;
       if(!byKey.has(key)){byKey.set(key,{prio,matNo,matName:st.name||'',matType:st.type||'',wcName:op.wcName,wcGroup,opNo:op.opNo,opNoNum:op.opNoNum,opSeq:op.seq,totalNec:0,onHand:st.onHand,wipAtWC:0,wipBefore:0,dePrelucrat:0,runT:op.runT,setupT:op.setupT,runMin:0,setupMin:0,execTimeMin:0,fps:[],fpDetails:[]});}
       const row=byKey.get(key);
-      row.totalNec+=unitsNeeded;row.wipAtWC=wipAtWC;row.wipBefore=wipBefore;row.dePrelucrat+=dePrelucrat;row.runMin+=runMin;row.setupMin+=setupMin;row.execTimeMin+=runMin+setupMin;
-      if(!row.fps.includes(itemNo)){row.fps.push(itemNo);row.fpDetails.push({itemNo,prio,qty:unitsNeeded,dePrelucrat,execTimeMin:runMin+setupMin});}
-      else{const fd=row.fpDetails.find(f=>f.itemNo===itemNo);if(fd){fd.qty+=unitsNeeded;fd.dePrelucrat+=dePrelucrat;fd.execTimeMin+=runMin+setupMin;}}
+      // Quantities: set only once per (matNo×wcName) — same component, same WC
+      // Multiple ops with same WC name → only update quantities on first encounter
+      const isFirst=row.totalNec===0&&row.dePrelucrat===0;
+      if(isFirst){
+        row.totalNec=unitsNeeded;row.wipAtWC=wipAtWC;row.wipBefore=wipBefore;row.dePrelucrat=dePrelucrat;
+      }
+      // Times always accumulated (multiple ops at same WC = multiple passes)
+      row.runMin+=runMin;row.setupMin+=setupMin;row.execTimeMin+=runMin+setupMin;
+      if(!row.fps.includes(itemNo)){row.fps.push(itemNo);row.fpDetails.push({itemNo,prio,qty:isFirst?unitsNeeded:0,dePrelucrat:isFirst?dePrelucrat:0,execTimeMin:runMin+setupMin});}
+      else{const fd=row.fpDetails.find(f=>f.itemNo===itemNo);if(fd){if(isFirst){fd.qty+=unitsNeeded;fd.dePrelucrat+=dePrelucrat;}fd.execTimeMin+=runMin+setupMin;}}
       const cp=parseFloat(prio),rp=parseFloat(row.prio);
       if(!row.prio||(prio&&(!isNaN(cp)&&!isNaN(rp)?cp<rp:prio<row.prio)))row.prio=prio;
     }
