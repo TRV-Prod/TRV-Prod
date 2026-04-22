@@ -7,6 +7,8 @@
 <link href="https://cdnjs.cloudflare.com/ajax/libs/bootstrap/5.3.3/css/bootstrap.min.css" rel="stylesheet"/>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/bootstrap/5.3.3/js/bootstrap.bundle.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.5.28/jspdf.plugin.autotable.min.js"></script>
 <style>
 *{box-sizing:border-box;margin:0;padding:0}
 :root{
@@ -6652,9 +6654,11 @@ function renderPwcTab(){
     exportBtn.onclick=exportPwcPlan;
 
     function exportPwcPdf(){
+      const {jsPDF}=window.jspdf;
+      if(!jsPDF){alert('Libraria jsPDF nu s-a incarcat. Verifica conexiunea la internet.');return;}
       const eff2=(ps.eff||100)/100;
       const curGrp=groups.find(g=>g.wcGroup===ps.selectedGroup)||null;
-      const title=`Plan de lucru zilnic — ${curGrp?curGrp.label:'Toate grupurile'}`;
+      const titleStr=`Plan de lucru zilnic — ${curGrp?curGrp.label:'Toate grupurile'}`;
       const date=new Date().toLocaleDateString('ro-RO');
       const schedSorted2=[...schedKeys].sort((a,b)=>{
         const ra=grpData.find(r=>`${r.matNo}||${r.wcName}`===a);
@@ -6669,65 +6673,79 @@ function renderPwcTab(){
       const matches2=(r)=>{
         for(const col of['prio','matNo','matName','fps']){
           const fv=(cf2[col]||'').toLowerCase();if(!fv)continue;
-          const val=col==='prio'?r.prio:col==='matNo'?r.matNo:col==='matName'?r.matName:col==='fps'?r.fps.join(' '):'';
+          const val=col==='prio'?r.prio:col==='matNo'?r.matNo:col==='matName'?r.matName:r.fps.join(' ');
           if(!val.toLowerCase().includes(fv))return false;
         }
         return true;
       };
       const rows2=schedSorted2.map(key=>{
-        const r=grpData.find(r=>`${r.matNo}||${r.wcName}`===key);if(!r||!matches2(r))return null;
+        const r=grpData.find(r=>`${r.matNo}||${r.wcName}`===key);
+        if(!r||!matches2(r))return null;
         return r;
       }).filter(Boolean);
-      const hdrRow=['Prio','Componenta','Denumire','Prod. Finale','Cant. nec.','On Hand','WIP Grup','De executat','Timp exec.','Observatii'].map(h=>`<th>${h}</th>`).join('');
-      const bodyRows=rows2.map(r=>{
-        const key=`${r.matNo}||${r.wcName}`;
-        const fps3=r.fps.slice(0,4).join(', ')+(r.fps.length>4?` +${r.fps.length-4}`:'');
-        return `<tr>
-          <td style="font-weight:800;color:#92400e">${r.prio||''}</td>
-          <td style="font-family:monospace;font-weight:700">${r.matNo}</td>
-          <td>${r.matName}</td>
-          <td style="font-size:8pt">${fps3}</td>
-          <td style="text-align:right">${fmtN(r.totalNec)}</td>
-          <td style="text-align:right;color:${r.onHand<0?'#dc2626':r.onHand>0?'#15803d':'#666'}">${fmtN(r.onHand)}</td>
-          <td style="text-align:right;color:${getWipForGroup(r.matNo)>0?'#d97706':'#999'}">${fmtN(getWipForGroup(r.matNo))}</td>
-          <td style="text-align:right;font-weight:700;color:${r.dePrelucrat>0?'#dc2626':'#15803d'}">${fmtN(r.dePrelucrat)}</td>
-          <td style="text-align:right;font-weight:700;color:#7c3aed">${fmtMin(r.execTimeMin)}</td>
-          <td style="color:#666;font-style:italic">${ps.notes[key]||''}</td>
-        </tr>`;
-      }).join('');
+      if(!rows2.length){alert('Nu exista date de exportat.');return;}
       const availH2=curGrp?curGrp.totalTeam*8:0;
       const availMin2=availH2*60;
       const schedMin2=schedKeys.reduce((s,k)=>{const r=grpData.find(r=>`${r.matNo}||${r.wcName}`===k);return s+(r?.execTimeMin||0);},0);
-      const pct2=availMin2>0?(schedMin2/availMin2*100).toFixed(1):'—';
-      const pdfWin=window.open('','_blank','width=1200,height=900');
-      if(!pdfWin){alert('Permite popup-urile pentru export PDF.');return;}
-      pdfWin.document.write(`<!DOCTYPE html><html lang="ro"><head><meta charset="UTF-8"/>
-<title>${title}</title>
-<style>
-*{box-sizing:border-box;margin:0;padding:0}
-body{font-family:Arial,sans-serif;font-size:9pt;padding:12px;color:#1e293b}
-h1{font-size:13pt;font-weight:800;color:#1d4ed8;margin-bottom:2px}
-.meta{font-size:8.5pt;color:#64748b;margin-bottom:6px}
-.summary{display:flex;gap:16px;margin-bottom:10px;padding:6px 10px;background:#f0f4ff;border-radius:4px;font-size:8.5pt}
-.summary b{color:#1d4ed8}
-table{width:100%;border-collapse:collapse;font-size:8.5pt}
-th{background:#1d4ed8;color:#fff;padding:4px 6px;font-size:7.5pt;font-weight:700;text-transform:uppercase;letter-spacing:.04em;text-align:left;border:1px solid #1e40af}
-td{border:1px solid #cbd5e1;padding:3px 6px;vertical-align:middle}
-tr:nth-child(even) td{background:#f8fafc}
-@media print{@page{size:landscape;margin:8mm}body{padding:4px}.no-print{display:none}}
-</style></head><body>
-<h1>${title}</h1>
-<div class="meta">Data: ${date} · Eficienta: ${ps.eff}% · ${rows2.length} componente</div>
-<div class="summary">
-  <span>⏱ Programat: <b>${fmtMin(schedMin2)}</b></span>
-  <span>📋 Disponibil: <b>${fmtMin(availMin2)}</b></span>
-  <span>📊 Incarcare: <b>${pct2}%</b></span>
-  ${curGrp?`<span>👥 Echipe: <b>${curGrp.totalTeam}</b></span>`:''}
-</div>
-<button class="no-print" onclick="window.print()" style="margin-bottom:10px;padding:6px 14px;background:#1d4ed8;color:#fff;border:none;border-radius:4px;cursor:pointer;font-size:11pt">🖨 Printeaza / Salveaza PDF</button>
-<table><thead><tr>${hdrRow}</tr></thead><tbody>${bodyRows}</tbody></table>
-</body></html>`);
-      pdfWin.document.close();
+      const pct2=availMin2>0?(schedMin2/availMin2*100).toFixed(1)+'%':'—';
+
+      const doc=new jsPDF({orientation:'landscape',unit:'mm',format:'a4'});
+      const pageW=doc.internal.pageSize.getWidth();
+      let y=10;
+      // Title
+      doc.setFontSize(13);doc.setFont('helvetica','bold');doc.setTextColor(29,78,216);
+      doc.text(titleStr,14,y);y+=6;
+      // Meta
+      doc.setFontSize(8);doc.setFont('helvetica','normal');doc.setTextColor(100,116,139);
+      doc.text(`Data: ${date}  |  Eficienta: ${ps.eff}%  |  ${rows2.length} componente  |  Programat: ${fmtMin(schedMin2)}  |  Disponibil: ${fmtMin(availMin2)}  |  Incarcare: ${pct2}`,14,y);y+=5;
+      if(curGrp){doc.text(`Workcenter Group: ${curGrp.label}  |  Echipe: ${curGrp.totalTeam}`,14,y);y+=5;}
+
+      // Table
+      const head=[['Prio','Cod componenta','Denumire','Prod. Finale','Cant. nec.','On Hand','WIP Grup','De executat','Timp exec.','Observatii']];
+      const body=rows2.map(r=>{
+        const key=`${r.matNo}||${r.wcName}`;
+        const wipGrp=getWipForGroup(r.matNo);
+        return [
+          r.prio||'',
+          r.matNo,
+          r.matName,
+          r.fps.slice(0,3).join(', ')+(r.fps.length>3?` +${r.fps.length-3}`:''),
+          fmtN(r.totalNec),
+          fmtN(r.onHand),
+          fmtN(wipGrp),
+          fmtN(r.dePrelucrat),
+          fmtMin(r.execTimeMin),
+          ps.notes[key]||'',
+        ];
+      });
+      doc.autoTable({
+        head,body,startY:y,
+        styles:{fontSize:7.5,cellPadding:2,overflow:'linebreak'},
+        headStyles:{fillColor:[29,78,216],textColor:255,fontStyle:'bold',fontSize:7},
+        columnStyles:{
+          0:{cellWidth:10,halign:'center',fontStyle:'bold'},
+          1:{cellWidth:28,fontStyle:'bold'},
+          2:{cellWidth:32},
+          3:{cellWidth:32},
+          4:{cellWidth:16,halign:'right'},
+          5:{cellWidth:16,halign:'right'},
+          6:{cellWidth:16,halign:'right'},
+          7:{cellWidth:18,halign:'right',textColor:[220,38,38],fontStyle:'bold'},
+          8:{cellWidth:18,halign:'right',textColor:[124,58,237],fontStyle:'bold'},
+          9:{cellWidth:'auto'},
+        },
+        alternateRowStyles:{fillColor:[248,250,252]},
+        didParseCell:(data)=>{
+          if(data.section==='body'&&data.column.index===7){
+            const v=parseFloat(data.cell.raw);
+            if(v>0)data.cell.styles.textColor=[220,38,38];
+            else data.cell.styles.textColor=[21,128,61];
+          }
+        },
+        margin:{left:14,right:14},
+      });
+      const fname=`Plan_WC_${(curGrp?.label||'all').replace(/\s+/g,'_')}_${new Date().toISOString().slice(0,10)}.pdf`;
+      doc.save(fname);
     }
   }
 
