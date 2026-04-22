@@ -965,7 +965,7 @@ const S={
     colWidths:{'Entry dt':90,'Confirm dt':95,'Request dt':95,'Request_week':90,'Confirm_week':90,'Item_no':140,'Alias_no':140,'Item_name':200,'Customer_no':90,'Customer_name':200,'Sales price EUR':110,'Ordered':80,'Allocated':80,'Delivered':80,'Invoiced':80,'Open qty':80,'Valoare de livrat EUR':130,'Net weight':90,'_plan':130},
     colFilters:{},
   },
-  zoom:{structura:100, stocuri:100, fisiere:100, orderbook:100, rapoarte:100, planificare:100},
+  zoom:{structura:100, stocuri:100, fisiere:100, orderbook:100, rapoarte:100, planificare:100, pwc:100},
   reportObs:{},
   eficientaPlan:100,
   wcAvailHours:{},
@@ -990,7 +990,7 @@ const S={
     colWidths:{prio:55,matNo:140,matName:220,matType:50,fps:160,unQty:75,totalNec:90,onHand:90,wip:130,dePrelucrat:100,timp:110},
     visibleCols:new Set(['prio','matNo','matName','matType','fps','unQty','totalNec','onHand','wip','dePrelucrat','timp']),
   },
-  pwcState:{eff:100,selectedGroup:null,scheduledByGroup:{},notes:{},onlyWipCovered:false},  // Programare WC state
+  pwcState:{eff:100,selectedGroup:null,scheduledByGroup:{},notes:{},onlyWipCovered:false,colFilters:{}},  // Programare WC state
   stocVerifInputs:{},  // matNo → {cantFizica:'', obs:''}
   stocVerifFilter:{
     fpFilter:'all', tipFilter:'all', colFilters:{},
@@ -6333,6 +6333,7 @@ function renderPwcTab(){
   const exportBtn=el('button','tbtn');exportBtn.textContent='⬇ Export Excel';
   exportBtn.addEventListener('click',()=>exportPwcPlan());
   tb.appendChild(exportBtn);
+  tb.appendChild(mkZoomCtrl('pwc'));
   page.appendChild(tb);
 
   const body=dv('pwc-body');
@@ -6446,6 +6447,19 @@ function renderPwcTab(){
     planTitle.textContent=`Plan de lucru zilnic — ${curGroup?curGroup.label:'Toate grupurile'}`;
     planHdr.appendChild(planTitle);
 
+    // Auto-remove items where dePrelucrat=0 (fully executed) — keep only if still needed
+    // Build full allData (without dePrelucrat filter) for cleanup check
+    const allDataFull=buildPwcData(eff);
+    const doneKeys=(ps.scheduledByGroup[grp]||[]).filter(k=>{
+      const r=allDataFull.find(r=>`${r.matNo}||${r.wcName}`===k);
+      return r&&r.dePrelucrat<=0;
+    });
+    if(doneKeys.length>0){
+      ps.scheduledByGroup[grp]=ps.scheduledByGroup[grp].filter(k=>!doneKeys.includes(k));
+      doneKeys.forEach(k=>delete ps.notes[k]);
+      savePlan();
+    }
+
     // Progress bar — use per-group scheduled list directly
     const schedKeys=ps.scheduledByGroup[grp].filter(k=>allData.find(r=>`${r.matNo}||${r.wcName}`===k));
     const schedMin=schedKeys.reduce((s,k)=>{const r=grpData.find(r=>`${r.matNo}||${r.wcName}`===k);return s+(r?.execTimeMin||0);},0);
@@ -6483,13 +6497,59 @@ function renderPwcTab(){
     // Plan table (if items scheduled)
     if(schedKeys.length>0){
       const tableWrap=dv('pwc-plan-table-wrap');
-      const tbl=el('table','pwc-plan-table');
-      const thead=el('thead');const hr=el('tr');
+      tableWrap.style.zoom=(S.zoom.pwc/100).toString();
+
+      const cf=ps.colFilters||{};
+      const COLS=['del','prio','matNo','matName','fps','totalNec','onHand','wipGrp','dePrelucrat','execTime','obs'];
+      const COL_LABELS={del:'',prio:'Prio',matNo:'Componenta',matName:'Denumire',fps:'Prod. Finale',totalNec:'Cant. nec.',onHand:'On Hand',wipGrp:'WIP Grup',dePrelucrat:'De executat',execTime:'Timp exec.',obs:'Observatii'};
+      const FILTERABLE=new Set(['prio','matNo','matName','fps']);
+
+      // Filter function
+      const matches=(r)=>{
+        for(const col of FILTERABLE){
+          const fv=(cf[col]||'').toLowerCase();if(!fv)continue;
+          const key2=`${r.matNo}||${r.wcName}`;
+          const val=col==='prio'?r.prio:col==='matNo'?r.matNo:col==='matName'?r.matName:col==='fps'?r.fps.join(' '):'';
+          if(!val.toLowerCase().includes(fv))return false;
+        }
+        return true;
+      };
+
+      const tbl=el('table','pwc-plan-table');tbl.style.width='100%';
+      const thead=el('thead');
+      const hr=el('tr');
       ['','Prio','Componenta','Denumire','Prod. Finale','Cant. nec.','On Hand','WIP Grup','De executat','Timp exec.','Observatii'].forEach(h=>{
         const th=el('th');th.textContent=h;hr.appendChild(th);
       });
-      thead.appendChild(hr);tbl.appendChild(thead);
-      const tbody=el('tbody');
+      thead.appendChild(hr);
+
+      // Filter row
+      const fr=el('tr');fr.style.cssText='background:#fff';
+      COLS.forEach(col=>{
+        const th=el('th');th.style.cssText='padding:2px 4px;background:#fff;border-bottom:1px solid var(--border)';
+        if(FILTERABLE.has(col)){
+          const inp=el('input');inp.type='text';inp.placeholder='...';inp.value=cf[col]||'';
+          inp.style.cssText='width:100%;height:22px;border:1px solid var(--border);border-radius:2px;padding:0 4px;font-size:10px;outline:none';
+          inp.setAttribute('data-pwc-filter',col);
+          inp.addEventListener('input',e=>{
+            cf[e.target.getAttribute('data-pwc-filter')]=e.target.value;
+            ps.colFilters=cf;
+            const ss=e.target.selectionStart,se2=e.target.selectionEnd;
+            buildPlanTable();
+            const r2=tableWrap.querySelector(`input[data-pwc-filter="${col}"]`);
+            if(r2){r2.focus();try{r2.setSelectionRange(ss,se2);}catch(_){}}
+          });
+          th.appendChild(inp);
+        }
+        fr.appendChild(th);
+      });
+      thead.appendChild(fr);
+      tbl.appendChild(thead);
+      const tbody=el('tbody');tbl.appendChild(tbody);tableWrap.appendChild(tbl);
+      dropZone.appendChild(tableWrap);
+
+      function buildPlanTable(){
+        tbody.innerHTML='';
       // Sort scheduled by prio
       const schedSorted=[...schedKeys].sort((a,b)=>{
         const ra=grpData.find(r=>`${r.matNo}||${r.wcName}`===a);
@@ -6501,7 +6561,7 @@ function renderPwcTab(){
         return pa.localeCompare(pb);
       });
       schedSorted.forEach((key,idx2)=>{
-        const r=grpData.find(r=>`${r.matNo}||${r.wcName}`===key);if(!r)return;
+        const r=grpData.find(r=>`${r.matNo}||${r.wcName}`===key);if(!r||!matches(r))return;
         // Single aggregated row per component (quantities already summed across all FPs)
         const tr=el('tr');
         const tdR=el('td');tdR.style.width='28px';
@@ -6544,6 +6604,8 @@ function renderPwcTab(){
         tdObs.appendChild(obsInp);tr.appendChild(tdObs);
         tbody.appendChild(tr);
       });
+      } // end buildPlanTable
+      buildPlanTable();
       tbl.appendChild(tbody);tableWrap.appendChild(tbl);
       dropZone.appendChild(tableWrap);
     }
