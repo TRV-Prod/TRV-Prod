@@ -655,8 +655,16 @@ button { font-family: var(--sans); }
 .pwc-remove-row{cursor:pointer;color:#dc2626;font-weight:700;padding:0 4px;border:none;background:none;font-size:14px}
 .pwc-draggable{cursor:grab}
 @media print{
-  .pwc-cards-panel,.pwc-toolbar{display:none!important}
-  .pwc-plan-panel{width:100%!important}
+  .pwc-cards-panel,.pwc-toolbar,.pwc-drop-hint,.pwc-remove-row{display:none!important}
+  .pwc-plan-panel{width:100%!important;overflow:visible!important}
+  .pwc-body{overflow:visible!important;display:block!important}
+  .pwc-drop-zone{overflow:visible!important;flex:none!important;height:auto!important}
+  .pwc-plan-table-wrap{overflow:visible!important;height:auto!important;flex:none!important}
+  .pwc-plan-header{page-break-inside:avoid}
+  .pwc-plan-table{page-break-inside:auto}
+  .pwc-plan-table tr{page-break-inside:avoid}
+  .pwc-page{overflow:visible!important;height:auto!important}
+  @page{size:landscape;margin:8mm}
 }
 .vs-inp{width:100%;height:28px;border:1px solid var(--border);border-radius:3px;padding:0 6px;font-size:12px;outline:none;background:#fffbeb;transition:border .15s}
 .vs-inp:focus{border-color:var(--accent);background:#fff}
@@ -6330,6 +6338,9 @@ function renderPwcTab(){
   const printBtn=el('button','tbtn');printBtn.textContent='🖨 Printeaza';
   printBtn.addEventListener('click',()=>window.print());
   tb.appendChild(printBtn);
+  const pdfBtn=el('button','tbtn');pdfBtn.textContent='📄 Export PDF';
+  pdfBtn.addEventListener('click',()=>exportPwcPdf());
+  tb.appendChild(pdfBtn);
   const exportBtn=el('button','tbtn');exportBtn.textContent='⬇ Export Excel';
   exportBtn.addEventListener('click',()=>exportPwcPlan());
   tb.appendChild(exportBtn);
@@ -6639,6 +6650,85 @@ function renderPwcTab(){
       XLSX.writeFile(wb,`Plan_WC_${new Date().toISOString().slice(0,10)}.xlsx`);
     }
     exportBtn.onclick=exportPwcPlan;
+
+    function exportPwcPdf(){
+      const eff2=(ps.eff||100)/100;
+      const curGrp=groups.find(g=>g.wcGroup===ps.selectedGroup)||null;
+      const title=`Plan de lucru zilnic — ${curGrp?curGrp.label:'Toate grupurile'}`;
+      const date=new Date().toLocaleDateString('ro-RO');
+      const schedSorted2=[...schedKeys].sort((a,b)=>{
+        const ra=grpData.find(r=>`${r.matNo}||${r.wcName}`===a);
+        const rb=grpData.find(r=>`${r.matNo}||${r.wcName}`===b);
+        const pa=ra?.prio||'',pb=rb?.prio||'';
+        if(!pa&&!pb)return 0;if(!pa)return 1;if(!pb)return -1;
+        const na=parseFloat(pa),nb=parseFloat(pb);
+        if(!isNaN(na)&&!isNaN(nb))return na-nb;
+        return pa.localeCompare(pb);
+      });
+      const cf2=ps.colFilters||{};
+      const matches2=(r)=>{
+        for(const col of['prio','matNo','matName','fps']){
+          const fv=(cf2[col]||'').toLowerCase();if(!fv)continue;
+          const val=col==='prio'?r.prio:col==='matNo'?r.matNo:col==='matName'?r.matName:col==='fps'?r.fps.join(' '):'';
+          if(!val.toLowerCase().includes(fv))return false;
+        }
+        return true;
+      };
+      const rows2=schedSorted2.map(key=>{
+        const r=grpData.find(r=>`${r.matNo}||${r.wcName}`===key);if(!r||!matches2(r))return null;
+        return r;
+      }).filter(Boolean);
+      const hdrRow=['Prio','Componenta','Denumire','Prod. Finale','Cant. nec.','On Hand','WIP Grup','De executat','Timp exec.','Observatii'].map(h=>`<th>${h}</th>`).join('');
+      const bodyRows=rows2.map(r=>{
+        const key=`${r.matNo}||${r.wcName}`;
+        const fps3=r.fps.slice(0,4).join(', ')+(r.fps.length>4?` +${r.fps.length-4}`:'');
+        return `<tr>
+          <td style="font-weight:800;color:#92400e">${r.prio||''}</td>
+          <td style="font-family:monospace;font-weight:700">${r.matNo}</td>
+          <td>${r.matName}</td>
+          <td style="font-size:8pt">${fps3}</td>
+          <td style="text-align:right">${fmtN(r.totalNec)}</td>
+          <td style="text-align:right;color:${r.onHand<0?'#dc2626':r.onHand>0?'#15803d':'#666'}">${fmtN(r.onHand)}</td>
+          <td style="text-align:right;color:${getWipForGroup(r.matNo)>0?'#d97706':'#999'}">${fmtN(getWipForGroup(r.matNo))}</td>
+          <td style="text-align:right;font-weight:700;color:${r.dePrelucrat>0?'#dc2626':'#15803d'}">${fmtN(r.dePrelucrat)}</td>
+          <td style="text-align:right;font-weight:700;color:#7c3aed">${fmtMin(r.execTimeMin)}</td>
+          <td style="color:#666;font-style:italic">${ps.notes[key]||''}</td>
+        </tr>`;
+      }).join('');
+      const availH2=curGrp?curGrp.totalTeam*8:0;
+      const availMin2=availH2*60;
+      const schedMin2=schedKeys.reduce((s,k)=>{const r=grpData.find(r=>`${r.matNo}||${r.wcName}`===k);return s+(r?.execTimeMin||0);},0);
+      const pct2=availMin2>0?(schedMin2/availMin2*100).toFixed(1):'—';
+      const pdfWin=window.open('','_blank','width=1200,height=900');
+      if(!pdfWin){alert('Permite popup-urile pentru export PDF.');return;}
+      pdfWin.document.write(`<!DOCTYPE html><html lang="ro"><head><meta charset="UTF-8"/>
+<title>${title}</title>
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:Arial,sans-serif;font-size:9pt;padding:12px;color:#1e293b}
+h1{font-size:13pt;font-weight:800;color:#1d4ed8;margin-bottom:2px}
+.meta{font-size:8.5pt;color:#64748b;margin-bottom:6px}
+.summary{display:flex;gap:16px;margin-bottom:10px;padding:6px 10px;background:#f0f4ff;border-radius:4px;font-size:8.5pt}
+.summary b{color:#1d4ed8}
+table{width:100%;border-collapse:collapse;font-size:8.5pt}
+th{background:#1d4ed8;color:#fff;padding:4px 6px;font-size:7.5pt;font-weight:700;text-transform:uppercase;letter-spacing:.04em;text-align:left;border:1px solid #1e40af}
+td{border:1px solid #cbd5e1;padding:3px 6px;vertical-align:middle}
+tr:nth-child(even) td{background:#f8fafc}
+@media print{@page{size:landscape;margin:8mm}body{padding:4px}.no-print{display:none}}
+</style></head><body>
+<h1>${title}</h1>
+<div class="meta">Data: ${date} · Eficienta: ${ps.eff}% · ${rows2.length} componente</div>
+<div class="summary">
+  <span>⏱ Programat: <b>${fmtMin(schedMin2)}</b></span>
+  <span>📋 Disponibil: <b>${fmtMin(availMin2)}</b></span>
+  <span>📊 Incarcare: <b>${pct2}%</b></span>
+  ${curGrp?`<span>👥 Echipe: <b>${curGrp.totalTeam}</b></span>`:''}
+</div>
+<button class="no-print" onclick="window.print()" style="margin-bottom:10px;padding:6px 14px;background:#1d4ed8;color:#fff;border:none;border-radius:4px;cursor:pointer;font-size:11pt">🖨 Printeaza / Salveaza PDF</button>
+<table><thead><tr>${hdrRow}</tr></thead><tbody>${bodyRows}</tbody></table>
+</body></html>`);
+      pdfWin.document.close();
+    }
   }
 
   rebuild();
