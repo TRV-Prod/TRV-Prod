@@ -1041,7 +1041,7 @@ function dbLoad(key){return openDB().then(db=>new Promise((res,rej)=>{const tx=d
 // Column filter definitions — only essential columns stored in GitHub
 const GH_COLS={
   bom:['Final product','FP name','FP drawing','Comp no.','Material no','Material type','Material qty','Mat U/M','Mat. name','Mat. drawing','Mat product group','Mat. item group','Comp level'],
-  bow:['Final product','Product no','Ope seq','Operation no','Ope name','Ope descr','Run time','Setup time','Text_line1'],
+  bow:['Final product','Product no','Product seq','Ope seq','Operation no','Ope name','Ope descr','Run time','Setup time','Text_line1'],
   po: ['FP','MATERIAL','NAME','M/B/D','On Hand','On MO Not Started','Total WIP',
        '710101-Laser','710103-Shear','710201-CNC Punching','710301-Bending machine','710302-Helper Bending','710303-Inserting',
        '710401-Welding GMAW','710402-Welding GTAW','710403-Welding Spot','710404-Helper Welding GMAW/GTAW','710405-Helper Spotweld',
@@ -1645,10 +1645,11 @@ function calcExecTime(fpCode, inputQty, needs){
 
     const ops = rawOps.map(op=>({
       seq:    parseFloat(String(op['Ope seq']||'0').replace(',','.')) || 0,
+      productSeq: parseFloat(String(op['Product seq']||'0').replace(',','.')) || 0,
       wcName: str(op['Ope name']||op['Ope descr']||'?'),
       runT:   parseFloat(String(op['Run time']||'0').replace(',','.')) || 0,
       setupT: parseFloat(String(op['Setup time']||'0').replace(',','.')) || 0,
-    })).sort((a,b)=>a.seq-b.seq);
+    })).sort((a,b)=>b.productSeq!==a.productSeq?(b.productSeq-a.productSeq):(a.seq-b.seq));
 
     const stock  = S.stockIdx?.get(matNo) || {onHand:0,wipByWC:{}};
     const onHand = Math.max(0, stock.onHand);
@@ -1776,11 +1777,12 @@ function mkOpsGroup(opsId, ops, depth, color, matNo){
     const eff2=(S.efficienta||100)/100;
     const sortedOps=[...ops].map(op=>({
       seq:parseFloat(String(op['Ope seq']||'0').replace(',','.'))||0,
+      productSeq:parseFloat(String(op['Product seq']||'0').replace(',','.'))||0,
       runT:parseFloat(String(op['Run time']||'0').replace(',','.'))||0,
       setupT:parseFloat(String(op['Setup time']||'0').replace(',','.'))||0,
       wcName:str(op['Ope name']||op['Ope descr']||''),
       _orig:op,
-    })).sort((a,b)=>a.seq-b.seq);
+    })).sort((a,b)=>b.productSeq!==a.productSeq?(b.productSeq-a.productSeq):(a.seq-b.seq));
     const wipAtIdx=new Map();
     if(stock){
       for(const [poCol,wipQty] of Object.entries(stock.wipByWC||{})){
@@ -5178,18 +5180,16 @@ ${bodyHTML}
   }
 
   // ── Build op list from BOW using calcExecTime.byWC (guaranteed correct, same as Structura) ──
-  // Step 1: Collect all unique ops (opNoNum→{opNo,wcName,wcType}) and per-WC component stock info
-  const opMeta=new Map(); // opNoNum → {opNo,wcName,wcType,seq,compStocks:[{matNo,onHand,totalWIP,wipByWC,needing}]}
+  // Step 1: Collect all unique ops keyed by (productSeq_opeSeq) for correct ordering
+  // Order: Product seq DESC (higher = first to make), then Ope seq ASC within each product
+  const opMeta=new Map(); // key → {opNo,wcName,wcType,seq,productSeq,compStocks:[...]}
   const seenOps=new Set();
   const gatherOps=(matNo)=>{
     const key=`${itemNo}__${matNo}`;
     if(seenOps.has(key))return;seenOps.add(key);
     const rawOps=S.bowIdx?.get(key)||[];
     const st=S.stockIdx?.get(matNo)||{onHand:0,totalWIP:0,wipByWC:{}};
-    // Use WIP-aware needing: from calcNeeds net, or effectiveQty for FP but reduced by WIP
-    // For the FP itself: actual pieces still needed = what calcExecTime computes as non-zero
     const rawNeeding=matNo===itemNo?effectiveQty:Math.max(0,needs?.get(matNo)?.net??needs?.get(matNo)?.needed??0);
-    // WIP-aware: subtract WIP that's already past this component's operations
     const stForComp=S.stockIdx?.get(matNo)||{onHand:0,totalWIP:0};
     const needing=Math.max(0,rawNeeding-Math.max(0,stForComp.onHand)-Math.max(0,stForComp.totalWIP));
     for(const op of rawOps){
@@ -5197,36 +5197,40 @@ ${bodyHTML}
       const wcName=str(op['Ope name']||op['Ope descr']||'?');
       const wcType=S.wcSetupIdx?.[wcName]?.wcType||'';
       const seq=parseFloat(String(op['Ope seq']||'0').replace(',','.'))||0;
+      const productSeq=parseFloat(String(op['Product seq']||'0').replace(',','.'))||0;
       if(!opMeta.has(opNoNum)){
-        opMeta.set(opNoNum,{opNo:str(op['Operation no']||''),opNoNum,wcName,wcType,seq,compStocks:[]});
+        opMeta.set(opNoNum,{opNo:str(op['Operation no']||''),opNoNum,wcName,wcType,seq,productSeq,compStocks:[]});
       }
       const m=opMeta.get(opNoNum);
-      // Add component stock info for sub-row display (deduplicate by matNo per op group)
       if(!m.compStocks.find(cs=>cs.matNo===matNo)){
-        // Find WIP specifically at THIS workcenter (not subsequent ones)
         const wipAtThisWC=Object.entries(st.wipByWC||{})
           .filter(([poCol])=>wcLabel(poCol).toLowerCase()===wcName.toLowerCase())
           .reduce((s,[,q])=>s+Math.max(0,q),0);
         m.compStocks.push({
           matNo,needing,
           onHand:st.onHand,totalWIP:Math.max(0,st.totalWIP),wipByWC:st.wipByWC||{},
-          wipAtThisWC, // WIP only at this specific WC
+          wipAtThisWC,
           thisWcName:wcName,
         });
       }
     }
-    // Recurse into BOM children
     const bomRows=S.bomIdx?.get(key)||[];
     for(const row of bomRows){const cm=str(row['Material no']);if(cm)gatherOps(cm);}
   };
   gatherOps(itemNo);
 
-  // Step 2: Sort strictly by Ope seq (matches BOW execution order, same as Structura)
-  const sortedGroups=[...opMeta.values()].sort((a,b)=>a.seq-b.seq);
+  // Step 2: Sort by Product seq DESC (highest first = first subcomponent to make),
+  //         then by Ope seq ASC within each product (first operation first)
+  const sortedGroups=[...opMeta.values()].sort((a,b)=>{
+    // Higher Product seq = earlier in production flow
+    if(b.productSeq!==a.productSeq)return b.productSeq-a.productSeq;
+    // Within same product: lower Ope seq = earlier operation
+    return a.seq-b.seq;
+  });
 
-  // Build wcName → seq lookup for WIP filtering in sub-rows
-  const wcSeqLookup=new Map(); // wcName (lowercase) → seq
-  sortedGroups.forEach(g=>{ if(!wcSeqLookup.has(g.wcName.toLowerCase())) wcSeqLookup.set(g.wcName.toLowerCase(),g.seq); });
+  // Build wcName → sort position lookup for WIP filtering in sub-rows
+  const wcSeqLookup=new Map(); // wcName (lowercase) → sort index
+  sortedGroups.forEach((g,i)=>{ if(!wcSeqLookup.has(g.wcName.toLowerCase())) wcSeqLookup.set(g.wcName.toLowerCase(),i); });
 
   // Step 3: Compute group times from execTime.byWC and totalExecTime.byWC (same as Structura)
   sortedGroups.forEach(g=>{
@@ -5365,14 +5369,14 @@ ${bodyHTML}
         if(oh>0){const ohBadge=sp('stk-badge stk-oh',`📦 On Hand: ${fmtN(oh)}`);stockDetail.appendChild(ohBadge);}
         // Show WIP at WCs with seq ≤ this op's seq (pieces still needing this operation)
         // WIP at subsequent ops means those pieces have already done this op → not relevant
-        const opSeq=grp.seq;
+        const opIdx=sortedGroups.findIndex(g=>g.wcName===grp.wcName);
         const wipEntries=Object.entries(comp.wipByWC||{})
           .map(([poCol,qty])=>({wc:wcLabel(poCol),qty:Math.max(0,qty||0)}))
-          .filter(({wc,qty})=>{
+          .filter(({wc})=>{
             const s=wcSeqLookup.get(wc.toLowerCase());
-            return s===undefined||s<=opSeq; // include if seq ≤ this op (or unknown)
+            return s===undefined||s<=opIdx; // include if sort position ≤ current op
           })
-          .sort((a,b)=>(wcSeqLookup.get(a.wc.toLowerCase())??99)-(wcSeqLookup.get(b.wc.toLowerCase())??99));
+          .sort((a,b)=>(wcSeqLookup.get(a.wc.toLowerCase())??999)-(wcSeqLookup.get(b.wc.toLowerCase())??999));
         wipEntries.forEach(({wc,qty})=>{
           if(qty>=0){ // show even if 0 (to inform operator)
             const wipBadge=sp('stk-badge stk-wip',`🔄 WIP ${wc}: ${fmtN(qty)}`);
@@ -5516,12 +5520,13 @@ function buildDispozitiiData(){
     if(!rawOps.length) return;
     const ops=rawOps.map(op=>({
       seq:parseFloat(String(op['Ope seq']||'0').replace(',','.'))||0,
+      productSeq:parseFloat(String(op['Product seq']||'0').replace(',','.'))||0,
       opNoNum:parseFloat(String(op['Operation no']||'0').replace(',','.'))||0,
       opNo:str(op['Operation no']||''),
       wcName:str(op['Ope name']||op['Ope descr']||'?'),
       runT:parseFloat(String(op['Run time']||'0').replace(',','.'))||0,
       setupT:parseFloat(String(op['Setup time']||'0').replace(',','.'))||0,
-    })).sort((a,b)=>a.seq-b.seq);
+    })).sort((a,b)=>b.productSeq!==a.productSeq?(b.productSeq-a.productSeq):(a.seq-b.seq));
     const stock=S.stockIdx?.get(matNo)||{onHand:0,wipByWC:{}};
     const onHand=Math.max(0,stock.onHand);
     const wipByWC=stock.wipByWC||{};
@@ -6214,12 +6219,13 @@ function buildPwcData(eff){
     const rawOps=S.bowIdx?.get(`${itemNo}__${matNo}`)||[];if(!rawOps.length)return;
     const ops=rawOps.map(op=>({
       seq:parseFloat(String(op['Ope seq']||'0').replace(',','.'))||0,
+      productSeq:parseFloat(String(op['Product seq']||'0').replace(',','.'))||0,
       opNoNum:parseFloat(String(op['Operation no']||'0').replace(',','.'))||0,
       opNo:str(op['Operation no']||''),
       wcName:str(op['Ope name']||op['Ope descr']||'?'),
       runT:parseFloat(String(op['Run time']||'0').replace(',','.'))||0,
       setupT:parseFloat(String(op['Setup time']||'0').replace(',','.'))||0,
-    })).sort((a,b)=>a.seq-b.seq);
+    })).sort((a,b)=>b.productSeq!==a.productSeq?(b.productSeq-a.productSeq):(a.seq-b.seq));
     const stock=S.stockIdx?.get(matNo)||{onHand:0,wipByWC:{}};
     const onHand=Math.max(0,stock.onHand);
     const wipByWC=stock.wipByWC||{};
