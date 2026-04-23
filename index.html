@@ -5179,66 +5179,69 @@ ${bodyHTML}
     body.appendChild(info);modal.appendChild(body);overlay.appendChild(modal);document.body.appendChild(overlay);return;
   }
 
-  // ── Build op list from BOW using calcExecTime.byWC (guaranteed correct, same as Structura) ──
-  // Step 1: Collect all unique ops keyed by (productSeq_opeSeq) for correct ordering
-  // Order: Product seq DESC (higher = first to make), then Ope seq ASC within each product
-  const opMeta=new Map(); // key → {opNo,wcName,wcType,seq,productSeq,compStocks:[...]}
-  const seenOps=new Set();
+  // ── Build op list: one entry per (productSeq × opeSeq × opNo), sorted Product seq DESC → Ope seq ASC ──
+  const opRows=[];
+  const seenOpKeys=new Set();
+  const seenBOM=new Set();
   const gatherOps=(matNo)=>{
-    const key=`${itemNo}__${matNo}`;
-    if(seenOps.has(key))return;seenOps.add(key);
-    const rawOps=S.bowIdx?.get(key)||[];
+    const bomKey=`${itemNo}__${matNo}`;
+    if(seenBOM.has(bomKey))return;seenBOM.add(bomKey);
+    // POST-ORDER: children first
+    const bomRows=S.bomIdx?.get(bomKey)||[];
+    for(const brow of bomRows){const cm=str(brow['Material no']);if(cm)gatherOps(cm);}
+    const rawOps=S.bowIdx?.get(bomKey)||[];
+    if(!rawOps.length)return;
     const st=S.stockIdx?.get(matNo)||{onHand:0,totalWIP:0,wipByWC:{}};
     const rawNeeding=matNo===itemNo?effectiveQty:Math.max(0,needs?.get(matNo)?.net??needs?.get(matNo)?.needed??0);
-    const stForComp=S.stockIdx?.get(matNo)||{onHand:0,totalWIP:0};
-    const needing=Math.max(0,rawNeeding-Math.max(0,stForComp.onHand)-Math.max(0,stForComp.totalWIP));
-    for(const op of rawOps){
+    const unitsNeeded=rawNeeding;
+    const onHand=Math.max(0,st.onHand);
+    const wipByWC=st.wipByWC||{};
+    // Sort this component's ops by Ope seq ASC
+    const sortedLocal=[...rawOps].sort((a,b)=>(parseFloat(String(a['Ope seq']||'0').replace(',','.'))||0)-(parseFloat(String(b['Ope seq']||'0').replace(',','.'))||0));
+    // Build wipAtIdx for WIP-aware needing per op
+    const wipAtIdx=new Map();
+    for(const [poCol,wipQty] of Object.entries(wipByWC)){
+      if(!wipQty||wipQty<=0)continue;
+      const wcPO=wcLabel(poCol).toLowerCase();
+      let best=-1;
+      for(let i=sortedLocal.length-1;i>=0;i--){if(str(sortedLocal[i]['Ope name']||sortedLocal[i]['Ope descr']||'?').toLowerCase()===wcPO){best=i;break;}}
+      if(best>=0)wipAtIdx.set(best,(wipAtIdx.get(best)||0)+wipQty);
+    }
+    for(let i=0;i<sortedLocal.length;i++){
+      const op=sortedLocal[i];
       const opNoNum=parseFloat(String(op['Operation no']||'0').replace(',','.'))||0;
-      const wcName=str(op['Ope name']||op['Ope descr']||'?');
-      const wcType=S.wcSetupIdx?.[wcName]?.wcType||'';
       const seq=parseFloat(String(op['Ope seq']||'0').replace(',','.'))||0;
       const productSeq=parseFloat(String(op['Product seq']||'0').replace(',','.'))||0;
-      if(!opMeta.has(opNoNum)){
-        opMeta.set(opNoNum,{opNo:str(op['Operation no']||''),opNoNum,wcName,wcType,seq,productSeq,compStocks:[]});
-      }
-      const m=opMeta.get(opNoNum);
-      if(!m.compStocks.find(cs=>cs.matNo===matNo)){
-        const wipAtThisWC=Object.entries(st.wipByWC||{})
-          .filter(([poCol])=>wcLabel(poCol).toLowerCase()===wcName.toLowerCase())
-          .reduce((s,[,q])=>s+Math.max(0,q),0);
-        m.compStocks.push({
-          matNo,needing,
-          onHand:st.onHand,totalWIP:Math.max(0,st.totalWIP),wipByWC:st.wipByWC||{},
-          wipAtThisWC,
-          thisWcName:wcName,
-        });
-      }
+      const rowKey=`${productSeq}_${seq}_${opNoNum}`;
+      if(seenOpKeys.has(rowKey))continue;seenOpKeys.add(rowKey);
+      const wcName=str(op['Ope name']||op['Ope descr']||'?');
+      const wcType=S.wcSetupIdx?.[wcName]?.wcType||'';
+      const runT=parseFloat(String(op['Run time']||'0').replace(',','.'))||0;
+      const setupT=parseFloat(String(op['Setup time']||'0').replace(',','.'))||0;
+      // WIP-aware needing for this op
+      let alreadyDone=onHand;
+      for(const [si,q] of wipAtIdx){if(si>i)alreadyDone+=q;}
+      const needingWip=Math.max(0,unitsNeeded-alreadyDone);
+      const wipAtWC=wipAtIdx.get(i)||0;
+      let wipBefore=0;for(const [si,q] of wipAtIdx){if(si<i)wipBefore+=q;}
+      const sumTotal=unitsNeeded>0?(unitsNeeded*runT+setupT)/eff:0;
+      const sumRem=needingWip>0?(needingWip*runT+setupT)/eff:0;
+      const needingQty=needingWip;
+      const needing=Math.max(0,rawNeeding-Math.max(0,st.onHand)-Math.max(0,st.totalWIP));
+      const wipAtThisWC=Object.entries(wipByWC).filter(([pc])=>wcLabel(pc).toLowerCase()===wcName.toLowerCase()).reduce((s,[,q])=>s+Math.max(0,q),0);
+      opRows.push({opNo:str(op['Operation no']||''),opNoNum,wcName,wcType,seq,productSeq,
+        sumRem,sumTotal,needingQty,wipAtWC,wipBefore,
+        compStocks:[{matNo,needing,onHand:st.onHand,totalWIP:Math.max(0,st.totalWIP),wipByWC,wipAtThisWC,thisWcName:wcName}]});
     }
-    const bomRows=S.bomIdx?.get(key)||[];
-    for(const row of bomRows){const cm=str(row['Material no']);if(cm)gatherOps(cm);}
   };
   gatherOps(itemNo);
 
-  // Step 2: Sort by Product seq DESC (highest first = first subcomponent to make),
-  //         then by Ope seq ASC within each product (first operation first)
-  const sortedGroups=[...opMeta.values()].sort((a,b)=>{
-    // Higher Product seq = earlier in production flow
-    if(b.productSeq!==a.productSeq)return b.productSeq-a.productSeq;
-    // Within same product: lower Ope seq = earlier operation
-    return a.seq-b.seq;
-  });
+  // Sort: Product seq DESC → Ope seq ASC
+  const sortedGroups=[...opRows].sort((a,b)=>b.productSeq!==a.productSeq?b.productSeq-a.productSeq:a.seq-b.seq);
 
-  // Build wcName → sort position lookup for WIP filtering in sub-rows
-  const wcSeqLookup=new Map(); // wcName (lowercase) → sort index
-  sortedGroups.forEach((g,i)=>{ if(!wcSeqLookup.has(g.wcName.toLowerCase())) wcSeqLookup.set(g.wcName.toLowerCase(),i); });
-
-  // Step 3: Compute group times from execTime.byWC and totalExecTime.byWC (same as Structura)
-  sortedGroups.forEach(g=>{
-    const rem=execTime.byWC.get(g.wcName)||{runMin:0,setupMin:0};
-    const tot=totalExecTime.byWC.get(g.wcName)||{runMin:0,setupMin:0};
-    g.sumRem=(rem.runMin+rem.setupMin)/eff;
-    g.sumTotal=(tot.runMin+tot.setupMin)/eff;
-  });
+  // wcName → earliest sort position (for WIP filter)
+  const wcSeqLookup=new Map();
+  sortedGroups.forEach((g,i)=>{if(!wcSeqLookup.has(g.wcName.toLowerCase()))wcSeqLookup.set(g.wcName.toLowerCase(),i);});
 
   // Recompute pct using authoritative calcExecTime values (matches Structura)
   let pctFinal=fullyOnHand?100:totalExecTime.total>0?Math.min(99.99,Math.max(0,(1-execTime.total/totalExecTime.total)*100)):0;
@@ -5305,10 +5308,8 @@ ${bodyHTML}
         sepTr.appendChild(sepTd);sepTbody.appendChild(sepTr);tbl.appendChild(sepTbody);
       }
       const isPreFinalOp=typeKey.includes('Initial')||typeKey.includes('Intermediary');
-      // effectiveDone: sumRem already accounts for WIP correctly (from calcExecTime)
-      // BUT: if op has needing>0 but runT=setupT=0 (e.g. Subcontracting), sumRem=0 yet work is pending
-      const wcEntry=execTime.byWC.get(grp.wcName)||{runMin:0,setupMin:0,needingQty:0};
-      const stillPending=wcEntry.needingQty>0;  // pieces still need this op
+      // effectiveDone: per-row sumRem and needingQty computed directly in gatherOps
+      const stillPending=grp.needingQty>0;
       const effectiveDone=(grp.sumRem<=0.01&&!stillPending)||(cascadeFinalized&&isPreFinalOp);
       const rawDonePct=grp.sumTotal>0?(1-grp.sumRem/grp.sumTotal)*100:100;
       const donePctFinal=effectiveDone?100:Math.max(0,Math.round(rawDonePct*100)/100);
