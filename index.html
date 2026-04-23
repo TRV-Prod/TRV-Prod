@@ -5181,6 +5181,7 @@ ${bodyHTML}
 
   // ── Build op list: one entry per (productSeq × opeSeq × opNo), sorted Product seq DESC → Ope seq ASC ──
   const opRows=[];
+  let _insertOrd=0;
   const seenOpKeys=new Set();
   const seenBOM=new Set();
   const gatherOps=(matNo)=>{
@@ -5229,15 +5230,15 @@ ${bodyHTML}
       const needingQty=needingWip;
       const needing=Math.max(0,rawNeeding-Math.max(0,st.onHand)-Math.max(0,st.totalWIP));
       const wipAtThisWC=Object.entries(wipByWC).filter(([pc])=>wcLabel(pc).toLowerCase()===wcName.toLowerCase()).reduce((s,[,q])=>s+Math.max(0,q),0);
-      opRows.push({opNo:str(op['Operation no']||''),opNoNum,wcName,wcType,seq,productSeq,
+      opRows.push({opNo:str(op['Operation no']||''),opNoNum,wcName,wcType,seq,productSeq,insertionOrder:_insertOrd++,
         sumRem,sumTotal,needingQty,wipAtWC,wipBefore,
         compStocks:[{matNo,needing,onHand:st.onHand,totalWIP:Math.max(0,st.totalWIP),wipByWC,wipAtThisWC,thisWcName:wcName}]});
     }
   };
   gatherOps(itemNo);
 
-  // Sort: Product seq DESC → Ope seq ASC
-  const sortedGroups=[...opRows].sort((a,b)=>b.productSeq!==a.productSeq?b.productSeq-a.productSeq:a.seq-b.seq);
+  // Sort: preserve gatherOps insertion order (post-order: sub-components first, then FP ops in Ope seq order)
+  const sortedGroups=[...opRows].sort((a,b)=>a.insertionOrder-b.insertionOrder);
 
   // wcName → earliest sort position (for WIP filter)
   const wcSeqLookup=new Map();
@@ -5278,40 +5279,21 @@ ${bodyHTML}
       banner.textContent=`✓ ${fmtN(wipInFinal)} buc WIP in operatii finale — operatiile initiale si intermediare sunt considerate finalizate`;
       body.appendChild(banner);
     }
-    body.appendChild(sp('pdm-section-title','Operatii (sortate dupa Operation no ↑ · click pentru detalii)'));
+    body.appendChild(sp('pdm-section-title','Operatii (sortate in ordinea de fabricatie · click pentru detalii)'));
 
     const tbl=el('table','pdm-wc-table');tbl.style.width='100%';
     const thead=el('thead');const hr=el('tr');
-    ['','Op no','Workcenter','Total','Ramas','% Real','Progres'].forEach(h=>{
+    ['','Workcenter','Total','Ramas','% Real','Progres'].forEach(h=>{
       const th=el('th');th.textContent=h;hr.appendChild(th);});
     thead.appendChild(hr);tbl.appendChild(thead);
 
-    const TYPE_LABELS={'1 Initial Op':'Operatii Initiale','2 Intermediary Op':'Operatii Intermediare','3 Final Op':'Operatii Finale','3 Final Op ':'Operatii Finale'};
-    let lastType=null;
-
     for(const grp of sortedGroups){
-      // WC Type separator
       const typeKey=(grp.wcType||'').trim();
-      if(grp.wcType!==lastType){
-        lastType=grp.wcType;
-        const sepTbody=el('tbody');
-        const sepTr=el('tr');
-        const sepTd=el('td');sepTd.colSpan=7;
-        sepTd.style.cssText='background:#f1f5f9;padding:5px 10px;font-size:9.5px;font-weight:800;color:#475569;letter-spacing:.08em;text-transform:uppercase;border-bottom:1px solid var(--border)';
-        const typeLbl=TYPE_LABELS[typeKey]||(typeKey||'Alte operatii');
-        sepTd.textContent=typeLbl;
-        const isPreFinal=typeKey.includes('Initial')||typeKey.includes('Intermediary');
-        if(cascadeFinalized&&isPreFinal){
-          const badge=sp('');badge.style.cssText='margin-left:8px;background:#dcfce7;color:#15803d;border-radius:3px;padding:1px 6px;font-size:9px;font-weight:700';
-          badge.textContent='✓ Acoperit de WIP final';sepTd.appendChild(badge);
-        }
-        sepTr.appendChild(sepTd);sepTbody.appendChild(sepTr);tbl.appendChild(sepTbody);
-      }
       const isPreFinalOp=typeKey.includes('Initial')||typeKey.includes('Intermediary');
       // effectiveDone: per-row sumRem and needingQty computed directly in gatherOps
       const stillPending=grp.needingQty>0;
       const effectiveDone=(grp.sumRem<=0.01&&!stillPending)||(cascadeFinalized&&isPreFinalOp);
-      const rawDonePct=grp.sumTotal>0?(1-grp.sumRem/grp.sumTotal)*100:100;
+      const rawDonePct=grp.sumTotal>0?(1-grp.sumRem/grp.sumTotal)*100:(stillPending?0:100);
       const donePctFinal=effectiveDone?100:Math.max(0,Math.round(rawDonePct*100)/100);
       const donePctDisplay=donePctFinal===100?'100%':donePctFinal.toFixed(2)+'%';
       const done=donePctFinal>=100;
@@ -5328,8 +5310,6 @@ ${bodyHTML}
       else if(stillPending&&grp.sumRem<=0.01)tr.style.background='#fff9f0'; // in-progress highlight
       const toggle=sp('pdm-op-toggle','▶');
       const tdTog=el('td');tdTog.style.width='16px';tdTog.appendChild(toggle);tr.appendChild(tdTog);
-
-      const tdOp=el('td');tdOp.style.cssText='font-family:Arial,monospace;font-size:11px;color:var(--text3)';tdOp.textContent=grp.opNo;tr.appendChild(tdOp);
       const tdWc=el('td');tdWc.style.fontWeight='700';
       if(done){const tick=sp('','✓ ');tick.style.color='#16a34a';tdWc.appendChild(tick);}
       else if(stillPending&&grp.sumRem<=0.01){const ic=sp('','⏳ ');ic.style.color='#d97706';tdWc.appendChild(ic);}
@@ -5353,7 +5333,7 @@ ${bodyHTML}
         const sr=el('tr','pdm-sub-row');
         const compDone=comp.needing<=0;
         if(compDone)sr.style.background='#f0fdf4';
-        sr.appendChild(el('td'));sr.appendChild(el('td'));
+        sr.appendChild(el('td'));
         // Mat code
         const tdC=el('td');tdC.appendChild(sp('pdm-sub-matno',comp.matNo===itemNo?'(FP) '+comp.matNo:comp.matNo));sr.appendChild(tdC);
         // Total (no per-component total — group total covers it)
@@ -5447,9 +5427,9 @@ function exportPlanDetail(itemNo, plan, sortedGroups, pctDisplay, eff){
     'Cant. planificata':'Ramas (min)','Eficienta %':'% Realizat','% Realizare':'Status'});
 
   for(const grp of sortedGroups){
-    const rawDonePct=grp.sumTotal>0?(1-grp.sumRem/grp.sumTotal)*100:100;
+    const rawDonePct=grp.sumTotal>0?(1-grp.sumRem/grp.sumTotal)*100:(grp.needingQty>0?0:100);
     const donePct=rawDonePct>=100?100:Math.round(rawDonePct*100)/100;
-    const status=donePct>=100?'Finalizat':'In progres';
+    const status=donePct>=100&&grp.needingQty<=0?'Finalizat':'In progres';
 
     rows.push({
       'Cod produs':grp.opNo,
