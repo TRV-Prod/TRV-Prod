@@ -5278,35 +5278,16 @@ ${bodyHTML}
       banner.textContent=`✓ ${fmtN(wipInFinal)} buc WIP in operatii finale — operatiile initiale si intermediare sunt considerate finalizate`;
       body.appendChild(banner);
     }
-    body.appendChild(sp('pdm-section-title','Operatii (sortate dupa Operation no ↑ · click pentru detalii)'));
+    body.appendChild(sp('pdm-section-title','Operatii (sortate in ordinea de fabricatie · click pentru detalii)'));
 
     const tbl=el('table','pdm-wc-table');tbl.style.width='100%';
     const thead=el('thead');const hr=el('tr');
-    ['','Op no','Workcenter','Total','Ramas','% Real','Progres'].forEach(h=>{
+    ['','Workcenter','Total','Ramas','% Real','Progres'].forEach(h=>{
       const th=el('th');th.textContent=h;hr.appendChild(th);});
     thead.appendChild(hr);tbl.appendChild(thead);
 
-    const TYPE_LABELS={'1 Initial Op':'Operatii Initiale','2 Intermediary Op':'Operatii Intermediare','3 Final Op':'Operatii Finale','3 Final Op ':'Operatii Finale'};
-    let lastType=null;
-
     for(const grp of sortedGroups){
-      // WC Type separator
       const typeKey=(grp.wcType||'').trim();
-      if(grp.wcType!==lastType){
-        lastType=grp.wcType;
-        const sepTbody=el('tbody');
-        const sepTr=el('tr');
-        const sepTd=el('td');sepTd.colSpan=7;
-        sepTd.style.cssText='background:#f1f5f9;padding:5px 10px;font-size:9.5px;font-weight:800;color:#475569;letter-spacing:.08em;text-transform:uppercase;border-bottom:1px solid var(--border)';
-        const typeLbl=TYPE_LABELS[typeKey]||(typeKey||'Alte operatii');
-        sepTd.textContent=typeLbl;
-        const isPreFinal=typeKey.includes('Initial')||typeKey.includes('Intermediary');
-        if(cascadeFinalized&&isPreFinal){
-          const badge=sp('');badge.style.cssText='margin-left:8px;background:#dcfce7;color:#15803d;border-radius:3px;padding:1px 6px;font-size:9px;font-weight:700';
-          badge.textContent='✓ Acoperit de WIP final';sepTd.appendChild(badge);
-        }
-        sepTr.appendChild(sepTd);sepTbody.appendChild(sepTr);tbl.appendChild(sepTbody);
-      }
       const isPreFinalOp=typeKey.includes('Initial')||typeKey.includes('Intermediary');
       // effectiveDone: per-row sumRem and needingQty computed directly in gatherOps
       const stillPending=grp.needingQty>0;
@@ -5329,7 +5310,6 @@ ${bodyHTML}
       const toggle=sp('pdm-op-toggle','▶');
       const tdTog=el('td');tdTog.style.width='16px';tdTog.appendChild(toggle);tr.appendChild(tdTog);
 
-      const tdOp=el('td');tdOp.style.cssText='font-family:Arial,monospace;font-size:11px;color:var(--text3)';tdOp.textContent=grp.opNo;tr.appendChild(tdOp);
       const tdWc=el('td');tdWc.style.fontWeight='700';
       if(done){const tick=sp('','✓ ');tick.style.color='#16a34a';tdWc.appendChild(tick);}
       else if(stillPending&&grp.sumRem<=0.01){const ic=sp('','⏳ ');ic.style.color='#d97706';tdWc.appendChild(ic);}
@@ -5353,7 +5333,7 @@ ${bodyHTML}
         const sr=el('tr','pdm-sub-row');
         const compDone=comp.needing<=0;
         if(compDone)sr.style.background='#f0fdf4';
-        sr.appendChild(el('td'));sr.appendChild(el('td'));
+        sr.appendChild(el('td'));
         // Mat code
         const tdC=el('td');tdC.appendChild(sp('pdm-sub-matno',comp.matNo===itemNo?'(FP) '+comp.matNo:comp.matNo));sr.appendChild(tdC);
         // Total (no per-component total — group total covers it)
