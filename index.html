@@ -1437,8 +1437,8 @@ function buildBowFlatIdx(){
     if(!pno||!opeSeq) continue;
     const key=`${pno}__${opeSeq}`;
     if(!m.has(key)) m.set(key,{
-      runTime:parseFloat(r['Run time'])||0,
-      setupTime:parseFloat(r['Setup time'])||0,
+      runTime:parseFloat(String(r['Run time']||'0').replace(',','.'))||0,
+      setupTime:parseFloat(String(r['Setup time']||'0').replace(',','.'))||0,
       wcName:str(r['Ope name']||''),
     });
   }
