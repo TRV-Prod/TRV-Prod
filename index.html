@@ -945,6 +945,11 @@ button { font-family: var(--sans); }
 .scan-btn.blue{border-color:#3b82f6;color:#1d4ed8;background:#eff6ff}
 .scan-btn.blue:hover{background:#dbeafe}
 .scan-info-badge{display:inline-flex;align-items:center;height:26px;padding:0 10px;background:#f1f5f9;border:1px solid #e2e8f0;border-radius:12px;font-size:10px;font-weight:700;color:var(--text2);white-space:nowrap}
+.scan-eff-badge{display:inline-flex;align-items:center;gap:6px;height:28px;padding:0 12px;border-radius:14px;font-size:11px;font-weight:700;white-space:nowrap;border:1px solid transparent}
+.scan-eff-badge.good{background:#dcfce7;color:#15803d;border-color:#bbf7d0}
+.scan-eff-badge.warn{background:#fef9c3;color:#854d0e;border-color:#fde047}
+.scan-eff-badge.bad{background:#fee2e2;color:#991b1b;border-color:#fca5a5}
+.scan-eff-badge.na{background:#f1f5f9;color:#64748b;border-color:#e2e8f0}
 .scan-zoom-ctrl{display:flex;align-items:center;gap:3px}
 .scan-zoom-ctrl button{width:26px;height:26px;border:1px solid var(--border);border-radius:4px;background:#f8f9fb;cursor:pointer;font-size:14px;font-weight:700;color:var(--text2);display:inline-flex;align-items:center;justify-content:center;line-height:1;transition:background .1s}
 .scan-zoom-ctrl button:hover{background:#e2e8f0}
@@ -5235,7 +5240,11 @@ function renderScanariTab(){
   // Group 4: Info badge
   const g4=dv('scan-toolbar-group');
   const infoEl=dv('scan-info-badge');infoEl.id='scan-info-count';
-  g4.appendChild(infoEl);tb.appendChild(g4);
+  g4.appendChild(infoEl);
+  const effBadge=dv('scan-eff-badge na');effBadge.id='scan-eff-badge';
+  effBadge.title='Eficienta medie = Σ Timp teoretic / Σ Timp real × 100% (doar randuri cu ambii timpi disponibili)';
+  g4.appendChild(effBadge);
+  tb.appendChild(g4);
 
   // Group 5: Zoom (right-aligned)
   const g5=dv('scan-toolbar-group');
@@ -5367,7 +5376,8 @@ function buildScanTbody(cols, widths, bowFlat){
     const bowEntry=bowFlat?.get(bowKey);
     const qty=parseFloat(r['Manufact qty'])||0;
     // Timp teoretic = Run time × qty + Setup time  (formula din Structura)
-    const teoTotal=(bowEntry!=null)?(bowEntry.runTime*qty + bowEntry.setupTime):null;
+    // Daca qty=0 nu exista productie reala → timp teoretic = null (afisat ca —)
+    const teoTotal=(bowEntry!=null&&qty>0)?(bowEntry.runTime*qty + bowEntry.setupTime):null;
     const usedMin=scanTimeToMin(r['Used_tm_MS']);
     const eff=(teoTotal!=null&&usedMin>0)?(teoTotal/usedMin*100):null;
 
@@ -5443,8 +5453,35 @@ function rebuildScanTable(wrap,bowFlat){
   buildScanTable(wrap,bowFlat||buildBowFlatIdx());
 }
 function updateScanInfo(){
-  const el=document.getElementById('scan-info-count');
-  if(el){const n=getScanRows().length;el.textContent=`${n.toLocaleString()} inregistrari`;}
+  const countEl=document.getElementById('scan-info-count');
+  const effEl=document.getElementById('scan-eff-badge');
+  const rows=getScanRows();
+  if(countEl) countEl.textContent=`${rows.length.toLocaleString()} inregistrari`;
+  if(!effEl) return;
+  // Compute avg efficiency: sum(teoTotal) / sum(usedMin) * 100
+  // (weighted average — total theoretical / total real, not average of row percentages)
+  const bowFlat=buildBowFlatIdx();
+  let sumTeo=0, sumReal=0, nValid=0;
+  for(const r of rows){
+    const product=str(r['Product']||'');
+    const opNo=str(r['Op no']||'');
+    const bowEntry=bowFlat?.get(`${product}__${opNo}`);
+    const qty=parseFloat(r['Manufact qty'])||0;
+    if(!bowEntry||qty<=0) continue;
+    const teo=bowEntry.runTime*qty+bowEntry.setupTime;
+    const real=scanTimeToMin(r['Used_tm_MS']);
+    if(real<=0) continue;
+    sumTeo+=teo; sumReal+=real; nValid++;
+  }
+  if(nValid===0){
+    effEl.className='scan-eff-badge na';
+    effEl.textContent='Eficienta: —';
+    return;
+  }
+  const avgEff=sumTeo/sumReal*100;
+  const cls=avgEff>=90?'good':avgEff>=70?'warn':'bad';
+  effEl.className=`scan-eff-badge ${cls}`;
+  effEl.innerHTML=`Eficienta medie: <span style="font-size:13px">${avgEff.toFixed(1)}%</span><span style="font-size:9px;opacity:.7;margin-left:3px">(${nValid} op.)</span>`;
 }
 
 // ── Export Excel ──
@@ -5460,7 +5497,7 @@ function exportScanExcel(bowFlat){
     const opNo=str(r['Op no']||'');
     const bowEntry=bf.get(`${product}__${opNo}`);
     const qty=parseFloat(r['Manufact qty'])||0;
-    const teoTotal=(bowEntry!=null)?+((bowEntry.runTime*qty)+bowEntry.setupTime).toFixed(2):null;
+    const teoTotal=(bowEntry!=null&&qty>0)?+((bowEntry.runTime*qty)+bowEntry.setupTime).toFixed(2):null;
     const usedMin=scanTimeToMin(r['Used_tm_MS']);
     const eff=(teoTotal!=null&&usedMin>0)?+(teoTotal/usedMin*100).toFixed(1):null;
     const row=activeCols.map(k=>{
@@ -5527,7 +5564,7 @@ function exportScanPdf(bowFlat){
     const opNo=str(r['Op no']||'');
     const bowEntry=bf.get(`${product}__${opNo}`);
     const qty=parseFloat(r['Manufact qty'])||0;
-    const teoTotal=(bowEntry!=null)?((bowEntry.runTime*qty)+bowEntry.setupTime):null;
+    const teoTotal=(bowEntry!=null&&qty>0)?((bowEntry.runTime*qty)+bowEntry.setupTime):null;
     const usedMin=scanTimeToMin(r['Used_tm_MS']);
     const eff=(teoTotal!=null&&usedMin>0)?(teoTotal/usedMin*100):null;
     html+='<tr>';
