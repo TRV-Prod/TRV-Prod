@@ -3763,6 +3763,7 @@ if(!S.necReport) S.necReport={
 };
 if(!S.scanReport) S.scanReport={
   month:null,          // 'YYYYMM' or null (auto last month)
+  year:null,           // 'YYYY' or null (auto last year)
   colFilters:{},
   colOrder:null,       // null = default order
   hiddenCols:new Set(),
@@ -4993,11 +4994,18 @@ function fmtScanMonth(ym){
 function getScanRows(){
   const rs=S.scanReport;
   if(!S.scanData||!Array.isArray(S.scanData)) return [];
+  // Determine active year & month filters
+  const year=rs.year||getScanLastYear();
   const month=rs.month||getScanLastMonth();
   let rows=S.scanData.filter(r=>{
+    const tdt=String(r['Transaction dt']||'').replace(/[^0-9]/g,'');
+    const rowYear=tdt.slice(0,4);
+    const rowYM=tdt.slice(0,6);
+    // Year filter
+    if(year!=='all' && rowYear!==year) return false;
+    // Month filter (within selected year)
     if(month==='all') return true;
-    const tdt=String(r['Transaction dt']||'').replace(/[^0-9]/g,'').slice(0,6);
-    return tdt===month;
+    return rowYM===month;
   });
   // Apply col filters
   for(const[col,fval] of Object.entries(rs.colFilters||{})){
@@ -5027,6 +5035,18 @@ function getScanRows(){
   });
   return rows;
 }
+function getScanYears(){
+  if(!S.scanData||!Array.isArray(S.scanData)) return [];
+  const years=new Set();
+  for(const r of S.scanData){
+    const tdt=String(r['Transaction dt']||'').replace(/[^0-9]/g,'').slice(0,4);
+    if(tdt.length===4) years.add(tdt);
+  }
+  return [...years].sort();
+}
+function getScanLastYear(){
+  return getScanYears().pop()||'';
+}
 function getScanLastMonth(){
   if(!S.scanData||!Array.isArray(S.scanData)) return '';
   const months=new Set();
@@ -5047,9 +5067,10 @@ function getScanMonths(){
 }
 
 const SCAN_COL_RAWKEY={mo:'MO',tdt:'Transaction dt',product:'Product',wc:'Workcenter name',opno:'Op no',emp:'Employee name',qty:'Manufact qty',start:'Start_MS',finish:'Finish_MS',used:'Used_tm_MS',bowrun:'_bowRun',teototal:'_teoTotal',eff:'_eff'};
-const SCAN_COL_LABELS={mo:'MO',tdt:'Data',product:'Produs',wc:'Workcenter',opno:'Op No',emp:'Salariat',qty:'Cant. exec.',start:'Start',finish:'Finish',used:'Timp real',bowrun:'Run tm BOW\n(min/buc)',teototal:'Timp teoretic\ntotal',eff:'Eficienta'};
-const SCAN_COL_WIDTHS={mo:120,tdt:88,product:145,wc:160,opno:55,emp:165,qty:75,start:140,finish:140,used:80,bowrun:90,teototal:95,eff:80};
-const SCAN_COL_DEFAULT=['tdt','mo','product','wc','opno','emp','qty','start','finish','used','bowrun','teototal','eff'];
+const SCAN_COL_LABELS={mo:'MO',tdt:'Data',product:'Produs',wc:'Workcenter',opno:'Op No',emp:'Salariat',qty:'Cant. exec.',start:'Start',finish:'Finish',used:'Timp real',bowrun:'Timp teoretic\n(min)',teototal:'Timp teo. total',eff:'Eficienta'};
+const SCAN_COL_WIDTHS={mo:120,tdt:88,product:150,wc:160,opno:55,emp:170,qty:75,start:140,finish:140,used:82,bowrun:100,teototal:95,eff:82};
+// teototal hidden by default (same data as bowrun, kept for compatibility)
+const SCAN_COL_DEFAULT=['tdt','mo','product','wc','opno','emp','qty','start','finish','used','bowrun','eff'];
 const SCAN_NUM_COLS=new Set(['qty','bowrun','teototal','eff']);
 
 function renderScanariTab(){
@@ -5069,17 +5090,48 @@ function renderScanariTab(){
   // ── Toolbar ──
   const tb=dv('scan-toolbar');
 
+  // ── Helper: rebuild month dropdown based on selected year ──
+  function buildMonthOptions(sel, activeYear){
+    // Remove all but first option ('Toate lunile' placeholder is rebuilt too)
+    sel.innerHTML='';
+    const allM=el('option');allM.value='all';allM.textContent='Toate lunile';
+    if(rs.month==='all') allM.selected=true;
+    sel.appendChild(allM);
+    // Only show months within the selected year
+    getScanMonths()
+      .filter(ym=>activeYear==='all'||ym.startsWith(activeYear))
+      .forEach(ym=>{
+        const opt=el('option');opt.value=ym;opt.textContent=fmtScanMonth(ym);
+        if(ym===rs.month) opt.selected=true;
+        sel.appendChild(opt);
+      });
+  }
+
+  // Group 0: Year selector
+  const g0=dv('scan-toolbar-group');
+  g0.appendChild(sp('scan-toolbar-label','An:'));
+  const yrSel=el('select','scan-month-sel');yrSel.style.minWidth='80px';
+  const allYrOpt=el('option');allYrOpt.value='all';allYrOpt.textContent='Toti anii';
+  if((rs.year||getScanLastYear())==='all') allYrOpt.selected=true;
+  yrSel.appendChild(allYrOpt);
+  getScanYears().forEach(y=>{
+    const opt=el('option');opt.value=y;opt.textContent=y;
+    if(y===(rs.year||getScanLastYear())) opt.selected=true;
+    yrSel.appendChild(opt);
+  });
+  g0.appendChild(yrSel);tb.appendChild(g0);
+
   // Group 1: Month selector
   const g1=dv('scan-toolbar-group');
   g1.appendChild(sp('scan-toolbar-label','Luna:'));
   const monSel=el('select','scan-month-sel');
-  const allOpt=el('option');allOpt.value='all';allOpt.textContent='Toate lunile';
-  if(rs.month==='all') allOpt.selected=true;
-  monSel.appendChild(allOpt);
-  getScanMonths().forEach(ym=>{
-    const opt=el('option');opt.value=ym;opt.textContent=fmtScanMonth(ym);
-    if(ym===rs.month) opt.selected=true;
-    monSel.appendChild(opt);
+  buildMonthOptions(monSel, rs.year||getScanLastYear());
+  yrSel.addEventListener('change',()=>{
+    rs.year=yrSel.value;
+    // Reset month to 'all' when year changes to avoid stale selection
+    rs.month='all';
+    buildMonthOptions(monSel, rs.year);
+    rebuildScanBody(tableWrap);updateScanInfo();
   });
   monSel.addEventListener('change',()=>{rs.month=monSel.value;rebuildScanBody(tableWrap);updateScanInfo();});
   g1.appendChild(monSel);tb.appendChild(g1);
@@ -5252,9 +5304,9 @@ function buildScanTbody(cols, widths, bowFlat){
     const opNo=str(r['Op no']||'');
     const bowKey=`${product}__${opNo}`;
     const bowEntry=bowFlat?.get(bowKey);
-    const bowRun=bowEntry?bowEntry.runTime:null;
     const qty=parseFloat(r['Manufact qty'])||0;
-    const teoTotal=bowRun!=null?bowRun*qty:null;
+    // Timp teoretic = Run time × qty + Setup time  (formula din Structura)
+    const teoTotal=(bowEntry!=null)?(bowEntry.runTime*qty + bowEntry.setupTime):null;
     const usedMin=scanTimeToMin(r['Used_tm_MS']);
     const eff=(teoTotal!=null&&usedMin>0)?(teoTotal/usedMin*100):null;
 
@@ -5274,11 +5326,20 @@ function buildScanTbody(cols, widths, bowFlat){
       else if(k==='finish') val=fmtScanDt(r['Finish_MS']);
       else if(k==='used') val=fmtScanTime(r['Used_tm_MS']);
       else if(k==='bowrun'){
-        td.textContent=bowRun!=null?fmtN(bowRun):'—';
-        td.style.textAlign='right';td.style.color=bowRun!=null?'var(--text1)':'#9ca3af';
+        // Show "run×qty + setup = total" formula as tooltip, value as total min
+        if(bowEntry!=null){
+          const runPart=(bowEntry.runTime*qty).toFixed(2);
+          const setupPart=bowEntry.setupTime.toFixed(2);
+          td.textContent=fmtMin(teoTotal);
+          td.title=`Run: ${bowEntry.runTime.toFixed(3)} min/buc × ${qty} buc = ${runPart} min\nSetup: ${setupPart} min\nTotal: ${fmtMin(teoTotal)}`;
+          td.style.cssText='text-align:right;cursor:help';
+        } else {
+          td.textContent='—';td.style.cssText='text-align:right;color:#9ca3af';
+        }
         tr.appendChild(td);return;
       }
       else if(k==='teototal'){
+        // Same as bowrun but without tooltip — keep for compatibility, hide by default
         td.textContent=teoTotal!=null?fmtMin(teoTotal):'—';
         td.style.textAlign='right';td.style.color=teoTotal!=null?'var(--text1)':'#9ca3af';
         tr.appendChild(td);return;
@@ -5337,9 +5398,8 @@ function exportScanExcel(bowFlat){
     const product=str(r['Product']||'');
     const opNo=str(r['Op no']||'');
     const bowEntry=bf.get(`${product}__${opNo}`);
-    const bowRun=bowEntry?bowEntry.runTime:null;
     const qty=parseFloat(r['Manufact qty'])||0;
-    const teoTotal=bowRun!=null?+(bowRun*qty).toFixed(2):null;
+    const teoTotal=(bowEntry!=null)?+((bowEntry.runTime*qty)+bowEntry.setupTime).toFixed(2):null;
     const usedMin=scanTimeToMin(r['Used_tm_MS']);
     const eff=(teoTotal!=null&&usedMin>0)?+(teoTotal/usedMin*100).toFixed(1):null;
     const row=activeCols.map(k=>{
@@ -5353,7 +5413,7 @@ function exportScanExcel(bowFlat){
       if(k==='start') return fmtScanDt(r['Start_MS']);
       if(k==='finish') return fmtScanDt(r['Finish_MS']);
       if(k==='used') return fmtScanTime(r['Used_tm_MS']);
-      if(k==='bowrun') return bowRun!=null?+bowRun.toFixed(3):null;
+      if(k==='bowrun') return teoTotal!=null?+teoTotal.toFixed(2):null;
       if(k==='teototal') return teoTotal;
       if(k==='eff') return eff;
       return '';
@@ -5405,9 +5465,8 @@ function exportScanPdf(bowFlat){
     const product=str(r['Product']||'');
     const opNo=str(r['Op no']||'');
     const bowEntry=bf.get(`${product}__${opNo}`);
-    const bowRun=bowEntry?bowEntry.runTime:null;
     const qty=parseFloat(r['Manufact qty'])||0;
-    const teoTotal=bowRun!=null?bowRun*qty:null;
+    const teoTotal=(bowEntry!=null)?((bowEntry.runTime*qty)+bowEntry.setupTime):null;
     const usedMin=scanTimeToMin(r['Used_tm_MS']);
     const eff=(teoTotal!=null&&usedMin>0)?(teoTotal/usedMin*100):null;
     html+='<tr>';
