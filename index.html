@@ -3769,6 +3769,7 @@ if(!S.necReport) S.necReport={
 if(!S.scanReport) S.scanReport={
   month:null,          // 'YYYYMM' or null (auto last month)
   year:null,           // 'YYYY' or null (auto last year)
+  day:null,            // 'YYYYMMDD' or 'all' or null (auto last date)
   colFilters:{},
   colOrder:null,       // null = default order
   hiddenCols:new Set(),
@@ -4999,18 +5000,19 @@ function fmtScanMonth(ym){
 function getScanRows(){
   const rs=S.scanReport;
   if(!S.scanData||!Array.isArray(S.scanData)) return [];
-  // Determine active year & month filters
+  // Determine active year / month / day filters
   const year=rs.year||getScanLastYear();
   const month=rs.month||getScanLastMonth();
+  const day=rs.day!=null?rs.day:getScanLastDate();   // default = last date
   let rows=S.scanData.filter(r=>{
     const tdt=String(r['Transaction dt']||'').replace(/[^0-9]/g,'');
     const rowYear=tdt.slice(0,4);
     const rowYM=tdt.slice(0,6);
-    // Year filter
+    const rowYMD=tdt.slice(0,8);
     if(year!=='all' && rowYear!==year) return false;
-    // Month filter (within selected year)
-    if(month==='all') return true;
-    return rowYM===month;
+    if(month!=='all' && rowYM!==month) return false;
+    if(day!=='all' && rowYMD!==day) return false;
+    return true;
   });
   // Apply col filters
   for(const[col,fval] of Object.entries(rs.colFilters||{})){
@@ -5060,6 +5062,33 @@ function getScanLastMonth(){
     if(tdt.length===6) months.add(tdt);
   }
   return [...months].sort().pop()||'';
+}
+function getScanLastDate(){
+  if(!S.scanData||!Array.isArray(S.scanData)) return '';
+  let max='';
+  for(const r of S.scanData){
+    const tdt=String(r['Transaction dt']||'').replace(/[^0-9]/g,'').slice(0,8);
+    if(tdt.length===8&&tdt>max) max=tdt;
+  }
+  return max;
+}
+function getScanDays(year, month){
+  // Returns sorted array of 'YYYYMMDD' available in the given year+month context
+  if(!S.scanData||!Array.isArray(S.scanData)) return [];
+  const days=new Set();
+  for(const r of S.scanData){
+    const tdt=String(r['Transaction dt']||'').replace(/[^0-9]/g,'');
+    if(tdt.length<8) continue;
+    const ry=tdt.slice(0,4), rm=tdt.slice(0,6), rd=tdt.slice(0,8);
+    if(year&&year!=='all'&&ry!==year) continue;
+    if(month&&month!=='all'&&rm!==month) continue;
+    days.add(rd);
+  }
+  return [...days].sort();
+}
+function fmtScanDay(yyyymmdd){
+  if(!yyyymmdd||yyyymmdd.length<8) return yyyymmdd;
+  return `${yyyymmdd.slice(6,8)}.${yyyymmdd.slice(4,6)}.${yyyymmdd.slice(0,4)}`;
 }
 function getScanMonths(){
   if(!S.scanData||!Array.isArray(S.scanData)) return [];
@@ -5133,13 +5162,40 @@ function renderScanariTab(){
   buildMonthOptions(monSel, rs.year||getScanLastYear());
   yrSel.addEventListener('change',()=>{
     rs.year=yrSel.value;
-    // Reset month to 'all' when year changes to avoid stale selection
     rs.month='all';
+    rs.day='all';
     buildMonthOptions(monSel, rs.year);
     rebuildScanBody(tableWrap);updateScanInfo();
   });
-  monSel.addEventListener('change',()=>{rs.month=monSel.value;rebuildScanBody(tableWrap);updateScanInfo();});
+  monSel.addEventListener('change',()=>{
+    rs.month=monSel.value;
+    // Rebuild day options and reset to 'all' when month changes
+    rs.day='all';
+    buildDayOptions(daySel, rs.year||getScanLastYear(), rs.month);
+    rebuildScanBody(tableWrap);updateScanInfo();
+  });
   g1.appendChild(monSel);tb.appendChild(g1);
+
+  // Group 1b: Day selector
+  const g1b=dv('scan-toolbar-group');
+  g1b.appendChild(sp('scan-toolbar-label','Zi:'));
+  const daySel=el('select','scan-month-sel');daySel.style.minWidth='115px';
+  function buildDayOptions(sel, activeYear, activeMonth){
+    sel.innerHTML='';
+    const allD=el('option');allD.value='all';allD.textContent='Toate zilele';
+    if((rs.day||'')==='all') allD.selected=true;
+    sel.appendChild(allD);
+    const lastDate=getScanLastDate();
+    getScanDays(activeYear, activeMonth).forEach(d=>{
+      const opt=el('option');opt.value=d;opt.textContent=fmtScanDay(d);
+      // default: select last date if rs.day is null (first render)
+      if(d===(rs.day!=null?rs.day:lastDate)) opt.selected=true;
+      sel.appendChild(opt);
+    });
+  }
+  buildDayOptions(daySel, rs.year||getScanLastYear(), rs.month||getScanLastMonth());
+  daySel.addEventListener('change',()=>{rs.day=daySel.value;rebuildScanBody(tableWrap);updateScanInfo();});
+  g1b.appendChild(daySel);tb.appendChild(g1b);
 
   // Group 2: Tools
   const g2=dv('scan-toolbar-group');
