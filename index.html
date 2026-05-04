@@ -950,6 +950,7 @@ button { font-family: var(--sans); }
 .scan-eff-badge.warn{background:#fef9c3;color:#854d0e;border-color:#fde047}
 .scan-eff-badge.bad{background:#fee2e2;color:#991b1b;border-color:#fca5a5}
 .scan-eff-badge.na{background:#f1f5f9;color:#64748b;border-color:#e2e8f0}
+.scan-eff-detail{font-size:9px;font-weight:400;opacity:.75;margin-left:4px}
 .scan-zoom-ctrl{display:flex;align-items:center;gap:3px}
 .scan-zoom-ctrl button{width:26px;height:26px;border:1px solid var(--border);border-radius:4px;background:#f8f9fb;cursor:pointer;font-size:14px;font-weight:700;color:var(--text2);display:inline-flex;align-items:center;justify-content:center;line-height:1;transition:background .1s}
 .scan-zoom-ctrl button:hover{background:#e2e8f0}
@@ -5458,8 +5459,6 @@ function updateScanInfo(){
   const rows=getScanRows();
   if(countEl) countEl.textContent=`${rows.length.toLocaleString()} inregistrari`;
   if(!effEl) return;
-  // Compute avg efficiency: sum(teoTotal) / sum(usedMin) * 100
-  // (weighted average — total theoretical / total real, not average of row percentages)
   const bowFlat=buildBowFlatIdx();
   let sumTeo=0, sumReal=0, nValid=0;
   for(const r of rows){
@@ -5481,7 +5480,20 @@ function updateScanInfo(){
   const avgEff=sumTeo/sumReal*100;
   const cls=avgEff>=90?'good':avgEff>=70?'warn':'bad';
   effEl.className=`scan-eff-badge ${cls}`;
-  effEl.innerHTML=`Eficienta medie: <span style="font-size:13px">${avgEff.toFixed(1)}%</span><span style="font-size:9px;opacity:.7;margin-left:3px">(${nValid} op.)</span>`;
+  // Format sums as h:mm for readability
+  const fmtHM=m=>{const h=Math.floor(m/60);const mm=Math.round(m%60);return `${h}h${String(mm).padStart(2,'0')}m`;};
+  effEl.innerHTML=
+    `<span>Eficienta medie:</span>`+
+    `<span style="font-size:13px;margin:0 3px">${avgEff.toFixed(1)}%</span>`+
+    `<span class="scan-eff-detail">`+
+      `teo: ${fmtHM(sumTeo)} / real: ${fmtHM(sumReal)}`+
+      ` · ${nValid} op.`+
+    `</span>`;
+  effEl.title=
+    `Eficienta medie = Σ Timp teoretic / Σ Timp real × 100%\n`+
+    `Σ Timp teoretic: ${sumTeo.toFixed(1)} min (${fmtHM(sumTeo)})\n`+
+    `Σ Timp real: ${sumReal.toFixed(1)} min (${fmtHM(sumReal)})\n`+
+    `Operatii cu date BOW: ${nValid}`;
 }
 
 // ── Export Excel ──
