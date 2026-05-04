@@ -981,6 +981,7 @@ const S={
   wcAvailHours:{},
   wcLoadMode:'wip',  // 'wip' | 'total'
   inTransitData:null,  // parsed In_transit rows
+  scanData:null,        // parsed QV_Start-Stop_History rows
   inTransitIdx:null,   // itemNo → transitQty (sum)
   wcSetupData:null,   // parsed Workcenter_Setup rows
   wcSetupIdx:null,    // wcName → {prodTeam, wcType}
@@ -1258,6 +1259,25 @@ function applyWcSetup(rows,ts){
   }
 }
 
+
+function applyScanari(rows,ts){
+  S.scanData=rows;S.scanData._ts=ts;S.scanData._rows=rows.length;
+}
+
+function buildBowFlatIdx(){
+  // Map: "productNo__opNo" -> {runTime, setupTime}
+  const m=new Map();
+  if(!S.bowData) return m;
+  for(const r of S.bowData){
+    const pno=str(r['Product no']);
+    const opNo=str(r['Operation no']);
+    if(!pno||!opNo) continue;
+    const key=`${pno}__${opNo}`;
+    if(!m.has(key)) m.set(key,{runTime:parseFloat(r['Run time'])||0,setupTime:parseFloat(r['Setup time'])||0});
+  }
+  return m;
+}
+
 function applyInTransit(rows,ts){
   S.inTransitData=rows;
   S.inTransitData._ts=ts;
@@ -1440,6 +1460,9 @@ async function loadFromIndexedDB(){
   if(vsData?.inputs)S.stocVerifInputs=vsData.inputs;
   const ite=await dbLoad('intransit');
   if(ite){S.loadMsg='Se incarca In Transit...';setLoadMsg(S.loadMsg);await yieldFrame();applyInTransit(ite.rows,ite.ts);await yieldFrame();}
+
+  const scanE=await dbLoad('scanari');
+  if(scanE){S.loadMsg='Se incarca Scanari...';setLoadMsg(S.loadMsg);await yieldFrame();applyScanari(scanE.rows,scanE.ts);await yieldFrame();}
   const plane=await dbLoad('plan');
   if(plane?.entries){
     S.planData=new Map(plane.entries);
@@ -2321,6 +2344,7 @@ function render(){
     {id:'rapoarte',label:'Rapoarte'},
     {id:'planificare',label:'Planificare'},
     {id:'pwc',label:'Programare WC'},
+    {id:'scanari',label:'Raport Scanari'},
     {id:'scanner',label:'📷 Scanner'},
   ];
   if(S.session.role==='admin') tabs.push({id:'utilizatori',label:'Utilizatori'});
@@ -2422,6 +2446,7 @@ function render(){
   else if(S.tab==='rapoarte') body.appendChild(renderRapoarte());
   else if(S.tab==='planificare')body.appendChild(renderPlanificare());
   else if(S.tab==='pwc')body.appendChild(renderPwcTab());
+  else if(S.tab==='scanari')body.appendChild(renderScanariTab());
   else if(S.tab==='scanner')body.appendChild(renderScanner());
   else if(S.tab==='utilizatori'&&S.session.role==='admin')body.appendChild(renderUsersTab());
   else{const c=dv('cnt');c.style.flex='1';c.appendChild(mkEmpty('Modul in constructie',''));body.appendChild(c);}
@@ -2462,10 +2487,11 @@ function renderFisiereTab(){
    {key:'po',icon:'📊',title:'Planning Overview',desc:'Stocuri On Hand, WIP per workcenter, comenzi deschise'},
    {key:'ob',icon:'📦',title:'Open Order Lines',desc:'Comenzi deschise: Entry/Confirm/Request dt, cantitati, clienti, preturi'},
    {key:'wcs',icon:'🔧',title:'Workcenter Setup',desc:'Workcenter Type (Initial/Intermediary/Final Op), numarul de echipe (Prod Team) pentru calculul capacitatii'},
+   {key:'scanari',icon:'📡',title:'QV Start-Stop History',desc:'Date de scanare productie: timpi efectivi per operator, workcenter si operatie'},
    {key:'intransit',icon:'🚚',title:'In Transit',desc:'Produse finite expediate, neinca receptionate de client. Se scad din stocul On Hand al produselor finale.'}]
   .forEach(fc=>{
-    const loaded=fc.key==='bom'?!!S.bomData:fc.key==='bow'?!!S.bowData:fc.key==='po'?!!S.poData:fc.key==='wcs'?!!S.wcSetupData:fc.key==='intransit'?!!S.inTransitData:!!S.obData;
-    const meta=fc.key==='wcs'?{rows:S.wcSetupData?.length||0,ts:S.wcSetupData?._ts}:fc.key==='intransit'?{rows:S.inTransitData?.length||0,ts:S.inTransitData?._ts}:(S.meta[fc.key]||{rows:0,ts:null});
+    const loaded=fc.key==='bom'?!!S.bomData:fc.key==='bow'?!!S.bowData:fc.key==='po'?!!S.poData:fc.key==='wcs'?!!S.wcSetupData:fc.key==='intransit'?!!S.inTransitData:fc.key==='scanari'?!!S.scanData:!!S.obData;
+    const meta=fc.key==='wcs'?{rows:S.wcSetupData?.length||0,ts:S.wcSetupData?._ts}:fc.key==='intransit'?{rows:S.inTransitData?.length||0,ts:S.inTransitData?._ts}:fc.key==='scanari'?{rows:S.scanData?._rows||0,ts:S.scanData?._ts}:(S.meta[fc.key]||{rows:0,ts:null});
     const card=dv(`file-card${loaded?' loaded':''}`);
     const fch=dv('fc-header');
     fch.appendChild(sp('fc-icon',fc.icon));
@@ -2497,8 +2523,8 @@ function renderFisiereTab(){
         const buf=await readFileAsBuffer(file);
         const rows=parseBuffer(new Uint8Array(buf));
         const ts=Date.now();
-        if(fc.key==='bom')applyBom(rows,ts);else if(fc.key==='bow')applyBow(rows,ts);else if(fc.key==='po')applyPo(rows,ts);else if(fc.key==='wcs'){applyWcSetup(rows,ts);rows._ts=ts;}else if(fc.key==='intransit'){applyInTransit(rows,ts);rows._ts=ts;}else applyOb(rows,ts);
-        if(fc.key==='wcs'||fc.key==='intransit'){await dbSave(fc.key,{rows,ts});}else{await dbSave(fc.key,{rows,ts});}
+        if(fc.key==='bom')applyBom(rows,ts);else if(fc.key==='bow')applyBow(rows,ts);else if(fc.key==='po')applyPo(rows,ts);else if(fc.key==='wcs'){applyWcSetup(rows,ts);rows._ts=ts;}else if(fc.key==='intransit'){applyInTransit(rows,ts);rows._ts=ts;}else if(fc.key==='scanari'){applyScanari(rows,ts);}else applyOb(rows,ts);
+        await dbSave(fc.key,{rows,ts});
         if(S.sbCfg&&S.session?.role==='admin'){
           lbl.innerHTML='';lbl.appendChild(el('span','spin-sm'));lbl.appendChild(document.createTextNode(' Sincronizare Supabase...'));
           try{await sbSaveData(fc.key,rows,ts);}catch(e){console.warn('Supabase sync:',e);}
@@ -3557,6 +3583,15 @@ if(!S.necReport) S.necReport={
   showGroups:true,
   data:null,
 };
+if(!S.scanReport) S.scanReport={
+  month:null,          // 'YYYYMM' or null (auto last month)
+  colFilters:{},
+  colOrder:null,       // null = default order
+  hiddenCols:new Set(),
+  sortCol:'tdt',sortDir:1,
+  zoom:100,
+};
+
 
 function getNecRows(){
   const rs = S.necReport;
@@ -4727,6 +4762,496 @@ function addScanHistory(code,name){
   _scanHistory=_scanHistory.filter(h=>h.code!==code);
   _scanHistory.unshift({code,name,ts:new Date()});
   if(_scanHistory.length>8)_scanHistory.pop();
+}
+
+
+/* ═══════════════════════════════════════════════════════════════
+   RAPORT SCANARI MODULE
+═══════════════════════════════════════════════════════════════ */
+
+// ── Datetime & time formatters for scan data ──
+function fmtScanDt(val){
+  if(val==null||val==='') return '—';
+  if(val instanceof Date){
+    const d=val;
+    return `${d.getDate()}.${d.getMonth()+1}.${d.getFullYear()} ${String(d.getHours()).padStart(2,'0')}:${String(d.getMinutes()).padStart(2,'0')}:${String(d.getSeconds()).padStart(2,'0')}`;
+  }
+  if(typeof val==='number'&&val>1){
+    const d=new Date(Math.round((val-25569)*86400*1000));
+    const local=new Date(d.getTime()-d.getTimezoneOffset()*60000);
+    return `${local.getUTCDate()}.${local.getUTCMonth()+1}.${local.getUTCFullYear()} ${String(local.getUTCHours()).padStart(2,'0')}:${String(local.getUTCMinutes()).padStart(2,'0')}:${String(local.getUTCSeconds()).padStart(2,'0')}`;
+  }
+  return String(val);
+}
+function fmtScanTime(val){
+  if(val==null||val==='') return '—';
+  let totalSec=0;
+  if(val instanceof Date){totalSec=val.getHours()*3600+val.getMinutes()*60+val.getSeconds();}
+  else if(typeof val==='number'){totalSec=Math.round(val*86400);}
+  else return String(val);
+  const h=Math.floor(totalSec/3600);
+  const m=Math.floor((totalSec%3600)/60);
+  const s=totalSec%60;
+  return `${h}:${String(m).padStart(2,'0')}:${String(s).padStart(2,'0')}`;
+}
+function fmtTrDate(val){
+  if(!val) return '—';
+  const s=String(val).replace(/[^0-9]/g,'');
+  if(s.length===8) return `${s.slice(6,8)}.${s.slice(4,6)}.${s.slice(0,4)}`;
+  return String(val);
+}
+function scanTimeToMin(val){
+  if(val==null||val==='') return 0;
+  if(val instanceof Date) return (val.getHours()*3600+val.getMinutes()*60+val.getSeconds())/60;
+  if(typeof val==='number') return Math.round(val*86400)/60;
+  return 0;
+}
+function fmtScanMonth(ym){
+  // 'YYYYMM' → 'Ianuarie 2026'
+  const months=['Ianuarie','Februarie','Martie','Aprilie','Mai','Iunie','Iulie','August','Septembrie','Octombrie','Noiembrie','Decembrie'];
+  const y=ym.slice(0,4), m=parseInt(ym.slice(4,6),10);
+  return `${months[m-1]||m} ${y}`;
+}
+function getScanRows(){
+  const rs=S.scanReport;
+  if(!S.scanData||!Array.isArray(S.scanData)) return [];
+  const month=rs.month||getScanLastMonth();
+  let rows=S.scanData.filter(r=>{
+    const tdt=String(r['Transaction dt']||'').replace(/[^0-9]/g,'').slice(0,6);
+    return tdt===month;
+  });
+  // Apply col filters
+  for(const[col,fval] of Object.entries(rs.colFilters||{})){
+    if(!fval) continue;
+    const fl=fval.toLowerCase();
+    rows=rows.filter(r=>{
+      const raw=r[SCAN_COL_RAWKEY[col]];
+      let sv='';
+      if(col==='tdt') sv=fmtTrDate(raw);
+      else if(col==='start') sv=fmtScanDt(raw);
+      else if(col==='finish') sv=fmtScanDt(raw);
+      else if(col==='used') sv=fmtScanTime(raw);
+      else sv=String(raw==null?'':raw);
+      return sv.toLowerCase().includes(fl);
+    });
+  }
+  // Sort
+  rows=[...rows].sort((a,b)=>{
+    const dir=rs.sortDir;
+    const col=rs.sortCol;
+    const rawA=col==='tdt'?String(a['Transaction dt']||''):col==='start'?a['Start_MS']:col==='finish'?a['Finish_MS']:col==='used'?a['Used_tm_MS']:col==='mo'?String(a['MO']||''):col==='product'?String(a['Product']||''):col==='wc'?String(a['Workcenter name']||''):col==='opno'?String(a['Op no']||''):col==='emp'?String(a['Employee name']||''):col==='qty'?parseFloat(a['Manufact qty'])||0:null;
+    const rawB=col==='tdt'?String(b['Transaction dt']||''):col==='start'?b['Start_MS']:col==='finish'?b['Finish_MS']:col==='used'?b['Used_tm_MS']:col==='mo'?String(b['MO']||''):col==='product'?String(b['Product']||''):col==='wc'?String(b['Workcenter name']||''):col==='opno'?String(b['Op no']||''):col==='emp'?String(b['Employee name']||''):col==='qty'?parseFloat(b['Manufact qty'])||0:null;
+    if(rawA==null||rawB==null) return 0;
+    if(typeof rawA==='number'&&typeof rawB==='number') return dir*(rawA-rawB);
+    if(rawA instanceof Date&&rawB instanceof Date) return dir*(rawA-rawB);
+    return dir*String(rawA).localeCompare(String(rawB));
+  });
+  return rows;
+}
+function getScanLastMonth(){
+  if(!S.scanData||!Array.isArray(S.scanData)) return '';
+  const months=new Set();
+  for(const r of S.scanData){
+    const tdt=String(r['Transaction dt']||'').replace(/[^0-9]/g,'').slice(0,6);
+    if(tdt.length===6) months.add(tdt);
+  }
+  return [...months].sort().pop()||'';
+}
+function getScanMonths(){
+  if(!S.scanData||!Array.isArray(S.scanData)) return [];
+  const months=new Set();
+  for(const r of S.scanData){
+    const tdt=String(r['Transaction dt']||'').replace(/[^0-9]/g,'').slice(0,6);
+    if(tdt.length===6) months.add(tdt);
+  }
+  return [...months].sort();
+}
+
+const SCAN_COL_RAWKEY={mo:'MO',tdt:'Transaction dt',product:'Product',wc:'Workcenter name',opno:'Op no',emp:'Employee name',qty:'Manufact qty',start:'Start_MS',finish:'Finish_MS',used:'Used_tm_MS',bowrun:'_bowRun',teototal:'_teoTotal',eff:'_eff'};
+const SCAN_COL_LABELS={mo:'MO',tdt:'Data',product:'Produs',wc:'Workcenter',opno:'Op No',emp:'Salariat',qty:'Cant. exec.',start:'Start',finish:'Finish',used:'Timp real',bowrun:'Run tm BOW\n(min/buc)',teototal:'Timp teoretic\ntotal',eff:'Eficienta'};
+const SCAN_COL_WIDTHS={mo:120,tdt:88,product:145,wc:160,opno:55,emp:165,qty:75,start:140,finish:140,used:80,bowrun:90,teototal:95,eff:80};
+const SCAN_COL_DEFAULT=['tdt','mo','product','wc','opno','emp','qty','start','finish','used','bowrun','teototal','eff'];
+const SCAN_NUM_COLS=new Set(['qty','bowrun','teototal','eff']);
+
+function renderScanariTab(){
+  const page=dv('scan-page');
+  if(!S.scanData){
+    const c=dv('cnt');c.style.flex='1';
+    c.appendChild(mkEmpty('Raport Scanari','Incarcati fisierul QV Start-Stop History din tabul Fisiere.'));
+    page.appendChild(c);return page;
+  }
+
+  const rs=S.scanReport;
+  if(!rs.month) rs.month=getScanLastMonth();
+
+  // Build BOW flat idx for this render
+  const bowFlat=buildBowFlatIdx();
+
+  // ── Toolbar ──
+  const tb=dv('scan-toolbar');
+  tb.appendChild(sp('scan-toolbar-title','Raport Scanari'));
+
+  // Month selector
+  const monSel=el('select','scan-month-sel');
+  getScanMonths().forEach(ym=>{
+    const opt=el('option');opt.value=ym;opt.textContent=fmtScanMonth(ym);
+    if(ym===rs.month) opt.selected=true;
+    monSel.appendChild(opt);
+  });
+  monSel.addEventListener('change',()=>{rs.month=monSel.value;rebuildScanBody(tableWrap);updateScanInfo();});
+  const monLabel=sp('','Luna:');monLabel.style.cssText='font-size:11px;color:var(--text3);font-weight:600';
+  tb.appendChild(monLabel);tb.appendChild(monSel);
+
+  // Separator
+  const sep=dv('');sep.style.cssText='width:1px;height:20px;background:var(--border);margin:0 4px';tb.appendChild(sep);
+
+  // Column picker
+  const colBtn=el('button','scan-cols-btn');colBtn.textContent='⚙ Coloane';
+  colBtn.addEventListener('click',e=>{
+    e.stopPropagation();
+    const existD=document.getElementById('scan-col-drop');
+    if(existD){existD.remove();return;}
+    const drop=dv('scan-col-drop');drop.id='scan-col-drop';
+    const rect=colBtn.getBoundingClientRect();
+    drop.style.top=(rect.bottom+2)+'px';drop.style.left=rect.left+'px';
+    const order=rs.colOrder||[...SCAN_COL_DEFAULT];
+    order.forEach(k=>{
+      const item=dv('scan-col-item');
+      const cb=el('input');cb.type='checkbox';cb.checked=!rs.hiddenCols.has(k);
+      cb.addEventListener('change',()=>{
+        if(cb.checked) rs.hiddenCols.delete(k); else rs.hiddenCols.add(k);
+        rebuildScanTable(tableWrap);
+      });
+      item.appendChild(cb);item.appendChild(document.createTextNode(SCAN_COL_LABELS[k]?.replace('\n',' ')||k));
+      drop.appendChild(item);
+    });
+    document.body.appendChild(drop);
+    const close=ev=>{if(!drop.contains(ev.target)&&ev.target!==colBtn){drop.remove();document.removeEventListener('mousedown',close);}};
+    setTimeout(()=>document.addEventListener('mousedown',close),50);
+  });
+  tb.appendChild(colBtn);
+
+  // Info counter
+  const infoEl=sp('scan-info','');infoEl.id='scan-info-count';tb.appendChild(infoEl);
+
+  // Export buttons
+  const excelBtn=el('button','scan-btn green');excelBtn.innerHTML='⬇ Excel';
+  excelBtn.addEventListener('click',()=>exportScanExcel(bowFlat));
+  const pdfBtn=el('button','scan-btn blue');pdfBtn.innerHTML='⬇ PDF';
+  pdfBtn.addEventListener('click',()=>exportScanPdf(bowFlat));
+  tb.appendChild(excelBtn);tb.appendChild(pdfBtn);
+
+  // Zoom
+  const zc=dv('scan-zoom-ctrl');
+  const zm=el('button');zm.textContent='−';zm.addEventListener('click',()=>{rs.zoom=Math.max(60,rs.zoom-10);tableWrap.style.fontSize=(rs.zoom/100*12)+'px';zs.textContent=rs.zoom+'%';});
+  const zs=sp('','');zs.textContent=rs.zoom+'%';
+  const zp=el('button');zp.textContent='+';zp.addEventListener('click',()=>{rs.zoom=Math.min(160,rs.zoom+10);tableWrap.style.fontSize=(rs.zoom/100*12)+'px';zs.textContent=rs.zoom+'%';});
+  const z100=el('button');z100.textContent='100%';z100.style.width='auto';z100.style.padding='0 5px';z100.addEventListener('click',()=>{rs.zoom=100;tableWrap.style.fontSize='12px';zs.textContent='100%';});
+  zc.appendChild(zm);zc.appendChild(zs);zc.appendChild(zp);zc.appendChild(z100);
+  tb.appendChild(zc);
+  page.appendChild(tb);
+
+  // ── Table wrapper ──
+  const tableWrap=dv('scan-table-wrap');
+  tableWrap.id='scan-table-wrap';
+  tableWrap.style.fontSize=(rs.zoom/100*12)+'px';
+  page.appendChild(tableWrap);
+
+  buildScanTable(tableWrap, bowFlat);
+  updateScanInfo();
+  return page;
+}
+
+function getActiveScanCols(){
+  const rs=S.scanReport;
+  const order=rs.colOrder||[...SCAN_COL_DEFAULT];
+  return order.filter(k=>!rs.hiddenCols.has(k));
+}
+
+function buildScanTable(wrap, bowFlat){
+  wrap.innerHTML='';
+  const rs=S.scanReport;
+  const cols=getActiveScanCols();
+  const widths={...SCAN_COL_WIDTHS,...(rs.colWidths||{})};
+
+  const tbl=el('table','scan-table');tbl.id='scan-tbl';
+
+  // THEAD
+  const thead=el('thead');
+  // Header row
+  const hr=el('tr');
+  cols.forEach((k,ci)=>{
+    const th=el('th');
+    th.style.width=widths[k]+'px';th.style.minWidth=widths[k]+'px';th.style.position='relative';
+    th.setAttribute('data-col',k);th.setAttribute('data-ci',ci);
+    const inner=dv('scan-th-inner');
+    const top=dv('scan-th-top');
+    const lbl=sp('scan-th-lbl',SCAN_COL_LABELS[k]||k);
+    top.appendChild(lbl);
+    if(rs.sortCol===k){const sortEl=sp('scan-th-sort',rs.sortDir===1?'↑':'↓');top.appendChild(sortEl);}
+    inner.appendChild(top);
+    // Filter input
+    const fi=dv('scan-th-filter');
+    const inp=el('input');inp.placeholder='Filtru...';inp.value=rs.colFilters[k]||'';
+    inp.setAttribute('data-scan-col',k);
+    inp.addEventListener('input',e=>{
+      rs.colFilters[k]=e.target.value;
+      rebuildScanBody(wrap);updateScanInfo();
+    });
+    inp.addEventListener('click',e=>e.stopPropagation());
+    fi.appendChild(inp);inner.appendChild(fi);
+    th.appendChild(inner);
+    // Sort on header click (not on filter input)
+    th.addEventListener('click',e=>{
+      if(e.target.tagName==='INPUT') return;
+      rs.sortCol===k?rs.sortDir*=-1:(rs.sortCol=k,rs.sortDir=1);
+      rebuildScanTable(wrap,bowFlat);
+    });
+    th.classList.add('sortable');
+    // Resize handle
+    const rh=dv('scan-resize-handle');
+    rh.addEventListener('mousedown',ev=>{
+      ev.preventDefault();ev.stopPropagation();
+      rh.classList.add('dragging');
+      const startX=ev.clientX, startW=widths[k];
+      const onMove=mv=>{
+        const nw=Math.max(50,startW+mv.clientX-startX);
+        widths[k]=nw;th.style.width=nw+'px';th.style.minWidth=nw+'px';
+        // update all td in this column
+        const allTd=tbl.querySelectorAll(`td[data-col="${k}"]`);
+        allTd.forEach(td=>{td.style.maxWidth=nw+'px';td.style.width=nw+'px';});
+      };
+      const onUp=()=>{
+        rh.classList.remove('dragging');
+        if(!rs.colWidths) rs.colWidths={};
+        rs.colWidths[k]=widths[k];
+        document.removeEventListener('mousemove',onMove);
+        document.removeEventListener('mouseup',onUp);
+      };
+      document.addEventListener('mousemove',onMove);
+      document.addEventListener('mouseup',onUp);
+    });
+    th.appendChild(rh);
+    // Drag-to-reorder
+    th.draggable=true;
+    th.addEventListener('dragstart',ev=>{ev.dataTransfer.setData('text/plain',k);th.classList.add('scan-drag-ghost');});
+    th.addEventListener('dragend',()=>th.classList.remove('scan-drag-ghost'));
+    th.addEventListener('dragover',ev=>{ev.preventDefault();th.classList.add('scan-drag-over');});
+    th.addEventListener('dragleave',()=>th.classList.remove('scan-drag-over'));
+    th.addEventListener('drop',ev=>{
+      ev.preventDefault();th.classList.remove('scan-drag-over');
+      const from=ev.dataTransfer.getData('text/plain');
+      const order=rs.colOrder||[...SCAN_COL_DEFAULT];
+      const fi2=order.indexOf(from),ti=order.indexOf(k);
+      if(fi2<0||ti<0||fi2===ti) return;
+      order.splice(fi2,1);order.splice(ti,0,from);
+      rs.colOrder=[...order];
+      rebuildScanTable(wrap,bowFlat);
+    });
+    hr.appendChild(th);
+  });
+  thead.appendChild(hr);
+  tbl.appendChild(thead);
+  tbl.appendChild(buildScanTbody(cols,widths,bowFlat));
+  wrap.appendChild(tbl);
+  updateScanInfo();
+}
+
+function buildScanTbody(cols, widths, bowFlat){
+  const rows=getScanRows();
+  const tbody=el('tbody');
+  for(const r of rows){
+    const tr=el('tr');
+    const product=str(r['Product']||'');
+    const opNo=str(r['Op no']||'');
+    const bowKey=`${product}__${opNo}`;
+    const bowEntry=bowFlat?.get(bowKey);
+    const bowRun=bowEntry?bowEntry.runTime:null;
+    const qty=parseFloat(r['Manufact qty'])||0;
+    const teoTotal=bowRun!=null?bowRun*qty:null;
+    const usedMin=scanTimeToMin(r['Used_tm_MS']);
+    const eff=(teoTotal!=null&&usedMin>0)?(teoTotal/usedMin*100):null;
+
+    cols.forEach(k=>{
+      const td=el('td');
+      td.setAttribute('data-col',k);
+      td.style.maxWidth=widths[k]+'px';
+      let val='';
+      if(k==='tdt') val=fmtTrDate(r['Transaction dt']);
+      else if(k==='mo') val=String(r['MO']||'');
+      else if(k==='product') val=product;
+      else if(k==='wc') val=str(r['Workcenter name']||'');
+      else if(k==='opno') val=opNo;
+      else if(k==='emp') val=str(r['Employee name']||'');
+      else if(k==='qty'){td.textContent=qty?qty.toLocaleString('ro-RO'):'—';td.style.textAlign='right';tr.appendChild(td);return;}
+      else if(k==='start') val=fmtScanDt(r['Start_MS']);
+      else if(k==='finish') val=fmtScanDt(r['Finish_MS']);
+      else if(k==='used') val=fmtScanTime(r['Used_tm_MS']);
+      else if(k==='bowrun'){
+        td.textContent=bowRun!=null?fmtN(bowRun):'—';
+        td.style.textAlign='right';td.style.color=bowRun!=null?'var(--text1)':'#9ca3af';
+        tr.appendChild(td);return;
+      }
+      else if(k==='teototal'){
+        td.textContent=teoTotal!=null?fmtMin(teoTotal):'—';
+        td.style.textAlign='right';td.style.color=teoTotal!=null?'var(--text1)':'#9ca3af';
+        tr.appendChild(td);return;
+      }
+      else if(k==='eff'){
+        if(eff===null){td.textContent='—';td.className='scan-eff-na';}
+        else{
+          td.textContent=eff.toFixed(1)+'%';
+          td.className=eff>=90?'scan-eff-good':eff>=70?'scan-eff-warn':'scan-eff-bad';
+        }
+        td.style.textAlign='right';
+        tr.appendChild(td);return;
+      }
+      td.textContent=val||'—';
+      tr.appendChild(td);
+    });
+    tbody.appendChild(tr);
+  }
+  if(!rows.length){
+    const tr=el('tr');const td=el('td');td.colSpan=cols.length;
+    td.style.cssText='text-align:center;padding:24px;color:var(--text3);font-size:12px';
+    td.textContent='Nicio inregistrare gasita pentru luna selectata / filtrele aplicate.';
+    tr.appendChild(td);tbody.appendChild(tr);
+  }
+  return tbody;
+}
+
+function rebuildScanBody(wrap){
+  const rs=S.scanReport;
+  const bowFlat=buildBowFlatIdx();
+  const cols=getActiveScanCols();
+  const widths={...SCAN_COL_WIDTHS,...(rs.colWidths||{})};
+  const tbl=wrap.querySelector('.scan-table');
+  if(!tbl){buildScanTable(wrap,bowFlat);return;}
+  const old=tbl.querySelector('tbody');
+  const nb=buildScanTbody(cols,widths,bowFlat);
+  if(old)tbl.replaceChild(nb,old);else tbl.appendChild(nb);
+}
+function rebuildScanTable(wrap,bowFlat){
+  buildScanTable(wrap,bowFlat||buildBowFlatIdx());
+}
+function updateScanInfo(){
+  const el=document.getElementById('scan-info-count');
+  if(el){const n=getScanRows().length;el.textContent=`${n.toLocaleString()} inregistrari`;}
+}
+
+// ── Export Excel ──
+function exportScanExcel(bowFlat){
+  const rows=getScanRows();
+  if(!rows.length){alert('Nu exista date de exportat.');return;}
+  const activeCols=getActiveScanCols();
+  const headers=activeCols.map(k=>SCAN_COL_LABELS[k]?.replace('\n',' ')||k);
+  const wsData=[headers];
+  const bf=bowFlat||buildBowFlatIdx();
+  for(const r of rows){
+    const product=str(r['Product']||'');
+    const opNo=str(r['Op no']||'');
+    const bowEntry=bf.get(`${product}__${opNo}`);
+    const bowRun=bowEntry?bowEntry.runTime:null;
+    const qty=parseFloat(r['Manufact qty'])||0;
+    const teoTotal=bowRun!=null?+(bowRun*qty).toFixed(2):null;
+    const usedMin=scanTimeToMin(r['Used_tm_MS']);
+    const eff=(teoTotal!=null&&usedMin>0)?+(teoTotal/usedMin*100).toFixed(1):null;
+    const row=activeCols.map(k=>{
+      if(k==='tdt') return fmtTrDate(r['Transaction dt']);
+      if(k==='mo') return String(r['MO']||'');
+      if(k==='product') return product;
+      if(k==='wc') return str(r['Workcenter name']||'');
+      if(k==='opno') return opNo;
+      if(k==='emp') return str(r['Employee name']||'');
+      if(k==='qty') return qty||0;
+      if(k==='start') return fmtScanDt(r['Start_MS']);
+      if(k==='finish') return fmtScanDt(r['Finish_MS']);
+      if(k==='used') return fmtScanTime(r['Used_tm_MS']);
+      if(k==='bowrun') return bowRun!=null?+bowRun.toFixed(3):null;
+      if(k==='teototal') return teoTotal;
+      if(k==='eff') return eff;
+      return '';
+    });
+    wsData.push(row);
+  }
+  const wb=XLSX.utils.book_new();
+  const ws=XLSX.utils.aoa_to_sheet(wsData);
+  ws['!cols']=activeCols.map(k=>({wch:Math.ceil((SCAN_COL_WIDTHS[k]||100)/6)}));
+  XLSX.utils.book_append_sheet(wb,ws,'Raport Scanari');
+  const rs=S.scanReport;
+  const month=rs.month||getScanLastMonth();
+  XLSX.writeFile(wb,`Raport_Scanari_${month}.xlsx`);
+}
+
+// ── Export PDF ──
+function exportScanPdf(bowFlat){
+  const rows=getScanRows();
+  if(!rows.length){alert('Nu exista date de exportat.');return;}
+  const rs=S.scanReport;
+  const month=rs.month||getScanLastMonth();
+  const activeCols=getActiveScanCols();
+  const bf=bowFlat||buildBowFlatIdx();
+
+  const colW={mo:18,tdt:13,product:22,wc:24,opno:9,emp:24,qty:11,start:22,finish:22,used:13,bowrun:14,teototal:15,eff:12};
+  const pageW=Math.min(activeCols.reduce((s,k)=>s+(colW[k]||14),0)+10, 280);
+
+  let html=`<!DOCTYPE html><html><head><meta charset="UTF-8">
+<style>
+  body{font-family:Arial,sans-serif;font-size:8px;margin:4mm}
+  h2{font-size:11px;margin:0 0 4px}
+  table{border-collapse:collapse;width:100%;table-layout:fixed}
+  th{background:#1e3a5f;color:#fff;padding:3px 4px;font-size:7px;font-weight:700;text-align:left;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;border:1px solid #ccc}
+  td{padding:2px 4px;border:1px solid #e5e7eb;font-size:7.5px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  tr:nth-child(even) td{background:#f9fafb}
+  .eff-good{color:#15803d;font-weight:700}
+  .eff-warn{color:#ca8a04;font-weight:700}
+  .eff-bad{color:#dc2626;font-weight:700}
+  @page{margin:6mm;size:A3 landscape}
+  @media print{@page{margin:6mm;size:A3 landscape}}
+</style></head><body>
+<h2>Raport Scanari — ${fmtScanMonth(month)}</h2>
+<table>
+<colgroup>${activeCols.map(k=>`<col style="width:${colW[k]||14}mm">`).join('')}</colgroup>
+<thead><tr>${activeCols.map(k=>`<th>${SCAN_COL_LABELS[k]?.replace('\n',' ')||k}</th>`).join('')}</tr></thead>
+<tbody>`;
+
+  for(const r of rows){
+    const product=str(r['Product']||'');
+    const opNo=str(r['Op no']||'');
+    const bowEntry=bf.get(`${product}__${opNo}`);
+    const bowRun=bowEntry?bowEntry.runTime:null;
+    const qty=parseFloat(r['Manufact qty'])||0;
+    const teoTotal=bowRun!=null?bowRun*qty:null;
+    const usedMin=scanTimeToMin(r['Used_tm_MS']);
+    const eff=(teoTotal!=null&&usedMin>0)?(teoTotal/usedMin*100):null;
+    html+='<tr>';
+    activeCols.forEach(k=>{
+      let val='—', cls='';
+      if(k==='tdt') val=fmtTrDate(r['Transaction dt']);
+      else if(k==='mo') val=String(r['MO']||'—');
+      else if(k==='product') val=product||'—';
+      else if(k==='wc') val=str(r['Workcenter name']||'—');
+      else if(k==='opno') val=opNo||'—';
+      else if(k==='emp') val=str(r['Employee name']||'—');
+      else if(k==='qty') val=qty?qty.toLocaleString('ro-RO'):'—';
+      else if(k==='start') val=fmtScanDt(r['Start_MS']);
+      else if(k==='finish') val=fmtScanDt(r['Finish_MS']);
+      else if(k==='used') val=fmtScanTime(r['Used_tm_MS']);
+      else if(k==='bowrun') val=bowRun!=null?fmtN(bowRun):'—';
+      else if(k==='teototal') val=teoTotal!=null?fmtMin(teoTotal):'—';
+      else if(k==='eff'){
+        if(eff===null) val='—';
+        else{val=eff.toFixed(1)+'%';cls=eff>=90?'eff-good':eff>=70?'eff-warn':'eff-bad';}
+      }
+      html+=`<td class="${cls}">${val}</td>`;
+    });
+    html+='</tr>';
+  }
+  html+=`</tbody></table></body></html>`;
+  const w=window.open('','_blank','width=1200,height=800');
+  if(!w){alert('Popup blocat. Permite popups pentru acest site.');return;}
+  w.document.write(html);w.document.close();
+  setTimeout(()=>w.print(),600);
 }
 
 function renderScanner(){
