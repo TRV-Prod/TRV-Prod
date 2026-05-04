@@ -929,6 +929,60 @@ button { font-family: var(--sans); }
 }
 .loading-overlay-inner{display:flex;flex-direction:column;align-items:center;gap:14px}
 .loading-text{font-size:13px;font-family:var(--mono);color:var(--text3);letter-spacing:.02em}
+
+/* ─── RAPORT SCANARI ─── */
+.scan-page{display:flex;flex-direction:column;height:100%;overflow:hidden;background:#f8f9fb}
+.scan-toolbar{display:flex;align-items:center;gap:6px;padding:8px 16px;border-bottom:2px solid var(--border);flex-shrink:0;flex-wrap:wrap;background:#fff;box-shadow:0 1px 4px rgba(0,0,0,.06)}
+.scan-toolbar-group{display:flex;align-items:center;gap:5px;padding:0 10px 0 0;border-right:1px solid #e2e8f0;margin-right:2px}
+.scan-toolbar-group:last-child{border-right:none;margin-left:auto;padding-right:0}
+.scan-toolbar-label{font-size:10px;font-weight:600;color:var(--text3);text-transform:uppercase;letter-spacing:.05em;white-space:nowrap}
+.scan-month-sel{height:30px;padding:0 8px;border:1px solid var(--border);border-radius:5px;font-size:11px;font-weight:600;color:var(--text1);background:#fff;cursor:pointer;min-width:145px}
+.scan-month-sel:focus{outline:none;border-color:var(--accent)}
+.scan-btn{height:30px;padding:0 12px;border:1px solid var(--border);border-radius:5px;font-size:11px;font-weight:600;color:var(--text1);background:#f8f9fb;cursor:pointer;display:inline-flex;align-items:center;gap:5px;transition:all .15s;white-space:nowrap}
+.scan-btn:hover{background:#eff6ff;border-color:var(--accent);color:var(--accent)}
+.scan-btn.green{border-color:#16a34a;color:#15803d;background:#f0fdf4}
+.scan-btn.green:hover{background:#dcfce7}
+.scan-btn.blue{border-color:#3b82f6;color:#1d4ed8;background:#eff6ff}
+.scan-btn.blue:hover{background:#dbeafe}
+.scan-info-badge{display:inline-flex;align-items:center;height:26px;padding:0 10px;background:#f1f5f9;border:1px solid #e2e8f0;border-radius:12px;font-size:10px;font-weight:700;color:var(--text2);white-space:nowrap}
+.scan-zoom-ctrl{display:flex;align-items:center;gap:3px}
+.scan-zoom-ctrl button{width:26px;height:26px;border:1px solid var(--border);border-radius:4px;background:#f8f9fb;cursor:pointer;font-size:14px;font-weight:700;color:var(--text2);display:inline-flex;align-items:center;justify-content:center;line-height:1;transition:background .1s}
+.scan-zoom-ctrl button:hover{background:#e2e8f0}
+.scan-zoom-pct{font-size:11px;font-weight:600;color:var(--text3);min-width:36px;text-align:center}
+.scan-table-wrap{flex:1;overflow:auto;position:relative;background:#fff}
+.scan-table-wrap::-webkit-scrollbar{width:9px;height:9px}
+.scan-table-wrap::-webkit-scrollbar-track{background:#f1f5f9}
+.scan-table-wrap::-webkit-scrollbar-thumb{background:#94a3b8;border-radius:4px}
+.scan-table-wrap::-webkit-scrollbar-thumb:hover{background:#64748b}
+.scan-table-wrap::-webkit-scrollbar-corner{background:#f1f5f9}
+.scan-table{border-collapse:collapse;min-width:max-content;font-size:12px;table-layout:fixed}
+.scan-table th{position:sticky;top:0;z-index:10;background:#1e3a5f;padding:0;white-space:nowrap;user-select:none;border-right:1px solid #2d4e7a}
+.scan-table th:last-child{border-right:none}
+.scan-table th.sortable:hover{background:#243f69;cursor:pointer}
+.scan-th-inner{display:flex;flex-direction:column;min-width:0}
+.scan-th-top{display:flex;align-items:center;justify-content:space-between;padding:6px 8px 4px;font-size:9.5px;font-weight:700;color:#e2e8f0;letter-spacing:.06em;text-transform:uppercase;gap:4px;min-height:32px}
+.scan-th-lbl{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1}
+.scan-th-sort{flex-shrink:0;color:#93c5fd;font-size:12px;margin-left:3px}
+.scan-th-filter{padding:2px 5px 5px}
+.scan-th-filter input{width:100%;height:22px;padding:0 6px;border:none;border-radius:3px;font-size:10px;color:#1e293b;background:rgba(255,255,255,.88);box-sizing:border-box}
+.scan-th-filter input:focus{outline:none;background:#fff}
+.scan-th-filter input::placeholder{color:#94a3b8}
+.scan-resize-handle{position:absolute;right:0;top:0;bottom:0;width:4px;cursor:col-resize;z-index:11;background:transparent}
+.scan-resize-handle:hover,.scan-resize-handle.dragging{background:rgba(147,197,253,.7)}
+.scan-table td{border-bottom:1px solid #e5e7eb;border-right:1px solid #f1f5f9;padding:5px 8px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;color:#1e293b;vertical-align:middle;font-size:11.5px}
+.scan-table td:last-child{border-right:1px solid #e5e7eb}
+.scan-table tbody tr:nth-child(odd) td{background:#fff}
+.scan-table tbody tr:nth-child(even) td{background:#f8fafc}
+.scan-table tbody tr:hover td{background:#eff6ff!important}
+.scan-eff-good{color:#15803d;font-weight:700}
+.scan-eff-warn{color:#92400e;font-weight:700}
+.scan-eff-bad{color:#991b1b;font-weight:700}
+.scan-eff-na{color:#9ca3af}
+.scan-col-drop{position:fixed;z-index:9999;background:#fff;border:1px solid var(--border);border-radius:8px;box-shadow:0 8px 32px rgba(0,0,0,.18);padding:6px 0;min-width:210px;max-height:400px;overflow-y:auto}
+.scan-col-item{display:flex;align-items:center;gap:9px;padding:6px 14px;cursor:pointer;font-size:11px;color:var(--text1)}
+.scan-col-item:hover{background:#f1f5f9}
+.scan-col-item input[type=checkbox]{width:14px;height:14px;cursor:pointer;accent-color:var(--accent)}
+.scan-drag-over{border-left:3px solid var(--accent)!important}
 </style>
 </head>
 <body>
@@ -1054,6 +1108,7 @@ const GH_COLS={
   ob: ['Entry dt','Confirm dt','Request dt','Request_week','Confirm_week','Item_no','Alias_no','Item_name',
        'Customer_no','Customer_name','Sales_price','Currency','Sales price EUR','Ordered','Allocated',
        'Delivered','Invoiced','Open qty','Net weight','CO_no','CO_line','Valoare de livrat EUR'],
+  scanari: ['Transaction dt','MO','Product','Workcenter','Workcenter name','Op no','Employee name','Manufact qty','Start_MS','Finish_MS','Used_tm_MS'],
 };
 
 function ghFilterRows(key,rows){
@@ -1189,12 +1244,23 @@ async function sbLoadAllData(){
     {k:'ob', label:'Order Book',apply:(r,t)=>applyOb(r,t)},
     {k:'wcs',label:'Workcenter Setup',apply:(r,t)=>applyWcSetup(r,t)},
     {k:'intransit',label:'In Transit',apply:(r,t)=>applyInTransit(r,t)},
-    {k:'intransit',label:'In Transit',apply:(r,t)=>applyInTransit(r,t)},
+    // scanari handled separately below (binary XLSX)
   ]){
     S.loadMsg=`Se incarca ${label}...`;setLoadMsg(S.loadMsg);await yieldFrame();
     const data=await sbDownload(cfg,`data-${k}.json`);
     if(data?.rows){apply(data.rows,data.ts);await dbSave(k,{rows:data.rows,ts:data.ts});loaded=true;}
   }
+  // scanari: download raw XLSX binary from Supabase
+  S.loadMsg='Se incarca Raport Scanari...';setLoadMsg(S.loadMsg);await yieldFrame();
+  try{
+    const scanSb=await sbDownloadScanariRaw(cfg);
+    if(scanSb?.rows?.length){
+      applyScanari(scanSb.rows,scanSb.ts);
+      await saveScanariToIDB(scanSb.rows,scanSb.ts);
+      loaded=true;
+    }
+  }catch(e){console.warn('Supabase scanari download:',e);}
+
   const planData=await sbDownload(cfg,'data-plan.json');
   if(planData){
     if(planData.entries)S.planData=new Map(planData.entries);
@@ -1261,8 +1327,104 @@ function applyWcSetup(rows,ts){
 
 
 function applyScanari(rows,ts){
-  S.scanData=rows;S.scanData._ts=ts;S.scanData._rows=rows.length;
+  // Ensure scanData is always a plain array (robust against IDB/Supabase deserialization)
+  const arr=Array.isArray(rows)?rows:[];
+  S.scanData=arr;
+  S.scanData._ts=ts;
+  S.scanData._rows=arr.length;
 }
+
+/* ═══════════════════════════════════════════════════════════════
+   SCANARI LARGE-FILE STORAGE
+   Strategy:
+     • Supabase: raw .xlsx binary (compact, no JSON overhead)
+       + small meta JSON (ts, months, rowCount)
+     • IndexedDB: JSON split per month → 'scanari_YYYYMM'
+       + meta key 'scanari_meta' with list of months + ts
+   This handles 12+ months (75K+ rows) without quota issues.
+═══════════════════════════════════════════════════════════════ */
+
+// ── Extract YYYYMM from a Transaction dt value ──
+function scanRowMonth(r){
+  return String(r['Transaction dt']||'').replace(/[^0-9]/g,'').slice(0,6);
+}
+
+// ── Split rows array into Map<'YYYYMM', rows[]> ──
+function splitScanByMonth(rows){
+  const m=new Map();
+  for(const r of rows){
+    const ym=scanRowMonth(r);
+    if(!ym||ym.length<6) continue;
+    if(!m.has(ym)) m.set(ym,[]);
+    m.get(ym).push(r);
+  }
+  return m;
+}
+
+// ── Save scanari to IndexedDB, one key per month ──
+async function saveScanariToIDB(rows, ts){
+  const byMonth=splitScanByMonth(rows);
+  const months=[...byMonth.keys()].sort();
+  // Save each month chunk
+  for(const [ym, chunk] of byMonth){
+    await dbSave(`scanari_${ym}`, {rows:chunk, ts});
+  }
+  // Save meta (so we know which months are stored)
+  await dbSave('scanari_meta', {months, ts, rowCount:rows.length});
+  // Clean up old IDB entry (from previous format)
+  try{await dbSave('scanari', null);}catch(_){}
+}
+
+// ── Load scanari from IndexedDB (all months) ──
+async function loadScanariFromIDB(){
+  const meta=await dbLoad('scanari_meta');
+  if(!meta?.months?.length){
+    // Try legacy single-key format
+    const leg=await dbLoad('scanari');
+    if(leg?.rows?.length) return {rows:leg.rows, ts:leg.ts};
+    return null;
+  }
+  let allRows=[];
+  for(const ym of meta.months){
+    const chunk=await dbLoad(`scanari_${ym}`);
+    if(chunk?.rows) allRows=allRows.concat(chunk.rows);
+  }
+  return allRows.length?{rows:allRows, ts:meta.ts}:null;
+}
+
+// ── Upload raw XLSX binary to Supabase ──
+async function sbUploadScanariRaw(cfg, buf, ts, rowCount, months){
+  // 1. Upload binary XLSX
+  const xlsxBlob=new Blob([buf],{type:'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'});
+  const url=`${cfg.url}/storage/v1/object/${cfg.bucket}/data-scanari.xlsx`;
+  const r=await fetch(url,{
+    method:'POST',
+    headers:{'Authorization':'Bearer '+cfg.key,'apikey':cfg.key,'x-upsert':'true','Content-Type':'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'},
+    body:xlsxBlob
+  });
+  if(!r.ok){const e=await r.json().catch(()=>({}));throw new Error(`Supabase upload scanari.xlsx: ${r.status} ${e.error||e.message||''}`);}
+  // 2. Upload small meta JSON
+  await sbUpload(cfg,'data-scanari-meta.json',{ts, rowCount, months:[...months].sort()});
+  return true;
+}
+
+// ── Download scanari from Supabase (binary XLSX) ──
+async function sbDownloadScanariRaw(cfg){
+  // Check meta first
+  const meta=await sbDownload(cfg,'data-scanari-meta.json');
+  if(!meta) return null;
+  // Download binary XLSX
+  const url=`${cfg.url}/storage/v1/object/${cfg.bucket}/data-scanari.xlsx`;
+  const r=await fetch(url,{headers:{'Authorization':'Bearer '+cfg.key,'apikey':cfg.key}});
+  if(r.status===404||r.status===400) return null;
+  if(!r.ok) throw new Error(`Supabase download scanari.xlsx: ${r.status}`);
+  const buf=await r.arrayBuffer();
+  // Parse XLSX
+  const rows=parseBuffer(new Uint8Array(buf));
+  return {rows, ts:meta.ts};
+}
+
+
 
 function buildBowFlatIdx(){
   // Map: "productNo__opNo" -> {runTime, setupTime}
@@ -1461,8 +1623,11 @@ async function loadFromIndexedDB(){
   const ite=await dbLoad('intransit');
   if(ite){S.loadMsg='Se incarca In Transit...';setLoadMsg(S.loadMsg);await yieldFrame();applyInTransit(ite.rows,ite.ts);await yieldFrame();}
 
-  const scanE=await dbLoad('scanari');
-  if(scanE){S.loadMsg='Se incarca Scanari...';setLoadMsg(S.loadMsg);await yieldFrame();applyScanari(scanE.rows,scanE.ts);await yieldFrame();}
+  // scanari: load from month-split IDB keys (or legacy single key)
+  S.loadMsg='Se incarca Raport Scanari...';setLoadMsg(S.loadMsg);await yieldFrame();
+  const scanE=await loadScanariFromIDB();
+  if(scanE?.rows?.length){applyScanari(scanE.rows,scanE.ts);}
+  await yieldFrame();
   const plane=await dbLoad('plan');
   if(plane?.entries){
     S.planData=new Map(plane.entries);
@@ -2524,10 +2689,23 @@ function renderFisiereTab(){
         const rows=parseBuffer(new Uint8Array(buf));
         const ts=Date.now();
         if(fc.key==='bom')applyBom(rows,ts);else if(fc.key==='bow')applyBow(rows,ts);else if(fc.key==='po')applyPo(rows,ts);else if(fc.key==='wcs'){applyWcSetup(rows,ts);rows._ts=ts;}else if(fc.key==='intransit'){applyInTransit(rows,ts);rows._ts=ts;}else if(fc.key==='scanari'){applyScanari(rows,ts);}else applyOb(rows,ts);
-        await dbSave(fc.key,{rows,ts});
-        if(S.sbCfg&&S.session?.role==='admin'){
-          lbl.innerHTML='';lbl.appendChild(el('span','spin-sm'));lbl.appendChild(document.createTextNode(' Sincronizare Supabase...'));
-          try{await sbSaveData(fc.key,rows,ts);}catch(e){console.warn('Supabase sync:',e);}
+        if(fc.key==='scanari'){
+          // Large file: split by month in IDB, binary in Supabase
+          lbl.innerHTML='';lbl.appendChild(el('span','spin-sm'));lbl.appendChild(document.createTextNode(' Se salveaza local...'));
+          await saveScanariToIDB(rows,ts);
+          if(S.sbCfg&&S.session?.role==='admin'){
+            lbl.innerHTML='';lbl.appendChild(el('span','spin-sm'));lbl.appendChild(document.createTextNode(' Upload Supabase (.xlsx)...'));
+            try{
+              const months=splitScanByMonth(rows);
+              await sbUploadScanariRaw(S.sbCfg,buf,ts,rows.length,months);
+            }catch(e){console.warn('Supabase scanari upload:',e);showToast('⚠ Supabase upload esuat: '+e.message,'err',5000);}
+          }
+        } else {
+          await dbSave(fc.key,{rows,ts});
+          if(S.sbCfg&&S.session?.role==='admin'){
+            lbl.innerHTML='';lbl.appendChild(el('span','spin-sm'));lbl.appendChild(document.createTextNode(' Sincronizare Supabase...'));
+            try{await sbSaveData(fc.key,rows,ts);}catch(e){console.warn('Supabase sync:',e);}
+          }
         }
       }catch(err){console.error(err);}
       render();
@@ -4817,6 +4995,7 @@ function getScanRows(){
   if(!S.scanData||!Array.isArray(S.scanData)) return [];
   const month=rs.month||getScanLastMonth();
   let rows=S.scanData.filter(r=>{
+    if(month==='all') return true;
     const tdt=String(r['Transaction dt']||'').replace(/[^0-9]/g,'').slice(0,6);
     return tdt===month;
   });
@@ -4889,24 +5068,25 @@ function renderScanariTab(){
 
   // ── Toolbar ──
   const tb=dv('scan-toolbar');
-  tb.appendChild(sp('scan-toolbar-title','Raport Scanari'));
 
-  // Month selector
+  // Group 1: Month selector
+  const g1=dv('scan-toolbar-group');
+  g1.appendChild(sp('scan-toolbar-label','Luna:'));
   const monSel=el('select','scan-month-sel');
+  const allOpt=el('option');allOpt.value='all';allOpt.textContent='Toate lunile';
+  if(rs.month==='all') allOpt.selected=true;
+  monSel.appendChild(allOpt);
   getScanMonths().forEach(ym=>{
     const opt=el('option');opt.value=ym;opt.textContent=fmtScanMonth(ym);
     if(ym===rs.month) opt.selected=true;
     monSel.appendChild(opt);
   });
   monSel.addEventListener('change',()=>{rs.month=monSel.value;rebuildScanBody(tableWrap);updateScanInfo();});
-  const monLabel=sp('','Luna:');monLabel.style.cssText='font-size:11px;color:var(--text3);font-weight:600';
-  tb.appendChild(monLabel);tb.appendChild(monSel);
+  g1.appendChild(monSel);tb.appendChild(g1);
 
-  // Separator
-  const sep=dv('');sep.style.cssText='width:1px;height:20px;background:var(--border);margin:0 4px';tb.appendChild(sep);
-
-  // Column picker
-  const colBtn=el('button','scan-cols-btn');colBtn.textContent='⚙ Coloane';
+  // Group 2: Tools
+  const g2=dv('scan-toolbar-group');
+  const colBtn=el('button','scan-btn');colBtn.innerHTML='⚙ Coloane';
   colBtn.addEventListener('click',e=>{
     e.stopPropagation();
     const existD=document.getElementById('scan-col-drop');
@@ -4929,26 +5109,32 @@ function renderScanariTab(){
     const close=ev=>{if(!drop.contains(ev.target)&&ev.target!==colBtn){drop.remove();document.removeEventListener('mousedown',close);}};
     setTimeout(()=>document.addEventListener('mousedown',close),50);
   });
-  tb.appendChild(colBtn);
+  g2.appendChild(colBtn);tb.appendChild(g2);
 
-  // Info counter
-  const infoEl=sp('scan-info','');infoEl.id='scan-info-count';tb.appendChild(infoEl);
-
-  // Export buttons
+  // Group 3: Export
+  const g3=dv('scan-toolbar-group');
   const excelBtn=el('button','scan-btn green');excelBtn.innerHTML='⬇ Excel';
   excelBtn.addEventListener('click',()=>exportScanExcel(bowFlat));
   const pdfBtn=el('button','scan-btn blue');pdfBtn.innerHTML='⬇ PDF';
   pdfBtn.addEventListener('click',()=>exportScanPdf(bowFlat));
-  tb.appendChild(excelBtn);tb.appendChild(pdfBtn);
+  g3.appendChild(excelBtn);g3.appendChild(pdfBtn);tb.appendChild(g3);
 
-  // Zoom
+  // Group 4: Info badge
+  const g4=dv('scan-toolbar-group');
+  const infoEl=dv('scan-info-badge');infoEl.id='scan-info-count';
+  g4.appendChild(infoEl);tb.appendChild(g4);
+
+  // Group 5: Zoom (right-aligned)
+  const g5=dv('scan-toolbar-group');
+  g5.appendChild(sp('scan-toolbar-label','Zoom:'));
   const zc=dv('scan-zoom-ctrl');
   const zm=el('button');zm.textContent='−';zm.addEventListener('click',()=>{rs.zoom=Math.max(60,rs.zoom-10);tableWrap.style.fontSize=(rs.zoom/100*12)+'px';zs.textContent=rs.zoom+'%';});
-  const zs=sp('','');zs.textContent=rs.zoom+'%';
+  const zs=sp('scan-zoom-pct','');zs.textContent=rs.zoom+'%';
   const zp=el('button');zp.textContent='+';zp.addEventListener('click',()=>{rs.zoom=Math.min(160,rs.zoom+10);tableWrap.style.fontSize=(rs.zoom/100*12)+'px';zs.textContent=rs.zoom+'%';});
-  const z100=el('button');z100.textContent='100%';z100.style.width='auto';z100.style.padding='0 5px';z100.addEventListener('click',()=>{rs.zoom=100;tableWrap.style.fontSize='12px';zs.textContent='100%';});
+  const z100=el('button');z100.textContent='100%';z100.style.cssText='width:auto;padding:0 7px;font-size:10px';
+  z100.addEventListener('click',()=>{rs.zoom=100;tableWrap.style.fontSize='12px';zs.textContent='100%';});
   zc.appendChild(zm);zc.appendChild(zs);zc.appendChild(zp);zc.appendChild(z100);
-  tb.appendChild(zc);
+  g5.appendChild(zc);tb.appendChild(g5);
   page.appendChild(tb);
 
   // ── Table wrapper ──
