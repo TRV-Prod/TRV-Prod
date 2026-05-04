@@ -1427,15 +1427,20 @@ async function sbDownloadScanariRaw(cfg){
 
 
 function buildBowFlatIdx(){
-  // Map: "productNo__opNo" -> {runTime, setupTime}
+  // Map: "productNo__opeSeq" -> {runTime, setupTime, wcName}
+  // Scan 'Op no' = BOW 'Ope seq'  (NOT 'Operation no' which is the WC code e.g. 710301)
   const m=new Map();
   if(!S.bowData) return m;
   for(const r of S.bowData){
     const pno=str(r['Product no']);
-    const opNo=str(r['Operation no']);
-    if(!pno||!opNo) continue;
-    const key=`${pno}__${opNo}`;
-    if(!m.has(key)) m.set(key,{runTime:parseFloat(r['Run time'])||0,setupTime:parseFloat(r['Setup time'])||0});
+    const opeSeq=str(r['Ope seq']);   // matches scan's 'Op no'
+    if(!pno||!opeSeq) continue;
+    const key=`${pno}__${opeSeq}`;
+    if(!m.has(key)) m.set(key,{
+      runTime:parseFloat(r['Run time'])||0,
+      setupTime:parseFloat(r['Setup time'])||0,
+      wcName:str(r['Ope name']||''),
+    });
   }
   return m;
 }
