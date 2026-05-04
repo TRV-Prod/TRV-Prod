@@ -3451,32 +3451,45 @@ function _buildObFull(wrap){
 function calcNecesarMaterii(){
   if(!S.obData||!S.bomData) return null;
 
-  // Step 1: Get OB quantities — 0Late + next 4 weeks summed per FP
-  const allowedWeeks = weeksInFilter('4weeks'); // Set including '0Late' + 4 weeks
-  const fpQty = new Map(); // fpCode -> total open qty
+  // Build week-bucket sets:
+  //   0-2W: 0Late + W0 (current) + W1 + W2
+  //   3-4W: W3 + W4
+  const now = new Date();
+  const weeks02w = new Set(['0Late', isoWeekKey(now)]);
+  const _n1=new Date(now);_n1.setDate(_n1.getDate()+7);weeks02w.add(isoWeekKey(_n1));
+  const _n2=new Date(now);_n2.setDate(_n2.getDate()+14);weeks02w.add(isoWeekKey(_n2));
+  const weeks34w = new Set();
+  const _n3=new Date(now);_n3.setDate(_n3.getDate()+21);weeks34w.add(isoWeekKey(_n3));
+  const _n4=new Date(now);_n4.setDate(_n4.getDate()+28);weeks34w.add(isoWeekKey(_n4));
+  const allNecWeeks = new Set([...weeks02w, ...weeks34w]);
+
+  // Step 1: Aggregate OB quantities per FP, split by bucket
+  const fpQty02w = new Map();
+  const fpQty34w = new Map();
   for(const row of S.obData){
     const wk = String(row['Confirm_week']||'').trim();
-    if(!allowedWeeks.has(wk)) continue;
+    if(!allNecWeeks.has(wk)) continue;
     const fp = str(row['Item_no']);
     const qty = parseFloat(row['Open qty'])||0;
-    if(fp && qty>0) fpQty.set(fp, (fpQty.get(fp)||0)+qty);
+    if(!fp || qty<=0) continue;
+    if(weeks02w.has(wk)) fpQty02w.set(fp, (fpQty02w.get(fp)||0)+qty);
+    if(weeks34w.has(wk)) fpQty34w.set(fp, (fpQty34w.get(fp)||0)+qty);
   }
 
-  // Step 2: For each FP, walk BOM and collect BUY materials
-  // matNo -> {needed, group, itemGroup, name, unit, fps: Map<fpCode, needed>}
+  // Step 2: For each FP walk BOM and collect BUY materials per bucket
   const matMap = new Map();
 
-  function collectBuy(fpCtx, compNo, parentNeed, vis){
+  function collectBuy(fpCtx, compNo, parentNeed02, parentNeed34, vis){
     if(vis.has(compNo)) return;
     const vNext = new Set(vis); vNext.add(compNo);
     const rows = S.bomIdx?.get(`${fpCtx}__${compNo}`) || [];
     for(const row of rows){
       const matNo = str(row['Material no']);
       const unQty = parseFloat(row['Material qty'])||1;
-      const needed = parentNeed * unQty;
+      const needed02 = parentNeed02 * unQty;
+      const needed34 = parentNeed34 * unQty;
       const type = str(row['Material type']);
       if(type==='BUY'){
-        // BUY = raw material leaf — collect it, do NOT recurse
         if(!matMap.has(matNo)){
           matMap.set(matNo,{
             matNo,
@@ -3484,42 +3497,47 @@ function calcNecesarMaterii(){
             group: str(row['Mat product group']||''),
             itemGroup: str(row['Mat. item group']||''),
             unit: str(row['Mat U/M']||''),
-            needed: 0,
+            needed02w: 0,
+            needed34w: 0,
             fps: new Map(),
           });
         }
         const m = matMap.get(matNo);
-        m.needed += needed;
-        m.fps.set(fpCtx, (m.fps.get(fpCtx)||0)+needed);
+        m.needed02w += needed02;
+        m.needed34w += needed34;
+        m.fps.set(fpCtx, (m.fps.get(fpCtx)||0)+needed02+needed34);
       } else if(type==='MAKE'){
-        // MAKE = sub-assembly — recurse to find its BUY children
-        collectBuy(fpCtx, matNo, needed, vNext);
+        collectBuy(fpCtx, matNo, needed02, needed34, vNext);
       }
     }
   }
 
-  for(const [fp, qty] of fpQty){
+  const allNecFPs = new Set([...fpQty02w.keys(), ...fpQty34w.keys()]);
+  for(const fp of allNecFPs){
     if(!S.bomIdx) continue;
-    collectBuy(fp, fp, qty, new Set());
+    const q02 = fpQty02w.get(fp)||0;
+    const q34 = fpQty34w.get(fp)||0;
+    collectBuy(fp, fp, q02, q34, new Set());
   }
 
-  // Step 3: WIP counts as available (onHand + WIP = total available)
-  // Exclude materials classified as M (MAKE) in Planning Overview — not raw materials
+  // Step 3: Build result rows
   const result = [];
   for(const [matNo, m] of matMap){
     const stock = S.stockIdx?.get(matNo)||{onHand:0,totalWIP:0,type:''};
-    if(stock.type==='M') continue;  // MAKE item — skip from raw material report
+    if(stock.type==='M') continue;
     const onHand = Math.max(0, stock.onHand);
     const wip    = Math.max(0, stock.totalWIP);
     const avail  = onHand + wip;
-    const netNeeded = Math.max(0, m.needed - avail);
+    const totalNeeded = m.needed02w + m.needed34w;
+    const netNeeded = Math.max(0, totalNeeded - avail);
     result.push({
       matNo,
       name: m.name,
       group: m.group,
       itemGroup: m.itemGroup,
       unit: m.unit,
-      needed: m.needed,
+      needed02w: m.needed02w,
+      needed34w: m.needed34w,
       onHand,
       wip,
       netNeeded,
@@ -3558,7 +3576,8 @@ function getNecRows(){
   rows = [...rows].sort((a,b)=>{
     const dir=rs.sortDir;
     if(rs.sortCol==='group') return dir*a.group.localeCompare(b.group)||a.matNo.localeCompare(b.matNo);
-    if(rs.sortCol==='needed') return dir*(b.needed-a.needed);
+    if(rs.sortCol==='needed02w') return dir*(b.needed02w-a.needed02w);
+    if(rs.sortCol==='needed34w') return dir*(b.needed34w-a.needed34w);
     if(rs.sortCol==='netNeeded') return dir*(b.netNeeded-a.netNeeded);
     if(rs.sortCol==='onHand') return dir*(b.onHand-a.onHand);
     return dir*String(a[rs.sortCol]||'').localeCompare(String(b[rs.sortCol]||''));
@@ -3572,19 +3591,18 @@ function fmtN2(n){return Number.isInteger(n)?n.toLocaleString('ro-RO'):n.toLocal
 function exportNecExcel(){
   const rows = getNecRows();
   if(!rows.length){alert('Nu exista date de exportat.');return;}
-  const ws_data=[['Tip material','Cod material','Denumire','U/M','Necesar total','On Hand','WIP','Necesar net (dupa stoc)','Consumat in produse finale','Observatii']];
+  const ws_data=[['Tip material','Cod material','Denumire','U/M','Necesar 0-2W','Necesar 3-4W','On Hand','WIP','Necesar net (dupa stoc)','Consumat in produse finale','Observatii']];
   for(const r of rows){
     ws_data.push([
       r.group, r.matNo, r.name, r.unit,
-      r.needed, r.onHand, r.wip, r.netNeeded,
+      r.needed02w, r.needed34w, r.onHand, r.wip, r.netNeeded,
       r.fps.map(([fp,q])=>`${fp}: ${Math.round(q)}`).join('; '),
       S.reportObs[r.matNo]||'',
     ]);
   }
   const wb=XLSX.utils.book_new();
   const ws=XLSX.utils.aoa_to_sheet(ws_data);
-  // Column widths
-  ws['!cols']=[{wch:28},{wch:20},{wch:30},{wch:6},{wch:14},{wch:12},{wch:12},{wch:16},{wch:50},{wch:30}];
+  ws['!cols']=[{wch:28},{wch:20},{wch:30},{wch:6},{wch:13},{wch:13},{wch:12},{wch:12},{wch:16},{wch:50},{wch:30}];
   XLSX.utils.book_append_sheet(wb,ws,'Necesar materii prime');
   XLSX.writeFile(wb,`Necesar_materii_prime_${new Date().toISOString().slice(0,10)}.xlsx`);
 }
@@ -3679,18 +3697,19 @@ function buildNecTable(wrap, panel){
   wrap.innerHTML='';
   const rs=S.necReport;
   const cols=[
-    {key:'group',    label:'Tip material',     w:180},
-    {key:'matNo',    label:'Cod material',      w:145},
-    {key:'name',     label:'Denumire',           w:220},
-    {key:'unit',     label:'U/M',               w:55},
-    {key:'needed',   label:'Necesar total',      w:110},
-    {key:'onHand',   label:'On Hand',            w:100},
-    {key:'wip',      label:'WIP',               w:90},
-    {key:'netNeeded',label:'Necesar net',        w:110},
-    {key:'fps',      label:'Consumat in PF',     w:220},
-    {key:'obs',      label:'Observatii',         w:200},
+    {key:'group',     label:'Tip material',     w:165},
+    {key:'matNo',     label:'Cod material',      w:145},
+    {key:'name',      label:'Denumire',           w:210},
+    {key:'unit',      label:'U/M',               w:50},
+    {key:'needed02w', label:'Necesar 0-2W',      w:105},
+    {key:'needed34w', label:'Necesar 3-4W',      w:105},
+    {key:'onHand',    label:'On Hand',            w:95},
+    {key:'wip',       label:'WIP',               w:80},
+    {key:'netNeeded', label:'Necesar net',        w:105},
+    {key:'fps',       label:'Consumat in PF',     w:210},
+    {key:'obs',       label:'Observatii',         w:190},
   ];
-  const NUM=new Set(['needed','onHand','wip','netNeeded']);
+  const NUM=new Set(['needed02w','needed34w','onHand','wip','netNeeded']);
 
   const tbl=el('table','nec-table');
 
@@ -3867,11 +3886,11 @@ function buildNecTbody(cols, NUM){
 
 function rebuildNecBody(wrap){
   const cols=[
-    {key:'group',w:180},{key:'matNo',w:145},{key:'name',w:220},{key:'unit',w:55},
-    {key:'needed',w:110},{key:'onHand',w:100},{key:'wip',w:90},{key:'netNeeded',w:110},
-    {key:'fps',w:220},{key:'obs',w:200},
+    {key:'group',w:165},{key:'matNo',w:145},{key:'name',w:210},{key:'unit',w:50},
+    {key:'needed02w',w:105},{key:'needed34w',w:105},{key:'onHand',w:95},{key:'wip',w:80},
+    {key:'netNeeded',w:105},{key:'fps',w:210},{key:'obs',w:190},
   ];
-  const NUM=new Set(['needed','onHand','wip','netNeeded']);
+  const NUM=new Set(['needed02w','needed34w','onHand','wip','netNeeded']);
   const tbl=wrap.querySelector('.nec-table');
   if(!tbl){buildNecTable(wrap);return;}
   const old=tbl.querySelector('tbody');
