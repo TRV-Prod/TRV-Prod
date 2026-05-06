@@ -7739,13 +7739,13 @@ function showFpStructurePopup(itemNo){
   S.selFP=itemNo;S.qtyInput=qty;S.efficienta=S.eficientaPlan;
   S.fps=S.fps||[];if(!S.fps.includes(itemNo))S.fps.push(itemNo);
   try{
-    const treeNode=buildTree(itemNo,itemNo,0,new Set());
-    if(treeNode){
+    if(!S.exp) S.exp=new Set();
+    if(!S.expOps) S.expOps=new Set();
+    const treeNodes=buildTree(itemNo,itemNo,0,new Set());
+    if(treeNodes&&treeNodes.length>0){
       const wrap=dv('');wrap.style.cssText='overflow:auto;max-height:60vh;padding:8px';
       _needs=S.stockIdx?calcNeeds(itemNo,qty):null;
-      const execTimeRaw=calcExecTime(itemNo,qty,_needs);
-      const totalExecTimeRaw=calcTotalExecTime(itemNo,qty);
-      wrap.appendChild(mkNode(treeNode));
+      for(const n of treeNodes) wrap.appendChild(mkNode(n));
       body.appendChild(wrap);
     } else {body.textContent='Nu exista structura BOM pentru acest produs.';}
   }catch(e){body.textContent='Eroare la generarea structurii: '+e.message;}
