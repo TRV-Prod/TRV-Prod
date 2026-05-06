@@ -989,6 +989,11 @@ button { font-family: var(--sans); }
 .scan-col-item:hover{background:#f1f5f9}
 .scan-col-item input[type=checkbox]{width:14px;height:14px;cursor:pointer;accent-color:var(--accent)}
 .scan-drag-over{border-left:3px solid var(--accent)!important}
+.scan-ctx-menu{position:fixed;z-index:99999;background:#fff;border:1px solid var(--border);border-radius:7px;box-shadow:0 6px 24px rgba(0,0,0,.18);padding:4px 0;min-width:220px;user-select:none}
+.scan-ctx-item{display:flex;align-items:center;gap:9px;padding:7px 14px;font-size:11.5px;color:var(--text1);cursor:pointer;transition:background .1s}
+.scan-ctx-item:hover{background:#eff6ff;color:var(--accent)}
+.scan-ctx-item .ctx-icon{font-size:13px;width:16px;text-align:center;flex-shrink:0}
+.scan-ctx-sep{height:1px;background:var(--border);margin:3px 0}
 </style>
 </head>
 <body>
@@ -5113,6 +5118,67 @@ const SCAN_COL_WIDTHS={mo:120,tdt:88,product:150,wc:160,opno:55,emp:170,qty:75,s
 const SCAN_COL_DEFAULT=['tdt','mo','product','wc','opno','emp','qty','start','finish','used','bowrun','eff'];
 const SCAN_NUM_COLS=new Set(['qty','bowrun','teototal','eff']);
 
+
+function showScanCtxMenu(ev, colKey, cellText){
+  ev.preventDefault();
+  // Remove existing menu
+  document.getElementById('scan-ctx-menu')?.remove();
+  if(!cellText||cellText==='—') return;
+
+  const menu=dv('scan-ctx-menu');menu.id='scan-ctx-menu';
+  menu.style.top=Math.min(ev.clientY, window.innerHeight-160)+'px';
+  menu.style.left=Math.min(ev.clientX, window.innerWidth-230)+'px';
+
+  // ── Filter by value ──
+  const item1=dv('scan-ctx-item');
+  item1.innerHTML=`<span class="ctx-icon">🔍</span><span>Filtreaza <b>${SCAN_COL_LABELS[colKey]||colKey}</b> = "<b>${cellText.length>30?cellText.slice(0,30)+'…':cellText}</b>"</span>`;
+  item1.addEventListener('click',()=>{
+    S.scanReport.colFilters[colKey]=cellText;
+    // Update the filter input visually
+    const inp=document.querySelector(`input[data-scan-col="${colKey}"]`);
+    if(inp) inp.value=cellText;
+    const wrap=document.getElementById('scan-table-wrap');
+    if(wrap){rebuildScanBody(wrap);updateScanInfo();}
+    menu.remove();
+  });
+  menu.appendChild(item1);
+
+  // ── Clear this column filter ──
+  if(S.scanReport.colFilters[colKey]){
+    const sep=dv('scan-ctx-sep');menu.appendChild(sep);
+    const item2=dv('scan-ctx-item');
+    item2.innerHTML=`<span class="ctx-icon">✕</span><span>Sterge filtrul pe <b>${SCAN_COL_LABELS[colKey]||colKey}</b></span>`;
+    item2.addEventListener('click',()=>{
+      delete S.scanReport.colFilters[colKey];
+      const inp=document.querySelector(`input[data-scan-col="${colKey}"]`);
+      if(inp) inp.value='';
+      const wrap=document.getElementById('scan-table-wrap');
+      if(wrap){rebuildScanBody(wrap);updateScanInfo();}
+      menu.remove();
+    });
+    menu.appendChild(item2);
+  }
+
+  // ── Clear ALL filters ──
+  const hasAnyFilter=Object.values(S.scanReport.colFilters||{}).some(v=>v);
+  if(hasAnyFilter){
+    const sep2=dv('scan-ctx-sep');menu.appendChild(sep2);
+    const item3=dv('scan-ctx-item');
+    item3.innerHTML=`<span class="ctx-icon">🧹</span><span>Sterge toate filtrele</span>`;
+    item3.addEventListener('click',()=>{
+      S.scanReport.colFilters={};
+      document.querySelectorAll('input[data-scan-col]').forEach(i=>i.value='');
+      const wrap=document.getElementById('scan-table-wrap');
+      if(wrap){rebuildScanBody(wrap);updateScanInfo();}
+      menu.remove();
+    });
+    menu.appendChild(item3);
+  }
+
+  document.body.appendChild(menu);
+  const close=ev2=>{if(!menu.contains(ev2.target)){menu.remove();document.removeEventListener('mousedown',close);}};
+  setTimeout(()=>document.addEventListener('mousedown',close),10);
+}
 function renderScanariTab(){
   const page=dv('scan-page');
   if(!S.scanData){
@@ -5342,11 +5408,18 @@ function buildScanTable(wrap, bowFlat){
     });
     th.appendChild(rh);
     // Drag-to-reorder
-    th.draggable=true;
-    th.addEventListener('dragstart',ev=>{ev.dataTransfer.setData('text/plain',k);th.classList.add('scan-drag-ghost');});
-    th.addEventListener('dragend',()=>th.classList.remove('scan-drag-ghost'));
+    // Drag only from the label area (scan-th-top), NOT from filter input
+    top.draggable=true;
+    top.style.cursor='grab';
+    top.addEventListener('dragstart',ev=>{
+      ev.stopPropagation();
+      ev.dataTransfer.effectAllowed='move';
+      ev.dataTransfer.setData('text/plain',k);
+      th.classList.add('scan-drag-ghost');
+    });
+    top.addEventListener('dragend',()=>th.classList.remove('scan-drag-ghost'));
     th.addEventListener('dragover',ev=>{ev.preventDefault();th.classList.add('scan-drag-over');});
-    th.addEventListener('dragleave',()=>th.classList.remove('scan-drag-over'));
+    th.addEventListener('dragleave',ev=>{if(!th.contains(ev.relatedTarget))th.classList.remove('scan-drag-over');});
     th.addEventListener('drop',ev=>{
       ev.preventDefault();th.classList.remove('scan-drag-over');
       const from=ev.dataTransfer.getData('text/plain');
@@ -5386,6 +5459,7 @@ function buildScanTbody(cols, widths, bowFlat){
       const td=el('td');
       td.setAttribute('data-col',k);
       td.style.maxWidth=widths[k]+'px';
+      // Right-click context menu — bound after val is set (see end of loop)
       let val='';
       if(k==='tdt') val=fmtTrDate(r['Transaction dt']);
       else if(k==='mo') val=String(r['MO']||'');
@@ -5393,7 +5467,7 @@ function buildScanTbody(cols, widths, bowFlat){
       else if(k==='wc') val=str(r['Workcenter name']||'');
       else if(k==='opno') val=opNo;
       else if(k==='emp') val=str(r['Employee name']||'');
-      else if(k==='qty'){td.textContent=qty?qty.toLocaleString('ro-RO'):'—';td.style.textAlign='right';tr.appendChild(td);return;}
+      else if(k==='qty'){td.textContent=qty?qty.toLocaleString('ro-RO'):'—';td.style.textAlign='right';td.addEventListener('contextmenu',ev=>showScanCtxMenu(ev,k,qty?String(qty):''));tr.appendChild(td);return;}
       else if(k==='start') val=fmtScanDt(r['Start_MS']);
       else if(k==='finish') val=fmtScanDt(r['Finish_MS']);
       else if(k==='used') val=fmtScanTime(r['Used_tm_MS']);
@@ -5408,7 +5482,7 @@ function buildScanTbody(cols, widths, bowFlat){
         } else {
           td.textContent='—';td.style.cssText='text-align:right;color:#9ca3af';
         }
-        tr.appendChild(td);return;
+        td.addEventListener('contextmenu',ev=>showScanCtxMenu(ev,k,''));tr.appendChild(td);return;
       }
       else if(k==='teototal'){
         // Same as bowrun but without tooltip — keep for compatibility, hide by default
@@ -5423,9 +5497,11 @@ function buildScanTbody(cols, widths, bowFlat){
           td.className=eff>=90?'scan-eff-good':eff>=70?'scan-eff-warn':'scan-eff-bad';
         }
         td.style.textAlign='right';
+        td.addEventListener('contextmenu',ev=>showScanCtxMenu(ev,k,eff!=null?eff.toFixed(1)+'%':''));
         tr.appendChild(td);return;
       }
       td.textContent=val||'—';
+      td.addEventListener('contextmenu',ev=>showScanCtxMenu(ev,k,td.textContent==='—'?'':td.textContent));
       tr.appendChild(td);
     });
     tbody.appendChild(tr);
