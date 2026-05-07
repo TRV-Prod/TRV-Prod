@@ -6093,13 +6093,13 @@ function extractDctrFromOB(obRows){
   return result;
 }
 
-// ── Merge new records into existing DB (upsert by uid) ──
+// ── Merge new records into existing DB (upsert — overwrite existing with fresh calculated values) ──
 function mergeDctrRecords(existing, newRows){
   const map=new Map((existing||[]).map(r=>[r.uid,r]));
   let added=0;
   for(const r of newRows){
-    if(!map.has(r.uid)){map.set(r.uid,r);added++;}
-    // Existing entries kept as-is (historical)
+    if(!map.has(r.uid)) added++;
+    map.set(r.uid,r);  // always overwrite — ensures correct recalculated values
   }
   return {records:[...map.values()], added};
 }
