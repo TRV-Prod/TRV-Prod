@@ -7344,34 +7344,57 @@ function printVerificareStocuri(allData,f,LABELS){
   const printWin=window.open('','_blank','width=1100,height=800');
   if(!printWin){alert('Permite popup-urile pentru printare.');return;}
 
+  // Pick up zoom level from current view
+  const zoomPct=S.zoom?.rapoarte||100;
+  // Scale all font sizes proportionally with zoom
+  const basePt=10, tableBasePt=9, thBasePt=8;
+  const bodyPt=(basePt*zoomPct/100).toFixed(2);
+  const tblPt=(tableBasePt*zoomPct/100).toFixed(2);
+  const thPt=(thBasePt*zoomPct/100).toFixed(2);
+  const padV=(3*zoomPct/100).toFixed(1);
+  const padH=(6*zoomPct/100).toFixed(1);
+
   const hdrRow=vc.map(c=>`<th>${LABELS[c]||c}</th>`).join('');
   const bodyRows=rows.map(([matNo,m])=>{
-    const inp=S.stocVerifInputs[matNo]||{cantFizica:'',obs:''};
+    const inp=S.stocVerifInputs[matNo]||{cantFizica:'',wipInv:'',obs:''};
     const cantF=inp.cantFizica===''?null:parseFloat(inp.cantFizica);
-    const diff=cantF===null?'—':cantF-m.onHand;
-    const diffCls=typeof diff==='number'?diff>0?'red':diff<0?'green':'':'';
+    const wipIv=inp.wipInv===''?null:parseFloat(inp.wipInv);
     const wipStr=Object.entries(m.wipByWC||{}).filter(([,v])=>v>0).map(([wc,v])=>`${wcLabel(wc)}: ${fmtN(v)}`).join('; ');
-    const vals={matNo:`<b>${matNo}</b>`,matName:m.matName,fps:m.fpList.join(', '),matType:m.matType,
-      necPlan:fmtN(m.necPlan),onHand:fmtN(m.onHand),wip:wipStr||'—',
+    const onHandCls=m.onHand<0?'neg-circle':'';
+    const wipTotalCls=m.totalWIP<0?'neg-circle':'';
+    const vals={
+      matNo:`<b>${matNo}</b>`,
+      matName:m.matName,
+      fps:m.fpList.join(', '),
+      matType:m.matType,
+      necPlan:fmtN(m.necPlan),
+      onHand:m.onHand<0?`<span class="neg-circle">${fmtN(m.onHand)}</span>`:`<span class="${m.onHand>0?'pos':''}">${fmtN(m.onHand)}</span>`,
+      wip:m.totalWIP<0?`<span class="neg-circle">Total: ${fmtN(m.totalWIP)}</span>`:(wipStr||'—'),
       cantFizica:cantF===null?'':fmtN(cantF),
-      diff:typeof diff==='number'?`<span class="${diffCls}">${diff>0?'+':''}${fmtN(diff)}</span>`:'—',
-      obs:inp.obs||''};
+      wipInv:wipIv===null?'':fmtN(wipIv),
+      obs:inp.obs||''
+    };
     return '<tr>'+vc.map(c=>`<td>${vals[c]??''}</td>`).join('')+'</tr>';
   }).join('');
 
   const title=f.fpFilter&&f.fpFilter!=='all'?`Verificare Stocuri — ${f.fpFilter}`:'Verificare Stocuri Produse Planificate';
   printWin.document.write(`<!DOCTYPE html><html lang="ro"><head><meta charset="UTF-8"/><title>${title}</title>
-<style>*{box-sizing:border-box;margin:0;padding:0}body{font-family:Arial,sans-serif;font-size:10pt;padding:15px}
-h2{font-size:13pt;margin-bottom:4px}p.sub{font-size:9pt;color:#666;margin-bottom:10px}
-table{width:100%;border-collapse:collapse;font-size:9pt}
-th{background:#f0f0f0;border:1px solid #999;padding:4px 6px;font-size:8pt;font-weight:700;text-transform:uppercase;letter-spacing:.05em;text-align:left}
-td{border:1px solid #ccc;padding:3px 6px;vertical-align:top}
-tr:nth-child(even) td{background:#f9f9f9}
-.red{color:#dc2626;font-weight:700}.green{color:#15803d;font-weight:700}
-@media print{@page{size:landscape;margin:10mm}}
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:Arial,sans-serif;font-size:${bodyPt}pt;padding:15px}
+h2{font-size:${(13*zoomPct/100).toFixed(2)}pt;margin-bottom:4px}
+p.sub{font-size:${(9*zoomPct/100).toFixed(2)}pt;color:#666;margin-bottom:10px}
+table{width:100%;border-collapse:collapse;font-size:${tblPt}pt}
+th{background:#1e3a5f;color:#fff;border:1px solid #2d4e7a;padding:${padV}px ${padH}px;font-size:${thPt}pt;font-weight:700;text-transform:uppercase;letter-spacing:.05em;text-align:left}
+td{border:1px solid #ddd;padding:${padV}px ${padH}px;vertical-align:top}
+tr:nth-child(even) td{background:#f8fafc}
+tr:hover td{background:#eff6ff}
+.pos{color:#15803d;font-weight:700}
+.neg-circle{display:inline-block;padding:1px 6px;border-radius:50px;background:#fee2e2;color:#991b1b;border:1.5px solid #fca5a5;font-weight:700}
+@media print{@page{size:landscape;margin:8mm}tr:hover td{background:inherit}}
 </style></head><body>
 <h2>${title}</h2>
-<p class="sub">Data: ${new Date().toLocaleDateString('ro-RO')} · ${rows.length} componente · Filtru FP: ${f.fpFilter==='all'?'Toate':f.fpFilter} · Tip: ${f.tipFilter==='all'?'Toate':f.tipFilter}</p>
+<p class="sub">Data: ${new Date().toLocaleDateString('ro-RO')} · ${rows.length} componente · Filtru FP: ${f.fpFilter==='all'?'Toate':f.fpFilter} · Tip: ${f.tipFilter==='all'?'Toate':f.tipFilter} · Zoom: ${zoomPct}%</p>
 <table><thead><tr>${hdrRow}</tr></thead><tbody>${bodyRows}</tbody></table>
 </body></html>`);
   printWin.document.close();
