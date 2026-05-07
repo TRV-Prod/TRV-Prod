@@ -994,6 +994,31 @@ button { font-family: var(--sans); }
 .scan-ctx-item:hover{background:#eff6ff;color:var(--accent)}
 .scan-ctx-item .ctx-icon{font-size:13px;width:16px;text-align:center;flex-shrink:0}
 .scan-ctx-sep{height:1px;background:var(--border);margin:3px 0}
+
+/* ─── ACTIVITY LOG ─── */
+.act-log-section{margin-top:32px}
+.act-log-title{font-size:13px;font-weight:800;color:var(--text1);margin-bottom:12px;display:flex;align-items:center;gap:10px}
+.act-log-controls{display:flex;align-items:center;gap:8px;margin-bottom:12px;flex-wrap:wrap}
+.act-log-sel{height:28px;padding:0 8px;border:1px solid var(--border);border-radius:4px;font-size:11px;color:var(--text1);background:#fff}
+.act-log-btn{height:28px;padding:0 10px;border:1px solid var(--border);border-radius:4px;font-size:11px;font-weight:600;background:#f8f9fb;cursor:pointer;color:var(--text1)}
+.act-log-btn:hover{background:#eff6ff;border-color:var(--accent)}
+.act-log-stats{display:flex;gap:10px;flex-wrap:wrap;margin-bottom:14px}
+.act-stat-card{background:#fff;border:1px solid var(--border);border-radius:8px;padding:10px 16px;min-width:120px;text-align:center;box-shadow:0 1px 3px rgba(0,0,0,.06)}
+.act-stat-val{font-size:22px;font-weight:800;color:var(--accent)}
+.act-stat-lbl{font-size:10px;color:var(--text3);font-weight:600;text-transform:uppercase;letter-spacing:.05em;margin-top:2px}
+.act-charts{display:flex;gap:14px;flex-wrap:wrap;margin-bottom:16px}
+.act-chart-box{background:#fff;border:1px solid var(--border);border-radius:8px;padding:12px 14px;flex:1;min-width:260px}
+.act-chart-title{font-size:10px;font-weight:700;color:var(--text3);text-transform:uppercase;letter-spacing:.06em;margin-bottom:8px}
+.act-bar-row{display:flex;align-items:center;gap:7px;margin-bottom:4px}
+.act-bar-label{font-size:11px;color:var(--text1);min-width:110px;max-width:140px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;text-align:right}
+.act-bar-track{flex:1;height:14px;background:#f1f5f9;border-radius:3px;overflow:hidden}
+.act-bar-fill{height:100%;border-radius:3px;background:var(--accent)}
+.act-bar-count{font-size:10px;color:var(--text3);min-width:28px;text-align:right}
+.act-log-tbl{width:100%;border-collapse:collapse;font-size:11.5px;background:#fff;border-radius:8px;overflow:hidden;box-shadow:0 1px 3px rgba(0,0,0,.06)}
+.act-log-tbl th{padding:6px 12px;font-size:9.5px;font-weight:700;color:var(--text3);letter-spacing:.07em;text-transform:uppercase;background:#f8f9fb;border-bottom:2px solid var(--border);text-align:left;white-space:nowrap}
+.act-log-tbl td{padding:5px 12px;border-bottom:1px solid var(--border2);color:var(--text1);white-space:nowrap}
+.act-log-tbl tbody tr:hover td{background:#f0f7ff}
+.act-tab-pill{display:inline-block;padding:1px 7px;border-radius:10px;font-size:10px;font-weight:700;background:#eff6ff;color:var(--accent)}
 </style>
 </head>
 <body>
@@ -2412,6 +2437,174 @@ function renderSetup(){
   back.addEventListener('click',()=>{S.authScreen='login';render();});card.appendChild(back);
   wrap.appendChild(card);return wrap;
 }
+
+const ACT_TAB_LABELS={
+  fisiere:'Fisiere',structura:'Structura',stocuri:'Stocuri',orderbook:'Order Book',
+  rapoarte:'Rapoarte',planificare:'Planificare',pwc:'Programare WC',
+  scanari:'Raport Scanari',scanner:'Scanner',utilizatori:'Utilizatori',
+};
+
+// ─── ACTIVITY LOG ───
+async function logActivity(tabId){
+  if(!S.sbCfg||!S.session) return;
+  const entry={user:S.session.username,tab:tabId,ts:new Date().toISOString()};
+  // Load existing log, append, trim to last 5000, save
+  try{
+    const existing=await sbDownload(S.sbCfg,'data-activitylog.json');
+    const log=Array.isArray(existing?.log)?existing.log:[];
+    log.push(entry);
+    if(log.length>5000) log.splice(0,log.length-5000);
+    await sbUpload(S.sbCfg,'data-activitylog.json',{log});
+  }catch(e){
+    // Silent fail — logging should never block the UI
+    console.warn('Activity log error:',e);
+  }
+}
+
+async function loadActivityLog(){
+  if(!S.sbCfg) return [];
+  try{
+    const data=await sbDownload(S.sbCfg,'data-activitylog.json');
+    return Array.isArray(data?.log)?data.log:[];
+  }catch(e){return [];}
+}
+
+function renderActivityLog(container){
+  container.innerHTML='<div style="padding:8px;color:var(--text3);font-size:11px">Se incarca log-ul...</div>';
+  loadActivityLog().then(log=>{
+    container.innerHTML='';
+    if(!log.length){
+      container.innerHTML='<div style="padding:12px;color:var(--text3);font-size:12px">Nu exista activitate inregistrata inca.</div>';
+      return;
+    }
+
+    // ── Controls ──
+    const ctrl=dv('act-log-controls');
+    // User filter
+    const users=[...new Set(log.map(e=>e.user))].sort();
+    const usrSel=el('select','act-log-sel');
+    const allU=el('option');allU.value='';allU.textContent='Toti utilizatorii';usrSel.appendChild(allU);
+    users.forEach(u=>{const o=el('option');o.value=u;o.textContent=u;usrSel.appendChild(o);});
+    ctrl.appendChild(usrSel);
+    // Period filter
+    const perSel=el('select','act-log-sel');
+    [{v:'7',l:'Ultimele 7 zile'},{v:'30',l:'Ultimele 30 zile'},{v:'90',l:'Ultimele 90 zile'},{v:'',l:'Toata perioada'}]
+      .forEach(({v,l})=>{const o=el('option');o.value=v;o.textContent=l;if(v==='30')o.selected=true;perSel.appendChild(o);});
+    ctrl.appendChild(perSel);
+    // Refresh
+    const refBtn=el('button','act-log-btn');refBtn.textContent='↻ Reincarca';
+    refBtn.addEventListener('click',()=>renderActivityLog(container));
+    ctrl.appendChild(refBtn);
+    container.appendChild(ctrl);
+
+    // ── Stats + Charts ──
+    const statsEl=dv('act-log-stats');
+    const chartsEl=dv('act-charts');
+    const tblWrap=dv('');
+    container.appendChild(statsEl);
+    container.appendChild(chartsEl);
+    container.appendChild(tblWrap);
+
+    function rebuild(){
+      const usr=usrSel.value;
+      const days=perSel.value?parseInt(perSel.value):0;
+      const cutoff=days?new Date(Date.now()-days*86400000):null;
+      let rows=log.filter(e=>{
+        if(usr&&e.user!==usr) return false;
+        if(cutoff&&new Date(e.ts)<cutoff) return false;
+        return true;
+      }).sort((a,b)=>new Date(b.ts)-new Date(a.ts));
+
+      // Stats cards
+      statsEl.innerHTML='';
+      const bySess=new Map();
+      rows.forEach(e=>{bySess.set(e.user,(bySess.get(e.user)||0)+1);});
+      const cards=[
+        {v:rows.length,l:'Accesari totale'},
+        {v:bySess.size,l:'Utilizatori activi'},
+        {v:rows.length?rows[rows.length-1].ts.slice(0,10):'—',l:'Prima activitate'},
+        {v:rows.length?rows[0].ts.slice(0,10):'—',l:'Ultima activitate'},
+      ];
+      cards.forEach(({v,l})=>{
+        const c=dv('act-stat-card');
+        c.appendChild(sp('act-stat-val',String(v)));
+        c.appendChild(sp('act-stat-lbl',l));
+        statsEl.appendChild(c);
+      });
+
+      // Charts
+      chartsEl.innerHTML='';
+      const mkChart=(title,countMap,colorFn)=>{
+        const box=dv('act-chart-box');
+        box.appendChild(sp('act-chart-title',title));
+        const sorted=[...countMap.entries()].sort((a,b)=>b[1]-a[1]).slice(0,10);
+        const max=sorted[0]?.[1]||1;
+        sorted.forEach(([lbl,cnt])=>{
+          const row=dv('act-bar-row');
+          const la=sp('act-bar-label',lbl);la.title=lbl;
+          const track=dv('act-bar-track');
+          const fill=dv('act-bar-fill');fill.style.width=(cnt/max*100)+'%';
+          if(colorFn) fill.style.background=colorFn(lbl);
+          track.appendChild(fill);
+          row.appendChild(la);row.appendChild(track);
+          row.appendChild(sp('act-bar-count',cnt));
+          box.appendChild(row);
+        });
+        return box;
+      };
+
+      // By user
+      chartsEl.appendChild(mkChart('Accesari per utilizator',bySess));
+      // By tab
+      const byTab=new Map();
+      rows.forEach(e=>{const t=ACT_TAB_LABELS[e.tab]||e.tab;byTab.set(t,(byTab.get(t)||0)+1);});
+      const TAB_COLORS={'Fisiere':'#6366f1','Structura':'#0ea5e9','Stocuri':'#f59e0b','Order Book':'#10b981','Rapoarte':'#f43f5e','Planificare':'#8b5cf6','Programare WC':'#ec4899','Raport Scanari':'#14b8a6','Scanner':'#64748b','Utilizatori':'#475569'};
+      chartsEl.appendChild(mkChart('Accesari per modul',byTab,t=>TAB_COLORS[t]||'var(--accent)'));
+
+      // By day (last 14 days)
+      const byDay=new Map();
+      rows.forEach(e=>{const d=e.ts.slice(0,10);byDay.set(d,(byDay.get(d)||0)+1);});
+      const sortedDays=[...byDay.entries()].sort((a,b)=>a[0].localeCompare(b[0])).slice(-14);
+      if(sortedDays.length>0){
+        const dayMap=new Map(sortedDays.map(([d,c])=>[d.slice(5),c]));
+        chartsEl.appendChild(mkChart('Activitate (ultimele 14 zile)',dayMap));
+      }
+
+      // Table
+      tblWrap.innerHTML='';
+      const tbl=el('table','act-log-tbl');
+      const thead=el('thead');const hr2=el('tr');
+      ['#','Data / Ora','Utilizator','Modul accesat'].forEach(h=>{const th=el('th');th.textContent=h;hr2.appendChild(th);});
+      thead.appendChild(hr2);tbl.appendChild(thead);
+      const tbody=el('tbody');
+      const display=rows.slice(0,500);
+      display.forEach((e,i)=>{
+        const tr=el('tr');
+        const dt=new Date(e.ts);
+        const dtStr=`${dt.toLocaleDateString('ro-RO')} ${dt.toLocaleTimeString('ro-RO',{hour:'2-digit',minute:'2-digit'})}`;
+        const tabLbl=ACT_TAB_LABELS[e.tab]||e.tab;
+        [String(i+1),dtStr,e.user,''].forEach((v,ci)=>{
+          const td=el('td');
+          if(ci===3){const pill=sp('act-tab-pill',tabLbl);td.appendChild(pill);}
+          else td.textContent=v;
+          tr.appendChild(td);
+        });
+        tbody.appendChild(tr);
+      });
+      if(rows.length>500){
+        const tr=el('tr');const td=el('td');td.colSpan=4;
+        td.style.cssText='text-align:center;padding:8px;color:var(--text3);font-size:11px';
+        td.textContent=`... si inca ${rows.length-500} inregistrari (filtreaza pentru a vedea mai multe)`;
+        tr.appendChild(td);tbody.appendChild(tr);
+      }
+      tbl.appendChild(tbody);tblWrap.appendChild(tbl);
+    }
+
+    usrSel.addEventListener('change',rebuild);
+    perSel.addEventListener('change',rebuild);
+    rebuild();
+  });
+}
 function renderUsersTab(){
   const wrap=dv('users-wrap');
   wrap.appendChild(sp('','')).textContent='';
@@ -2573,7 +2766,7 @@ function render(){
     const tab=el('div',`nav-tab${S.tab===t.id?' active':''}`);
     if(t.dot){tab.appendChild(el('div',S.bomData&&S.bowData?'dot-ok':'dot-no'));}
     tab.appendChild(document.createTextNode(t.label));
-    tab.addEventListener('click',()=>{S.tab=t.id;render();});
+    tab.addEventListener('click',()=>{S.tab=t.id;render();logActivity(t.id);});
     nav.appendChild(tab);
   });
   hdr.appendChild(nav);
