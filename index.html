@@ -1019,6 +1019,10 @@ button { font-family: var(--sans); }
 .act-log-tbl td{padding:5px 12px;border-bottom:1px solid var(--border2);color:var(--text1);white-space:nowrap}
 .act-log-tbl tbody tr:hover td{background:#f0f7ff}
 .act-tab-pill{display:inline-block;padding:1px 7px;border-radius:10px;font-size:10px;font-weight:700;background:#eff6ff;color:var(--accent)}
+
+.stk-neg-circle{display:inline-block;padding:1px 7px;border-radius:50px;background:#fee2e2;color:#991b1b;border:1.5px solid #fca5a5;font-weight:700}
+.stk-pos-val{color:#15803d;font-weight:700}
+.stk-zero-val{color:var(--text3)}
 </style>
 </head>
 <body>
@@ -1092,12 +1096,12 @@ const S={
     visibleCols:new Set(['prio','matNo','matName','matType','fps','unQty','totalNec','onHand','wip','dePrelucrat','timp']),
   },
   pwcState:{eff:100,selectedGroup:null,scheduledByGroup:{},notes:{},onlyWipCovered:false,colFilters:{}},  // Programare WC state
-  stocVerifInputs:{},  // matNo → {cantFizica:'', obs:''}
+  stocVerifInputs:{},  // matNo → {cantFizica:'', wipInv:'', obs:''}
   stocVerifFilter:{
     fpFilter:'all', tipFilter:'all', colFilters:{},
-    colOrder:['matNo','matName','fps','matType','necPlan','onHand','wip','cantFizica','diff','obs'],
-    colWidths:{matNo:140,matName:200,fps:180,matType:60,necPlan:110,onHand:100,wip:160,cantFizica:110,diff:100,obs:200},
-    visibleCols:new Set(['matNo','matName','fps','matType','necPlan','onHand','wip','cantFizica','diff','obs']),
+    colOrder:['matNo','matName','fps','matType','necPlan','onHand','wip','cantFizica','wipInv','obs'],
+    colWidths:{matNo:140,matName:200,fps:180,matType:60,necPlan:110,onHand:100,wip:160,cantFizica:120,wipInv:120,obs:200},
+    visibleCols:new Set(['matNo','matName','fps','matType','necPlan','onHand','wip','cantFizica','wipInv','obs']),
   },
   meta:{bom:{rows:0,ts:null},bow:{rows:0,ts:null},po:{rows:0,ts:null},ob:{rows:0,ts:null}},
   loading:false,loadMsg:'Se incarca datele salvate...'
@@ -1800,11 +1804,10 @@ function mkZoomCtrl(tabId){
 
 function applyZoom(tabId){
   const pct=S.zoom[tabId]||100;
-  // 'zoom' scales everything including px-based font sizes, paddings and borders
-  const contentId = tabId==='structura' ? 'bom-tree-content'
-                  : tabId==='stocuri'   ? 'stk-table-wrap'
-                  : tabId==='orderbook' ? 'ob-table-wrap'
-                  : tabId==='rapoarte'  ? 'nec-table-wrap'
+  const contentId = tabId==='structura'   ? 'bom-tree-content'
+                  : tabId==='stocuri'     ? 'stk-table-wrap'
+                  : tabId==='orderbook'   ? 'ob-table-wrap'
+                  : tabId==='rapoarte'    ? 'zoom-area-rapoarte'
                   : tabId==='planificare' ? 'plan-table-wrap'
                   : 'zoom-area-fisiere';
   const area=document.getElementById(contentId);
@@ -7072,8 +7075,8 @@ function renderVerificareStocuriPanel(container){
   const f=S.stocVerifFilter;
   const LABELS={matNo:'Cod Material',matName:'Denumire',fps:'Produse Finale',matType:'Tip',
     necPlan:'Nec. Plan',onHand:'On Hand',wip:'WIP / Workcenter',
-    cantFizica:'Cant. Fizica',diff:'Diferenta',obs:'Observatii'};
-  const TEXT_FILTER=new Set(['matNo','matName','fps','necPlan','onHand','cantFizica','diff','obs']);
+    cantFizica:'On Hand Inventariat',wipInv:'WIP Inventariat',obs:'Observatii'};
+  const TEXT_FILTER=new Set(['matNo','matName','fps','necPlan','onHand','cantFizica','wipInv','obs']);
   const allData=buildVerificareStocuriData();
 
   // Collect all FPs and types for dropdowns
@@ -7127,17 +7130,17 @@ function renderVerificareStocuriPanel(container){
     const rows=getFilteredRows();
     if(!rows.length){alert('Nicio data de exportat.');return;}
     const out=rows.map(([matNo,m])=>{
-      const inp=S.stocVerifInputs[matNo]||{cantFizica:'',obs:''};
+      const inp=S.stocVerifInputs[matNo]||{cantFizica:'',wipInv:'',obs:''};
       const cantF=inp.cantFizica===''?'':parseFloat(inp.cantFizica)||0;
-      const diff=cantF===''?'':cantF-m.onHand;
+      const wipIv=inp.wipInv===''?'':parseFloat(inp.wipInv)||0;
       const wipStr=Object.entries(m.wipByWC||{}).filter(([,v])=>v>0).map(([wc,v])=>`${wcLabel(wc)}: ${fmtN(v)}`).join('; ');
       return{'Cod Material':matNo,'Denumire':m.matName,'Tip':m.matType,'Prod. Finale':m.fpList.join(', '),
         'Nec. Plan':+m.necPlan.toFixed(2),'On Hand':+m.onHand.toFixed(2),'WIP Total':+m.totalWIP.toFixed(2),'WIP Detaliu':wipStr,
-        'Cant. Fizica':cantF,'Diferenta':diff,'Observatii':inp.obs||''};
+        'On Hand Inventariat':cantF,'WIP Inventariat':wipIv,'Observatii':inp.obs||''};
     });
     const wb=XLSX.utils.book_new();
     const ws=XLSX.utils.json_to_sheet(out);
-    ws['!cols']=[{wch:20},{wch:28},{wch:8},{wch:30},{wch:12},{wch:12},{wch:12},{wch:30},{wch:12},{wch:12},{wch:30}];
+    ws['!cols']=[{wch:20},{wch:28},{wch:8},{wch:30},{wch:12},{wch:12},{wch:12},{wch:30},{wch:14},{wch:14},{wch:30}];
     XLSX.utils.book_append_sheet(wb,ws,'Verificare Stocuri');
     XLSX.writeFile(wb,`Verificare_Stocuri_${new Date().toISOString().slice(0,10)}.xlsx`);
   });
@@ -7169,6 +7172,7 @@ function renderVerificareStocuriPanel(container){
       if(cf.onHand){const n=parseFloat(cf.onHand);if(!isNaN(n)&&Math.abs(m.onHand-n)>0.01)return false;}
       const inp=S.stocVerifInputs[matNo]||{};
       if(cf.cantFizica&&!(inp.cantFizica||'').toString().includes(cf.cantFizica))return false;
+      if(cf.wipInv&&!(inp.wipInv||'').toString().includes(cf.wipInv))return false;
       if(cf.obs&&!(inp.obs||'').toLowerCase().includes(cf.obs.toLowerCase()))return false;
       return true;
     });
@@ -7221,7 +7225,7 @@ function renderVerificareStocuriPanel(container){
     vc.forEach(colId=>{
       const th=el('th');th.style.cssText='background:#fff;border-bottom:1px solid var(--border);padding:2px 4px';
       th.style.width=(f.colWidths[colId]||120)+'px';
-      if(TEXT_FILTER.has(colId)&&colId!=='cantFizica'&&colId!=='obs'){
+      if(TEXT_FILTER.has(colId)&&colId!=='cantFizica'&&colId!=='wipInv'&&colId!=='obs'){
         const inp=el('input','sub-rep-col-filter');inp.placeholder='...';inp.value=f.colFilters[colId]||'';
         inp.setAttribute('data-vs-filter',colId);
         inp.addEventListener('input',e2=>{
@@ -7240,9 +7244,9 @@ function renderVerificareStocuriPanel(container){
     // Body
     const tbody=el('tbody');
     for(const [matNo,m] of rows){
-      const inp=S.stocVerifInputs[matNo]||(S.stocVerifInputs[matNo]={cantFizica:'',obs:''});
+      const inp=S.stocVerifInputs[matNo]||(S.stocVerifInputs[matNo]={cantFizica:'',wipInv:'',obs:''});
       const cantF=inp.cantFizica===''?null:parseFloat(inp.cantFizica);
-      const diff=cantF===null?null:cantF-m.onHand;
+      const wipI=inp.wipInv===''?null:parseFloat(inp.wipInv);
       const tr=el('tr');
       vc.forEach(colId=>{
         const td=el('td');td.style.width=(f.colWidths[colId]||120)+'px';
@@ -7257,30 +7261,43 @@ function renderVerificareStocuriPanel(container){
         }
         else if(colId==='matType'){const cls=m.matType==='M'?'stk-type-m':m.matType==='P'?'stk-type-b':'stk-type-d';if(m.matType)td.appendChild(sp(cls,m.matType));}
         else if(colId==='necPlan'){const s=sp('pdm-num',fmtN(m.necPlan));s.style.cssText='display:block;text-align:right;font-weight:600';td.appendChild(s);}
-        else if(colId==='onHand'){const s=sp('pdm-num',fmtN(m.onHand));s.style.cssText=`display:block;text-align:right;color:${m.onHand<0?'#dc2626':m.onHand>0?'#15803d':'var(--text3)'}`;td.appendChild(s);}
+        else if(colId==='onHand'){
+          td.style.textAlign='right';
+          if(m.onHand<0){const s=sp('stk-neg-circle',fmtN(m.onHand));td.appendChild(s);}
+          else{const s=sp(m.onHand>0?'stk-pos-val':'stk-zero-val',fmtN(m.onHand));s.style.display='block';td.appendChild(s);}
+        }
         else if(colId==='wip'){
-          if(m.totalWIP>0){
+          const entries=Object.entries(m.wipByWC||{}).sort((a,b)=>b[1]-a[1]);
+          const negEntries=entries.filter(([,v])=>v<0);
+          const posEntries=entries.filter(([,v])=>v>0);
+          if(m.totalWIP<0){
+            // Negative total WIP — circle highlight
+            const wrap2=dv('');wrap2.style.cssText='display:flex;flex-wrap:wrap;gap:2px;align-items:center';
+            wrap2.appendChild(sp('stk-neg-circle',`Total: ${fmtN(m.totalWIP)}`));
+            negEntries.slice(0,2).forEach(([wc,v])=>{const p=sp('stk-wip-pill',`${wcLabel(wc)}: ${fmtN(v)}`);p.style.cssText='background:#fee2e2;color:#991b1b;border-color:#fca5a5';wrap2.appendChild(p);});
+            td.appendChild(wrap2);
+          } else if(m.totalWIP>0){
             const wrap2=dv('');wrap2.style.cssText='display:flex;flex-wrap:wrap;gap:2px';
-            const entries=Object.entries(m.wipByWC||{}).filter(([,v])=>v>0).sort((a,b)=>b[1]-a[1]);
-            entries.slice(0,3).forEach(([wc,v])=>wrap2.appendChild(sp('stk-wip-pill',`${wcLabel(wc)}: ${fmtN(v)}`)));
-            if(entries.length>3)wrap2.appendChild(sp('stk-fp-more',`+${entries.length-3}`));
+            posEntries.slice(0,3).forEach(([wc,v])=>wrap2.appendChild(sp('stk-wip-pill',`${wcLabel(wc)}: ${fmtN(v)}`)));
+            if(posEntries.length>3)wrap2.appendChild(sp('stk-fp-more',`+${posEntries.length-3}`));
             td.appendChild(wrap2);
           }else{td.style.color='var(--text4)';td.textContent='—';}
         }
         else if(colId==='cantFizica'){
           td.style.overflow='visible';td.style.padding='2px 4px';
-          const inpF=el('input','vs-inp');inpF.type='number';inpF.min='0';inpF.step='0.01';
-          inpF.value=inp.cantFizica||'';inpF.placeholder='0';
-          inpF.addEventListener('input',e=>{inp.cantFizica=e.target.value;saveStocVerifInputs();
-            // update diff cell inline
-            const diffTd=tr.querySelector('[data-diff]');
-            if(diffTd){const cf=e.target.value===''?null:parseFloat(e.target.value);renderDiffCell(diffTd,cf,m.onHand);}
-          });
+          const inpF=el('input','vs-inp');inpF.type='number';inpF.step='any';
+          inpF.value=inp.cantFizica||'';inpF.placeholder='0.00';
+          inpF.title='On Hand Inventariat (numar real masurat fizic)';
+          inpF.addEventListener('input',e=>{inp.cantFizica=e.target.value;saveStocVerifInputs();});
           td.appendChild(inpF);
         }
-        else if(colId==='diff'){
-          td.setAttribute('data-diff','1');
-          renderDiffCell(td,cantF,m.onHand);
+        else if(colId==='wipInv'){
+          td.style.overflow='visible';td.style.padding='2px 4px';
+          const inpW=el('input','vs-inp');inpW.type='number';inpW.step='any';
+          inpW.value=inp.wipInv||'';inpW.placeholder='0.00';
+          inpW.title='WIP Inventariat (cantitate efectiv in productie, constatata fizic)';
+          inpW.addEventListener('input',e=>{inp.wipInv=e.target.value;saveStocVerifInputs();});
+          td.appendChild(inpW);
         }
         else if(colId==='obs'){
           td.style.overflow='visible';td.style.padding='2px 4px';
