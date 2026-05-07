@@ -6430,6 +6430,13 @@ function buildDctrStatsPanel(){
     [...byItem.entries()].sort((a,b)=>b[1]-a[1]).slice(0,8));
   body.appendChild(itemCard);
 
+  // ── Entry Resp ──
+  const byResp=new Map();
+  data.forEach(r=>{const k=r.entryResp||'—';byResp.set(k,(byResp.get(k)||0)+1);});
+  const respCard=buildDctrStatCard('Distribuție Entry Resp.',
+    [...byResp.entries()].sort((a,b)=>b[1]-a[1]));
+  body.appendChild(respCard);
+
   // ── Evoluție lunară ──
   const byMonth=new Map();
   data.forEach(r=>{
