@@ -2637,6 +2637,18 @@ function renderUsersTab(){
     addBtn.disabled=false;addBtn.textContent='+ Adauga';
   });
   form.appendChild(addBtn);wrap.appendChild(form);
+
+  // ── Activity Log section (admin only) ──
+  const logSep=dv('');logSep.style.cssText='height:1px;background:var(--border);margin:28px 0';wrap.appendChild(logSep);
+  const logSection=dv('act-log-section');logSection.style.marginTop='0';
+  const logTitle=dv('act-log-title');
+  logTitle.innerHTML='📊 Jurnal activitate utilizatori';
+  logSection.appendChild(logTitle);
+  const logContainer=dv('');
+  logSection.appendChild(logContainer);
+  wrap.appendChild(logSection);
+  setTimeout(()=>renderActivityLog(logContainer),50);
+
   return wrap;
 }
 
