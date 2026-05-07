@@ -2789,10 +2789,11 @@ function render(){
     {id:'rapoarte',label:'Rapoarte'},
     {id:'planificare',label:'Planificare'},
     {id:'pwc',label:'Programare WC'},
-    {id:'dctr',label:'Disciplina CTR'},
+
     {id:'scanari',label:'Raport Scanari'},
     {id:'scanner',label:'📷 Scanner'},
   ];
+  if(S.session.role==='admin') tabs.push({id:'dctr',label:'Disciplina CTR'});
   if(S.session.role==='admin') tabs.push({id:'utilizatori',label:'Utilizatori'});
 
   // ── Hamburger button (mobile) ──
@@ -6135,6 +6136,49 @@ function updateDctrBadge(){
 }
 
 // ── Main render ──
+
+function dctrConfirmDelete(title, bodyHtml, confirmLabel){
+  return new Promise(resolve=>{
+    // Overlay
+    const overlay=dv('');
+    overlay.style.cssText='position:fixed;inset:0;background:rgba(0,0,0,.45);z-index:99999;display:flex;align-items:center;justify-content:center';
+    // Dialog
+    const dlg=dv('');
+    dlg.style.cssText='background:#fff;border-radius:10px;box-shadow:0 20px 60px rgba(0,0,0,.3);padding:28px 32px;max-width:420px;width:90%;font-family:inherit';
+    // Icon + title
+    const hdr=dv('');hdr.style.cssText='display:flex;align-items:center;gap:10px;margin-bottom:14px';
+    const icon=sp('');icon.textContent='⚠️';icon.style.fontSize='24px';
+    const ttl=sp('');ttl.textContent=title;ttl.style.cssText='font-size:15px;font-weight:800;color:#1e293b';
+    hdr.appendChild(icon);hdr.appendChild(ttl);
+    // Body
+    const body=dv('');body.style.cssText='font-size:13px;color:#475569;line-height:1.6;margin-bottom:22px';
+    body.innerHTML=bodyHtml;
+    // Buttons
+    const btns=dv('');btns.style.cssText='display:flex;gap:10px;justify-content:flex-end';
+    const cancelBtn=el('button');
+    cancelBtn.textContent='Anulează';
+    cancelBtn.style.cssText='height:34px;padding:0 16px;border:1px solid #e2e8f0;border-radius:6px;font-size:12px;font-weight:600;background:#f8f9fb;cursor:pointer;color:#475569';
+    cancelBtn.addEventListener('mouseenter',()=>cancelBtn.style.background='#f1f5f9');
+    cancelBtn.addEventListener('mouseleave',()=>cancelBtn.style.background='#f8f9fb');
+    const okBtn=el('button');
+    okBtn.innerHTML=confirmLabel;
+    okBtn.style.cssText='height:34px;padding:0 16px;border:1px solid #dc2626;border-radius:6px;font-size:12px;font-weight:700;background:#dc2626;cursor:pointer;color:#fff';
+    okBtn.addEventListener('mouseenter',()=>okBtn.style.background='#b91c1c');
+    okBtn.addEventListener('mouseleave',()=>okBtn.style.background='#dc2626');
+    cancelBtn.addEventListener('click',()=>{overlay.remove();resolve(false);});
+    okBtn.addEventListener('click',()=>{overlay.remove();resolve(true);});
+    btns.appendChild(cancelBtn);btns.appendChild(okBtn);
+    dlg.appendChild(hdr);dlg.appendChild(body);dlg.appendChild(btns);
+    overlay.appendChild(dlg);
+    document.body.appendChild(overlay);
+    // Close on overlay click
+    overlay.addEventListener('click',e=>{if(e.target===overlay){overlay.remove();resolve(false);}});
+    // Esc key
+    const onKey=e=>{if(e.key==='Escape'){overlay.remove();resolve(false);document.removeEventListener('keydown',onKey);}};
+    document.addEventListener('keydown',onKey);
+    cancelBtn.focus();
+  });
+}
 function renderDctrTab(){
   const page=dv('dctr-page');
   if(!S.dctrData){
@@ -6213,7 +6257,50 @@ function renderDctrTab(){
     buildDctrTable(tableWrap);updateDctrBadge();
     showToast(`✓ ${added} înregistrări noi adăugate (total: ${records.length})`, 'ok', 3000);
   });
-  g2.appendChild(excelBtn);g2.appendChild(syncBtn);tb.appendChild(g2);
+  g2.appendChild(excelBtn);g2.appendChild(syncBtn);
+
+  // Delete filtered rows
+  const delFilteredBtn=el('button','dctr-btn');
+  delFilteredBtn.style.cssText='border-color:#f59e0b;color:#92400e;background:#fffbeb';
+  delFilteredBtn.innerHTML='🗑 Șterge filtrate';
+  delFilteredBtn.title='Șterge din baza de date doar înregistrările vizibile (cu filtrele aplicate)';
+  delFilteredBtn.addEventListener('click',async()=>{
+    const visible=getDctrRows();
+    if(!visible.length){alert('Nicio înregistrare vizibilă de șters.');return;}
+    const confirmed=await dctrConfirmDelete(
+      `Ștergere înregistrări filtrate`,
+      `Urmează să ștergi <b>${visible.length}</b> înregistrări din baza de date.<br>Această acțiune este <b>ireversibilă</b>.`,
+      `Șterge ${visible.length} înregistrări`
+    );
+    if(!confirmed) return;
+    const visibleUids=new Set(visible.map(r=>r.uid));
+    S.dctrData=(S.dctrData||[]).filter(r=>!visibleUids.has(r.uid));
+    if(S.sbCfg&&S.session?.role==='admin') await saveDctrToSupabase(S.dctrData).catch(e=>console.warn(e));
+    buildDctrTable(tableWrap);updateDctrBadge();
+    showToast(`✓ ${visible.length} înregistrări șterse`, 'ok', 3000);
+  });
+
+  // Delete ALL
+  const delAllBtn=el('button','dctr-btn');
+  delAllBtn.style.cssText='border-color:#dc2626;color:#991b1b;background:#fef2f2';
+  delAllBtn.innerHTML='🗑 Șterge tot';
+  delAllBtn.title='Șterge complet baza de date Disciplina CTR din Supabase';
+  delAllBtn.addEventListener('click',async()=>{
+    const total=(S.dctrData||[]).length;
+    const confirmed=await dctrConfirmDelete(
+      `Ștergere completă bază de date`,
+      `Urmează să ștergi <b>TOATE cele ${total} înregistrări</b> din baza de date Disciplina CTR.<br><br>Această acțiune este <b>complet ireversibilă</b> și va afecta toți utilizatorii.`,
+      `DA, șterge toate ${total} înregistrările`
+    );
+    if(!confirmed) return;
+    S.dctrData=[];
+    if(S.sbCfg&&S.session?.role==='admin') await saveDctrToSupabase([]).catch(e=>console.warn(e));
+    buildDctrTable(tableWrap);updateDctrBadge();
+    showToast('✓ Baza de date Disciplina CTR a fost golită', 'ok', 3000);
+  });
+
+  g2.appendChild(delFilteredBtn);g2.appendChild(delAllBtn);
+  tb.appendChild(g2);
 
   // G3: Badge
   const g3=dv('dctr-toolbar-group');
