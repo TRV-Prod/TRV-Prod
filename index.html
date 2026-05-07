@@ -1023,6 +1023,55 @@ button { font-family: var(--sans); }
 .stk-neg-circle{display:inline-block;padding:1px 7px;border-radius:50px;background:#fee2e2;color:#991b1b;border:1.5px solid #fca5a5;font-weight:700}
 .stk-pos-val{color:#15803d;font-weight:700}
 .stk-zero-val{color:var(--text3)}
+
+/* ─── DISCIPLINA CTR ─── */
+.dctr-page{display:flex;flex-direction:column;height:100%;overflow:hidden;background:#f8f9fb}
+.dctr-toolbar{display:flex;align-items:center;gap:6px;padding:8px 16px;border-bottom:2px solid var(--border);flex-shrink:0;flex-wrap:wrap;background:#fff;box-shadow:0 1px 4px rgba(0,0,0,.06)}
+.dctr-toolbar-group{display:flex;align-items:center;gap:5px;padding:0 10px 0 0;border-right:1px solid #e2e8f0}
+.dctr-toolbar-group:last-child{border-right:none;margin-left:auto;padding-right:0}
+.dctr-toolbar-label{font-size:10px;font-weight:600;color:var(--text3);text-transform:uppercase;letter-spacing:.05em;white-space:nowrap}
+.dctr-sel{height:30px;padding:0 8px;border:1px solid var(--border);border-radius:5px;font-size:11px;font-weight:600;color:var(--text1);background:#fff;cursor:pointer}
+.dctr-btn{height:30px;padding:0 12px;border:1px solid var(--border);border-radius:5px;font-size:11px;font-weight:600;color:var(--text1);background:#f8f9fb;cursor:pointer;display:inline-flex;align-items:center;gap:5px;white-space:nowrap;transition:all .15s}
+.dctr-btn:hover{background:#eff6ff;border-color:var(--accent);color:var(--accent)}
+.dctr-btn.green{border-color:#16a34a;color:#15803d;background:#f0fdf4}
+.dctr-btn.green:hover{background:#dcfce7}
+.dctr-btn.blue{border-color:#3b82f6;color:#1d4ed8;background:#eff6ff}
+.dctr-badge{display:inline-flex;align-items:center;height:26px;padding:0 10px;background:#f1f5f9;border:1px solid #e2e8f0;border-radius:12px;font-size:10px;font-weight:700;color:var(--text2);white-space:nowrap}
+.dctr-table-wrap{flex:1;overflow:auto;background:#fff}
+.dctr-table-wrap::-webkit-scrollbar{width:9px;height:9px}
+.dctr-table-wrap::-webkit-scrollbar-track{background:#f1f5f9}
+.dctr-table-wrap::-webkit-scrollbar-thumb{background:#94a3b8;border-radius:4px}
+.dctr-table-wrap::-webkit-scrollbar-corner{background:#f1f5f9}
+.dctr-table{border-collapse:collapse;min-width:max-content;font-size:11.5px;table-layout:fixed}
+.dctr-table th{position:sticky;top:0;z-index:10;background:#1e3a5f;padding:0;white-space:nowrap;user-select:none;border-right:1px solid #2d4e7a}
+.dctr-table th:last-child{border-right:none}
+.dctr-table th.sortable:hover{background:#243f69;cursor:pointer}
+.dctr-th-inner{display:flex;flex-direction:column;min-width:0}
+.dctr-th-top{display:flex;align-items:center;justify-content:space-between;padding:6px 8px 4px;font-size:9.5px;font-weight:700;color:#e2e8f0;letter-spacing:.06em;text-transform:uppercase;gap:4px;min-height:32px;cursor:grab}
+.dctr-th-lbl{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1}
+.dctr-th-sort{flex-shrink:0;color:#93c5fd;font-size:12px;margin-left:3px}
+.dctr-th-filter{padding:2px 5px 5px}
+.dctr-th-filter input{width:100%;height:22px;padding:0 6px;border:none;border-radius:3px;font-size:10px;color:#1e293b;background:rgba(255,255,255,.88);box-sizing:border-box}
+.dctr-th-filter input:focus{outline:none;background:#fff}
+.dctr-th-filter input::placeholder{color:#94a3b8}
+.dctr-resize-handle{position:absolute;right:0;top:0;bottom:0;width:4px;cursor:col-resize;z-index:11;background:transparent}
+.dctr-resize-handle:hover,.dctr-resize-handle.dragging{background:rgba(147,197,253,.7)}
+.dctr-table td{border-bottom:1px solid #e5e7eb;border-right:1px solid #f1f5f9;padding:5px 8px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;vertical-align:middle;font-size:11.5px}
+.dctr-table td:last-child{border-right:1px solid #e5e7eb}
+.dctr-table tbody tr:nth-child(odd) td{background:#fff}
+.dctr-table tbody tr:nth-child(even) td{background:#f8fafc}
+.dctr-table tbody tr:hover td{background:#eff6ff!important}
+.dctr-lt-ok{color:#15803d;font-weight:700}
+.dctr-lt-warn{color:#ca8a04;font-weight:700}
+.dctr-lt-bad{color:#dc2626;font-weight:700}
+.dctr-col-drop{position:fixed;z-index:9999;background:#fff;border:1px solid var(--border);border-radius:8px;box-shadow:0 8px 32px rgba(0,0,0,.18);padding:6px 0;min-width:220px;max-height:420px;overflow-y:auto}
+.dctr-col-item{display:flex;align-items:center;gap:9px;padding:6px 14px;font-size:11px;color:var(--text1);cursor:pointer}
+.dctr-col-item:hover{background:#f1f5f9}
+.dctr-col-item input[type=checkbox]{width:14px;height:14px;cursor:pointer;accent-color:var(--accent)}
+.dctr-empty{display:flex;flex-direction:column;align-items:center;justify-content:center;flex:1;gap:12px;padding:48px;color:var(--text3)}
+.dctr-empty-icon{font-size:40px}
+.dctr-empty-msg{font-size:13px;font-weight:600}
+.dctr-empty-sub{font-size:11px;text-align:center;max-width:400px;line-height:1.6}
 </style>
 </head>
 <body>
@@ -1076,6 +1125,7 @@ const S={
   wcLoadMode:'wip',  // 'wip' | 'total'
   inTransitData:null,  // parsed In_transit rows
   scanData:null,        // parsed QV_Start-Stop_History rows
+  dctrData:null,         // disciplina CTR historical records (loaded from Supabase)
   inTransitIdx:null,   // itemNo → transitQty (sum)
   wcSetupData:null,   // parsed Workcenter_Setup rows
   wcSetupIdx:null,    // wcName → {prodTeam, wcType}
@@ -1670,6 +1720,12 @@ async function loadFromIndexedDB(){
 
   // scanari: load from month-split IDB keys (or legacy single key)
   S.loadMsg='Se incarca Raport Scanari...';setLoadMsg(S.loadMsg);await yieldFrame();
+  // Load Disciplina CTR from Supabase
+  S.loadMsg='Se incarca Disciplina CTR...';setLoadMsg(S.loadMsg);await yieldFrame();
+  try{
+    const dctrRec=await loadDctrFromSupabase();
+    if(dctrRec?.length) S.dctrData=dctrRec;
+  }catch(e){console.warn('DCTR load:',e);}
   const scanE=await loadScanariFromIDB();
   if(scanE?.rows?.length){applyScanari(scanE.rows,scanE.ts);}
   await yieldFrame();
@@ -2733,6 +2789,7 @@ function render(){
     {id:'rapoarte',label:'Rapoarte'},
     {id:'planificare',label:'Planificare'},
     {id:'pwc',label:'Programare WC'},
+    {id:'dctr',label:'Disciplina CTR'},
     {id:'scanari',label:'Raport Scanari'},
     {id:'scanner',label:'📷 Scanner'},
   ];
@@ -2835,6 +2892,7 @@ function render(){
   else if(S.tab==='rapoarte') body.appendChild(renderRapoarte());
   else if(S.tab==='planificare')body.appendChild(renderPlanificare());
   else if(S.tab==='pwc')body.appendChild(renderPwcTab());
+  else if(S.tab==='dctr')body.appendChild(renderDctrTab());
   else if(S.tab==='scanari')body.appendChild(renderScanariTab());
   else if(S.tab==='scanner')body.appendChild(renderScanner());
   else if(S.tab==='utilizatori'&&S.session.role==='admin')body.appendChild(renderUsersTab());
@@ -3985,6 +4043,16 @@ if(!S.necReport) S.necReport={
   showGroups:true,
   data:null,
 };
+
+if(!S.dctrReport) S.dctrReport={
+  colFilters:{},
+  colOrder:null,
+  hiddenCols:new Set(),
+  colWidths:{},
+  sortCol:'entryDt', sortDir:-1,
+  zoom:100,
+};
+
 if(!S.scanReport) S.scanReport={
   month:null,          // 'YYYYMM' or null (auto last month)
   year:null,           // 'YYYY' or null (auto last year)
@@ -5891,6 +5959,464 @@ function exportScanPdf(bowFlat){
   if(!w){alert('Popup blocat. Permite popups pentru acest site.');return;}
   w.document.write(html);w.document.close();
   setTimeout(()=>w.print(),600);
+}
+
+
+/* ═══════════════════════════════════════════════════════════════
+   DISCIPLINA CTR MODULE
+   Tracks orders where MIN(|EntryDt - ConfirmDt|, |EntryDt - RequestDt|) < 14 days
+   Unique key: Cust_order_no + Item_no + Entry_dt
+   Persisted in Supabase as data-disciplina-ctr.json
+═══════════════════════════════════════════════════════════════ */
+
+const DCTR_COLS = {
+  custOrderNo: 'Nr. Comandă Client',
+  coNo:        'CO No',
+  coLine:      'CO Linie',
+  itemNo:      'Item No',
+  itemName:    'Denumire',
+  custNo:      'Client No',
+  custName:    'Client',
+  entryDt:     'Entry Date',
+  requestDt:   'Request Date',
+  confirmDt:   'Confirm Date',
+  requestWk:   'Request Week',
+  confirmWk:   'Confirm Week',
+  minDiffDays: 'Lead Time Min (zile)',
+  diffReqDays: 'Δ Entry-Request (z)',
+  diffConfDays:'Δ Entry-Confirm (z)',
+  orderedQty:  'Cant. Comandată',
+  openQty:     'Cant. Deschisă',
+  salesPrice:  'Preț EUR',
+  orderLT:     'Order LT',
+  entryResp:   'Entry Resp.',
+  savedAt:     'Data adăugării în DB',
+};
+
+const DCTR_COL_DEFAULT = ['custOrderNo','itemNo','itemName','custName','entryDt','requestDt','confirmDt','minDiffDays','diffReqDays','diffConfDays','orderedQty','openQty','salesPrice','entryResp'];
+const DCTR_COL_WIDTHS  = {custOrderNo:160,coNo:110,coLine:65,itemNo:155,itemName:200,custNo:80,custName:200,entryDt:95,requestDt:95,confirmDt:95,requestWk:95,confirmWk:95,minDiffDays:120,diffReqDays:130,diffConfDays:130,orderedQty:105,openQty:105,salesPrice:90,orderLT:75,entryResp:95,savedAt:130};
+const DCTR_NUM_COLS    = new Set(['minDiffDays','diffReqDays','diffConfDays','orderedQty','openQty','salesPrice','orderLT']);
+
+// ── Parse a date value from OB row ──
+function parseDctrDate(v){
+  if(!v) return null;
+  if(v instanceof Date) return v;
+  if(typeof v==='number'&&v>1) return new Date(Math.round((v-25569)*86400*1000));
+  const s=String(v).trim();
+  for(const fmt of [
+    /^(\d{1,2})\.(\d{1,2})\.(\d{4})$/,
+    /^(\d{4})-(\d{1,2})-(\d{1,2})$/,
+  ]){
+    const m=s.match(fmt);
+    if(m){
+      const [,a,b,c]=m;
+      const [y,mo,d]=fmt.source.startsWith('^(\\d{4})')?[+a,+b,+c]:[+c,+b,+a];
+      const dt=new Date(y,mo-1,d);
+      if(!isNaN(dt)) return dt;
+    }
+  }
+  return null;
+}
+
+function fmtDctrDate(v){
+  const d=parseDctrDate(v);
+  if(!d) return '—';
+  return `${String(d.getDate()).padStart(2,'0')}.${String(d.getMonth()+1).padStart(2,'0')}.${d.getFullYear()}`;
+}
+
+// ── Extract qualifying rows from OB data (obData array) ──
+function extractDctrFromOB(obRows){
+  const result=[];
+  for(const r of obRows){
+    const entryDt = parseDctrDate(r['Entry dt']);
+    const confirmDt= parseDctrDate(r['Confirm dt']);
+    const requestDt= parseDctrDate(r['Request dt']);
+    if(!entryDt) continue;
+    const diffs=[];
+    if(confirmDt) diffs.push(Math.abs(Math.round((confirmDt-entryDt)/86400000)));
+    if(requestDt) diffs.push(Math.abs(Math.round((requestDt-entryDt)/86400000)));
+    if(!diffs.length) continue;
+    const minDiff=Math.min(...diffs);
+    if(minDiff>=14) continue;
+
+    const custOrderNo=str(r['Cust order no']||'');
+    const itemNo=str(r['Item_no']||'');
+    const entryKey=`${String(entryDt.getFullYear())}${String(entryDt.getMonth()+1).padStart(2,'0')}${String(entryDt.getDate()).padStart(2,'0')}`;
+    const uid=`${custOrderNo}__${itemNo}__${entryKey}`;
+
+    result.push({
+      uid,
+      custOrderNo,
+      coNo:        str(r['CO_no']||''),
+      coLine:      str(r['CO_line']||''),
+      itemNo,
+      itemName:    str(r['Item_name']||''),
+      custNo:      str(r['Customer_no']||''),
+      custName:    str(r['Customer_name']||''),
+      entryDt:     fmtDctrDate(entryDt),
+      requestDt:   fmtDctrDate(requestDt),
+      confirmDt:   fmtDctrDate(confirmDt),
+      requestWk:   str(r['Request_week']||''),
+      confirmWk:   str(r['Confirm_week']||''),
+      minDiffDays: minDiff,
+      diffReqDays: requestDt?Math.round((requestDt-entryDt)/86400000):null,
+      diffConfDays:confirmDt?Math.round((confirmDt-entryDt)/86400000):null,
+      orderedQty:  parseFloat(r['Ordered'])||0,
+      openQty:     parseFloat(r['Open qty'])||0,
+      salesPrice:  parseFloat(r['Sales price EUR'])||0,
+      orderLT:     parseFloat(r['Order LT'])||0,
+      entryResp:   str(r['Entry_resp']||''),
+      savedAt:     new Date().toISOString().slice(0,10),
+    });
+  }
+  return result;
+}
+
+// ── Merge new records into existing DB (upsert by uid) ──
+function mergeDctrRecords(existing, newRows){
+  const map=new Map((existing||[]).map(r=>[r.uid,r]));
+  let added=0;
+  for(const r of newRows){
+    if(!map.has(r.uid)){map.set(r.uid,r);added++;}
+    // Existing entries kept as-is (historical)
+  }
+  return {records:[...map.values()], added};
+}
+
+// ── Load + save Supabase ──
+async function loadDctrFromSupabase(){
+  if(!S.sbCfg) return [];
+  try{
+    const d=await sbDownload(S.sbCfg,'data-disciplina-ctr.json');
+    return Array.isArray(d?.records)?d.records:[];
+  }catch(e){return [];}
+}
+async function saveDctrToSupabase(records){
+  if(!S.sbCfg) return;
+  await sbUpload(S.sbCfg,'data-disciplina-ctr.json',{records,updatedAt:new Date().toISOString()});
+}
+
+// ── Get filtered + sorted rows ──
+function getDctrRows(){
+  const rs=S.dctrReport;
+  if(!S.dctrData||!Array.isArray(S.dctrData)) return [];
+  let rows=[...S.dctrData];
+  // Column filters
+  for(const[col,fval] of Object.entries(rs.colFilters||{})){
+    if(!fval) continue;
+    const fl=fval.toLowerCase();
+    rows=rows.filter(r=>{
+      const v=r[col];
+      return String(v==null?'':v).toLowerCase().includes(fl);
+    });
+  }
+  // Sort
+  rows.sort((a,b)=>{
+    const dir=rs.sortDir;
+    const va=a[rs.sortCol],vb=b[rs.sortCol];
+    if(va==null&&vb==null) return 0;
+    if(va==null) return dir;
+    if(vb==null) return -dir;
+    if(typeof va==='number'&&typeof vb==='number') return dir*(va-vb);
+    return dir*String(va).localeCompare(String(vb));
+  });
+  return rows;
+}
+
+function getActiveDctrCols(){
+  const rs=S.dctrReport;
+  const order=rs.colOrder||[...DCTR_COL_DEFAULT];
+  return order.filter(k=>!rs.hiddenCols.has(k));
+}
+
+function updateDctrBadge(){
+  const el=document.getElementById('dctr-badge');
+  if(el) el.textContent=getDctrRows().length.toLocaleString()+' înregistrări';
+}
+
+// ── Main render ──
+function renderDctrTab(){
+  const page=dv('dctr-page');
+  if(!S.dctrData){
+    // Try to load from Supabase
+    if(S.sbCfg){
+      const msg=dv('dctr-empty');
+      msg.innerHTML='<div class="dctr-empty-icon">⏳</div><div class="dctr-empty-msg">Se încarcă din Supabase...</div>';
+      page.appendChild(msg);
+      loadDctrFromSupabase().then(records=>{
+        S.dctrData=records;
+        if(S.tab==='dctr') render();
+      });
+      return page;
+    }
+    const empty=dv('dctr-empty');
+    empty.innerHTML='<div class="dctr-empty-icon">📋</div><div class="dctr-empty-msg">Baza de date Disciplina CTR este goală</div><div class="dctr-empty-sub">Mergeți în Rapoarte → Verificare Stocuri sau folosiți butonul de Sync pentru a încărca datele. Înregistrările se adaugă automat la fiecare import Order Book.</div>';
+    page.appendChild(empty);
+    return page;
+  }
+
+  const rs=S.dctrReport;
+  // ── Toolbar ──
+  const tb=dv('dctr-toolbar');
+
+  // G1: Col picker
+  const g1=dv('dctr-toolbar-group');
+  const colBtn=el('button','dctr-btn');colBtn.innerHTML='⚙ Coloane';
+  colBtn.addEventListener('click',e=>{
+    e.stopPropagation();
+    const existD=document.getElementById('dctr-col-drop');
+    if(existD){existD.remove();return;}
+    const drop=dv('dctr-col-drop');drop.id='dctr-col-drop';
+    const rect=colBtn.getBoundingClientRect();
+    drop.style.top=(rect.bottom+2)+'px';drop.style.left=rect.left+'px';
+    const order=rs.colOrder||[...DCTR_COL_DEFAULT];
+    // Show ALL possible columns
+    Object.keys(DCTR_COLS).forEach(k=>{
+      const item=dv('dctr-col-item');
+      const cb=el('input');cb.type='checkbox';
+      const isActive=order.includes(k)?!rs.hiddenCols.has(k):false;
+      cb.checked=isActive;
+      cb.addEventListener('change',()=>{
+        // Ensure col is in order
+        if(!order.includes(k)) order.push(k);
+        rs.colOrder=[...order];
+        if(cb.checked) rs.hiddenCols.delete(k); else rs.hiddenCols.add(k);
+        buildDctrTable(tableWrap);
+      });
+      item.appendChild(cb);
+      item.appendChild(document.createTextNode(DCTR_COLS[k]||k));
+      drop.appendChild(item);
+    });
+    document.body.appendChild(drop);
+    const close=ev=>{if(!drop.contains(ev.target)&&ev.target!==colBtn){drop.remove();document.removeEventListener('mousedown',close);}};
+    setTimeout(()=>document.addEventListener('mousedown',close),50);
+  });
+  g1.appendChild(colBtn);tb.appendChild(g1);
+
+  // G2: Export + Sync from OB
+  const g2=dv('dctr-toolbar-group');
+  const excelBtn=el('button','dctr-btn green');excelBtn.innerHTML='⬇ Excel';
+  excelBtn.addEventListener('click',exportDctrExcel);
+  const syncBtn=el('button','dctr-btn blue');syncBtn.innerHTML='↻ Actualizează din OB';
+  syncBtn.title='Importă comenzile noi din Order Book în baza de date';
+  syncBtn.addEventListener('click',async()=>{
+    if(!S.obData?.length){alert('Încărcați mai întâi fișierul Order Book.');return;}
+    syncBtn.disabled=true;syncBtn.textContent='...';
+    const newRows=extractDctrFromOB(S.obData);
+    const {records,added}=mergeDctrRecords(S.dctrData||[],newRows);
+    S.dctrData=records;
+    if(S.sbCfg&&S.session?.role==='admin'){
+      try{await saveDctrToSupabase(records);}
+      catch(e){console.warn('DCTR save error:',e);}
+    }
+    syncBtn.disabled=false;syncBtn.innerHTML='↻ Actualizează din OB';
+    buildDctrTable(tableWrap);updateDctrBadge();
+    showToast(`✓ ${added} înregistrări noi adăugate (total: ${records.length})`, 'ok', 3000);
+  });
+  g2.appendChild(excelBtn);g2.appendChild(syncBtn);tb.appendChild(g2);
+
+  // G3: Badge
+  const g3=dv('dctr-toolbar-group');
+  const badge=dv('dctr-badge');badge.id='dctr-badge';
+  g3.appendChild(badge);tb.appendChild(g3);
+
+  // G4: Zoom
+  const g4=dv('dctr-toolbar-group');
+  g4.appendChild(sp('dctr-toolbar-label','Zoom:'));
+  const zc=dv('scan-zoom-ctrl');
+  const zm=el('button');zm.textContent='−';zm.addEventListener('click',()=>{rs.zoom=Math.max(60,rs.zoom-10);tableWrap.style.fontSize=(rs.zoom/100*11.5)+'px';zs.textContent=rs.zoom+'%';});
+  const zs=sp('scan-zoom-pct','');zs.textContent=rs.zoom+'%';
+  const zp=el('button');zp.textContent='+';zp.addEventListener('click',()=>{rs.zoom=Math.min(160,rs.zoom+10);tableWrap.style.fontSize=(rs.zoom/100*11.5)+'px';zs.textContent=rs.zoom+'%';});
+  const z100=el('button');z100.textContent='100%';z100.style.cssText='width:auto;padding:0 7px;font-size:10px';
+  z100.addEventListener('click',()=>{rs.zoom=100;tableWrap.style.fontSize='11.5px';zs.textContent='100%';});
+  zc.appendChild(zm);zc.appendChild(zs);zc.appendChild(zp);zc.appendChild(z100);
+  g4.appendChild(zc);tb.appendChild(g4);
+  page.appendChild(tb);
+
+  // ── Table ──
+  const tableWrap=dv('dctr-table-wrap');
+  tableWrap.id='dctr-table-wrap';
+  tableWrap.style.fontSize=(rs.zoom/100*11.5)+'px';
+  page.appendChild(tableWrap);
+  buildDctrTable(tableWrap);
+  updateDctrBadge();
+  return page;
+}
+
+function buildDctrTable(wrap){
+  wrap.innerHTML='';
+  const rs=S.dctrReport;
+  const cols=getActiveDctrCols();
+  const widths={...DCTR_COL_WIDTHS,...(rs.colWidths||{})};
+
+  const tbl=el('table','dctr-table');tbl.id='dctr-tbl';
+  const thead=el('thead');
+  const hr=el('tr');
+
+  cols.forEach((k,ci)=>{
+    const th=el('th');
+    th.style.width=widths[k]+'px';th.style.minWidth=widths[k]+'px';th.style.position='relative';
+    const inner=dv('dctr-th-inner');
+    const top=dv('dctr-th-top');
+    const lbl=sp('dctr-th-lbl',DCTR_COLS[k]||k);
+    top.appendChild(lbl);
+    if(rs.sortCol===k){const se=sp('dctr-th-sort',rs.sortDir===1?'↑':'↓');top.appendChild(se);}
+    inner.appendChild(top);
+    // Filter input
+    const fi=dv('dctr-th-filter');
+    const inp=el('input');inp.placeholder='Filtru...';inp.value=rs.colFilters[k]||'';
+    inp.setAttribute('data-dctr-col',k);
+    inp.addEventListener('input',e=>{rs.colFilters[k]=e.target.value;rebuildDctrBody(wrap);updateDctrBadge();});
+    inp.addEventListener('click',e=>e.stopPropagation());
+    fi.appendChild(inp);inner.appendChild(fi);
+    th.appendChild(inner);
+    // Sort on header label click
+    top.addEventListener('click',()=>{
+      rs.sortCol===k?rs.sortDir*=-1:(rs.sortCol=k,rs.sortDir=1);
+      buildDctrTable(wrap);
+    });
+    // Resize
+    const rh=dv('dctr-resize-handle');
+    rh.addEventListener('mousedown',ev=>{
+      ev.preventDefault();ev.stopPropagation();
+      rh.classList.add('dragging');
+      const startX=ev.clientX,startW=widths[k];
+      const onMove=mv=>{const nw=Math.max(50,startW+mv.clientX-startX);widths[k]=nw;th.style.width=nw+'px';th.style.minWidth=nw+'px';wrap.querySelectorAll(`td[data-col="${k}"]`).forEach(td=>td.style.width=nw+'px');};
+      const onUp=()=>{rh.classList.remove('dragging');if(!rs.colWidths)rs.colWidths={};rs.colWidths[k]=widths[k];document.removeEventListener('mousemove',onMove);document.removeEventListener('mouseup',onUp);};
+      document.addEventListener('mousemove',onMove);document.addEventListener('mouseup',onUp);
+    });
+    th.appendChild(rh);
+    // Drag-to-reorder (from top area only)
+    top.draggable=true;
+    top.addEventListener('dragstart',ev=>{ev.stopPropagation();ev.dataTransfer.setData('text/plain',k);th.classList.add('scan-drag-ghost');});
+    top.addEventListener('dragend',()=>th.classList.remove('scan-drag-ghost'));
+    th.addEventListener('dragover',ev=>{ev.preventDefault();th.classList.add('scan-drag-over');});
+    th.addEventListener('dragleave',ev=>{if(!th.contains(ev.relatedTarget))th.classList.remove('scan-drag-over');});
+    th.addEventListener('drop',ev=>{
+      ev.preventDefault();th.classList.remove('scan-drag-over');
+      const from=ev.dataTransfer.getData('text/plain');
+      const order=rs.colOrder||[...DCTR_COL_DEFAULT];
+      const fi2=order.indexOf(from),ti=order.indexOf(k);
+      if(fi2<0||ti<0||fi2===ti) return;
+      order.splice(fi2,1);order.splice(ti,0,from);
+      rs.colOrder=[...order];buildDctrTable(wrap);
+    });
+    hr.appendChild(th);
+  });
+  thead.appendChild(hr);tbl.appendChild(thead);
+  tbl.appendChild(buildDctrTbody(cols,widths));
+  wrap.appendChild(tbl);
+}
+
+function buildDctrTbody(cols,widths){
+  const rows=getDctrRows();
+  const tbody=el('tbody');
+  for(const r of rows){
+    const tr=el('tr');
+    cols.forEach(k=>{
+      const td=el('td');
+      td.setAttribute('data-col',k);
+      td.style.maxWidth=widths[k]+'px';
+      const v=r[k];
+      if(v==null||v===''){td.textContent='—';td.style.color='#9ca3af';tr.appendChild(td);return;}
+      if(k==='minDiffDays'||k==='diffReqDays'||k==='diffConfDays'){
+        const n=parseFloat(v);
+        td.textContent=isNaN(n)?v:(n+(n===1?' zi':' zile'));
+        td.style.textAlign='right';
+        td.className=isNaN(n)?'':(n<=3?'dctr-lt-bad':n<=7?'dctr-lt-warn':'dctr-lt-ok');
+        tr.appendChild(td);return;
+      }
+      if(DCTR_NUM_COLS.has(k)){td.textContent=typeof v==='number'?fmtN(v):v;td.style.textAlign='right';tr.appendChild(td);return;}
+      td.textContent=String(v);
+      // Right-click context menu
+      td.addEventListener('contextmenu',ev=>{
+        ev.preventDefault();
+        showDctrCtxMenu(ev,k,String(v));
+      });
+      tr.appendChild(td);
+    });
+    tbody.appendChild(tr);
+  }
+  if(!rows.length){
+    const tr=el('tr');const td=el('td');td.colSpan=cols.length;
+    td.style.cssText='text-align:center;padding:24px;color:var(--text3);font-size:12px';
+    td.textContent='Nicio înregistrare găsită pentru filtrele aplicate.';
+    tr.appendChild(td);tbody.appendChild(tr);
+  }
+  return tbody;
+}
+
+function rebuildDctrBody(wrap){
+  const rs=S.dctrReport;
+  const cols=getActiveDctrCols();
+  const widths={...DCTR_COL_WIDTHS,...(rs.colWidths||{})};
+  const tbl=wrap.querySelector('.dctr-table');
+  if(!tbl){buildDctrTable(wrap);return;}
+  const old=tbl.querySelector('tbody');
+  const nb=buildDctrTbody(cols,widths);
+  if(old)tbl.replaceChild(nb,old);else tbl.appendChild(nb);
+}
+
+function showDctrCtxMenu(ev,colKey,cellText){
+  document.getElementById('dctr-ctx-menu')?.remove();
+  if(!cellText||cellText==='—') return;
+  const menu=dv('scan-col-drop');menu.id='dctr-ctx-menu';
+  menu.style.cssText=`position:fixed;top:${Math.min(ev.clientY,window.innerHeight-160)}px;left:${Math.min(ev.clientX,window.innerWidth-230)}px`;
+  const item1=dv('scan-col-item');
+  item1.innerHTML=`<span style="font-size:13px">🔍</span><span>Filtrează <b>${DCTR_COLS[colKey]||colKey}</b> = "<b>${cellText.length>30?cellText.slice(0,30)+'…':cellText}</b>"</span>`;
+  item1.addEventListener('click',()=>{
+    S.dctrReport.colFilters[colKey]=cellText;
+    const inp=document.querySelector(`input[data-dctr-col="${colKey}"]`);
+    if(inp) inp.value=cellText;
+    const wrap=document.getElementById('dctr-table-wrap');
+    if(wrap){rebuildDctrBody(wrap);updateDctrBadge();}
+    menu.remove();
+  });
+  menu.appendChild(item1);
+  if(S.dctrReport.colFilters[colKey]){
+    const s=dv('');s.style.cssText='height:1px;background:var(--border);margin:3px 0';menu.appendChild(s);
+    const item2=dv('scan-col-item');
+    item2.innerHTML=`<span style="font-size:13px">✕</span><span>Șterge filtrul pe <b>${DCTR_COLS[colKey]||colKey}</b></span>`;
+    item2.addEventListener('click',()=>{
+      delete S.dctrReport.colFilters[colKey];
+      const inp=document.querySelector(`input[data-dctr-col="${colKey}"]`);
+      if(inp) inp.value='';
+      const wrap=document.getElementById('dctr-table-wrap');
+      if(wrap){rebuildDctrBody(wrap);updateDctrBadge();}
+      menu.remove();
+    });
+    menu.appendChild(item2);
+  }
+  const hasAny=Object.values(S.dctrReport.colFilters).some(v=>v);
+  if(hasAny){
+    const s2=dv('');s2.style.cssText='height:1px;background:var(--border);margin:3px 0';menu.appendChild(s2);
+    const item3=dv('scan-col-item');
+    item3.innerHTML=`<span style="font-size:13px">🧹</span><span>Șterge toate filtrele</span>`;
+    item3.addEventListener('click',()=>{
+      S.dctrReport.colFilters={};
+      document.querySelectorAll('input[data-dctr-col]').forEach(i=>i.value='');
+      const wrap=document.getElementById('dctr-table-wrap');
+      if(wrap){rebuildDctrBody(wrap);updateDctrBadge();}
+      menu.remove();
+    });
+    menu.appendChild(item3);
+  }
+  document.body.appendChild(menu);
+  const close=ev2=>{if(!menu.contains(ev2.target)){menu.remove();document.removeEventListener('mousedown',close);}};
+  setTimeout(()=>document.addEventListener('mousedown',close),10);
+}
+
+function exportDctrExcel(){
+  const rows=getDctrRows();
+  if(!rows.length){alert('Nu există date de exportat.');return;}
+  const cols=getActiveDctrCols();
+  const wsData=[cols.map(k=>DCTR_COLS[k]||k)];
+  for(const r of rows) wsData.push(cols.map(k=>r[k]??''));
+  const wb=XLSX.utils.book_new();
+  const ws=XLSX.utils.aoa_to_sheet(wsData);
+  ws['!cols']=cols.map(k=>({wch:Math.ceil((DCTR_COL_WIDTHS[k]||100)/6)}));
+  XLSX.utils.book_append_sheet(wb,ws,'Disciplina CTR');
+  XLSX.writeFile(wb,`Disciplina_CTR_${new Date().toISOString().slice(0,10)}.xlsx`);
 }
 
 function renderScanner(){
