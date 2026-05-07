@@ -1042,8 +1042,8 @@ button { font-family: var(--sans); }
 .dctr-table-wrap::-webkit-scrollbar-track{background:#f1f5f9}
 .dctr-table-wrap::-webkit-scrollbar-thumb{background:#94a3b8;border-radius:4px}
 .dctr-table-wrap::-webkit-scrollbar-corner{background:#f1f5f9}
-.dctr-table{border-collapse:collapse;min-width:max-content;font-size:11.5px;table-layout:fixed}
-.dctr-table th{position:sticky;top:0;z-index:10;background:#1e3a5f;padding:0;white-space:nowrap;user-select:none;border-right:1px solid #2d4e7a}
+.dctr-table{border-collapse:separate;border-spacing:0;min-width:max-content;font-size:11.5px;table-layout:fixed}
+.dctr-table th{position:sticky;top:0;z-index:10;background:#1e3a5f;padding:0;white-space:nowrap;user-select:none;border-right:1px solid #2d4e7a;box-shadow:0 2px 0 0 #2d4e7a}
 .dctr-table th:last-child{border-right:none}
 .dctr-table th.sortable:hover{background:#243f69;cursor:pointer}
 .dctr-th-inner{display:flex;flex-direction:column;min-width:0}
@@ -1072,6 +1072,26 @@ button { font-family: var(--sans); }
 .dctr-empty-icon{font-size:40px}
 .dctr-empty-msg{font-size:13px;font-weight:600}
 .dctr-empty-sub{font-size:11px;text-align:center;max-width:400px;line-height:1.6}
+
+/* ─── DISCIPLINA CTR STATISTICI ─── */
+.dctr-stats-panel{background:#fff;border-bottom:2px solid var(--border);padding:12px 16px;flex-shrink:0}
+.dctr-stats-header{display:flex;align-items:center;justify-content:space-between;cursor:pointer;user-select:none}
+.dctr-stats-title{font-size:11px;font-weight:700;color:var(--text2);text-transform:uppercase;letter-spacing:.07em;display:flex;align-items:center;gap:7px}
+.dctr-stats-toggle{font-size:11px;color:var(--text3);transition:transform .2s}
+.dctr-stats-body{display:grid;grid-template-columns:repeat(auto-fill,minmax(260px,1fr));gap:10px;margin-top:10px}
+.dctr-stat-card{background:#f8f9fb;border:1px solid var(--border);border-radius:8px;padding:10px 14px}
+.dctr-stat-card-title{font-size:9.5px;font-weight:700;color:var(--text3);text-transform:uppercase;letter-spacing:.07em;margin-bottom:8px}
+.dctr-stat-row{display:flex;justify-content:space-between;align-items:center;padding:2px 0;font-size:11px;border-bottom:1px solid #f1f5f9}
+.dctr-stat-row:last-child{border-bottom:none}
+.dctr-stat-key{color:var(--text2);max-width:170px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.dctr-stat-val{font-weight:700;font-size:12px;flex-shrink:0;margin-left:8px}
+.dctr-stat-val.red{color:#dc2626}
+.dctr-stat-val.warn{color:#ca8a04}
+.dctr-stat-val.green{color:#15803d}
+.dctr-kpi-row{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:8px}
+.dctr-kpi{background:#fff;border:1px solid var(--border);border-radius:7px;padding:8px 14px;text-align:center;min-width:90px}
+.dctr-kpi-val{font-size:20px;font-weight:800;color:var(--accent)}
+.dctr-kpi-lbl{font-size:9px;font-weight:600;color:var(--text3);text-transform:uppercase;letter-spacing:.06em;margin-top:2px}
 </style>
 </head>
 <body>
@@ -6311,25 +6331,143 @@ function renderDctrTab(){
   const g4=dv('dctr-toolbar-group');
   g4.appendChild(sp('dctr-toolbar-label','Zoom:'));
   const zc=dv('scan-zoom-ctrl');
-  const zm=el('button');zm.textContent='−';zm.addEventListener('click',()=>{rs.zoom=Math.max(60,rs.zoom-10);tableWrap.style.fontSize=(rs.zoom/100*11.5)+'px';zs.textContent=rs.zoom+'%';});
+  const applyDctrZoom=pct=>{const tbl=document.getElementById('dctr-tbl');if(tbl)tbl.style.zoom=(pct/100).toString();};
+  const zm=el('button');zm.textContent='−';zm.addEventListener('click',()=>{rs.zoom=Math.max(60,rs.zoom-10);applyDctrZoom(rs.zoom);zs.textContent=rs.zoom+'%';});
   const zs=sp('scan-zoom-pct','');zs.textContent=rs.zoom+'%';
-  const zp=el('button');zp.textContent='+';zp.addEventListener('click',()=>{rs.zoom=Math.min(160,rs.zoom+10);tableWrap.style.fontSize=(rs.zoom/100*11.5)+'px';zs.textContent=rs.zoom+'%';});
+  const zp=el('button');zp.textContent='+';zp.addEventListener('click',()=>{rs.zoom=Math.min(160,rs.zoom+10);applyDctrZoom(rs.zoom);zs.textContent=rs.zoom+'%';});
   const z100=el('button');z100.textContent='100%';z100.style.cssText='width:auto;padding:0 7px;font-size:10px';
-  z100.addEventListener('click',()=>{rs.zoom=100;tableWrap.style.fontSize='11.5px';zs.textContent='100%';});
+  z100.addEventListener('click',()=>{rs.zoom=100;applyDctrZoom(100);zs.textContent='100%';});
   zc.appendChild(zm);zc.appendChild(zs);zc.appendChild(zp);zc.appendChild(z100);
   g4.appendChild(zc);tb.appendChild(g4);
   page.appendChild(tb);
 
+  // ── Statistics panel ──
+  const statsPanel=buildDctrStatsPanel();
+  page.appendChild(statsPanel);
+
   // ── Table ──
   const tableWrap=dv('dctr-table-wrap');
   tableWrap.id='dctr-table-wrap';
-  tableWrap.style.fontSize=(rs.zoom/100*11.5)+'px';
   page.appendChild(tableWrap);
   buildDctrTable(tableWrap);
   updateDctrBadge();
+  if(rs.zoom!==100) setTimeout(()=>applyDctrZoom(rs.zoom),10);
   return page;
 }
 
+
+function buildDctrStatsPanel(){
+  const data=S.dctrData||[];
+  const panel=dv('dctr-stats-panel');
+  const hdr=dv('dctr-stats-header');
+  const title=dv('dctr-stats-title');
+  title.innerHTML='📊 Statistici Disciplina CTR <span style="font-weight:400;color:var(--text3)">('+data.length+' înreg. totale)</span>';
+  const toggle=sp('dctr-stats-toggle','▾');
+  hdr.appendChild(title);hdr.appendChild(toggle);
+  panel.appendChild(hdr);
+
+  const body=dv('dctr-stats-body');
+  body.id='dctr-stats-body';
+  let open=true;
+  hdr.addEventListener('click',()=>{
+    open=!open;
+    body.style.display=open?'grid':'none';
+    toggle.style.transform=open?'':'rotate(-90deg)';
+  });
+
+  if(!data.length){
+    const empty=dv('');empty.style.cssText='font-size:11px;color:var(--text3);padding:6px 0';
+    empty.textContent='Nicio înregistrare în baza de date.';
+    body.appendChild(empty);panel.appendChild(body);return panel;
+  }
+
+  // ── KPIs ──
+  const kpiRow=dv('dctr-kpi-row');
+  const clients=new Set(data.map(r=>r.custNo)).size;
+  const items=new Set(data.map(r=>r.itemNo)).size;
+  const orders=new Set(data.map(r=>r.custOrderNo)).size;
+  const avgLT=(data.reduce((s,r)=>s+(r.minDiffDays||0),0)/data.length).toFixed(1);
+  const critical=data.filter(r=>(r.minDiffDays||0)<=0).length;
+  [
+    {v:data.length, l:'Înregistrări'},
+    {v:orders,      l:'Comenzi unice'},
+    {v:clients,     l:'Clienți'},
+    {v:items,       l:'Produse'},
+    {v:avgLT+' z',  l:'Lead Time mediu'},
+    {v:critical,    l:'Urgențe (≤0 zile)', cls:critical>0?'red':'green'},
+  ].forEach(({v,l,cls})=>{
+    const k=dv('dctr-kpi');
+    const kv=sp('dctr-kpi-val',String(v));
+    if(cls) kv.style.color=cls==='red'?'#dc2626':'#15803d';
+    k.appendChild(kv);k.appendChild(sp('dctr-kpi-lbl',l));kpiRow.appendChild(k);
+  });
+  body.appendChild(kpiRow);
+
+  // ── Top 10 clienți după nr. comenzi ──
+  const byClient=new Map();
+  data.forEach(r=>{const k=r.custName||r.custNo||'—';byClient.set(k,(byClient.get(k)||0)+1);});
+  const clientCard=buildDctrStatCard('Top clienți (nr. comenzi)',
+    [...byClient.entries()].sort((a,b)=>b[1]-a[1]).slice(0,8));
+  body.appendChild(clientCard);
+
+  // ── Distribuție Lead Time ──
+  const ltBuckets={'≤0 zile':0,'1-3 zile':0,'4-7 zile':0,'8-13 zile':0};
+  data.forEach(r=>{
+    const d=r.minDiffDays||0;
+    if(d<=0) ltBuckets['≤0 zile']++;
+    else if(d<=3) ltBuckets['1-3 zile']++;
+    else if(d<=7) ltBuckets['4-7 zile']++;
+    else ltBuckets['8-13 zile']++;
+  });
+  const ltCard=buildDctrStatCard('Distribuție Lead Time',
+    Object.entries(ltBuckets).map(([k,v])=>[k,v]));
+  body.appendChild(ltCard);
+
+  // ── Top produse ──
+  const byItem=new Map();
+  data.forEach(r=>{const k=r.itemNo||'—';byItem.set(k,(byItem.get(k)||0)+1);});
+  const itemCard=buildDctrStatCard('Top produse (nr. apariții)',
+    [...byItem.entries()].sort((a,b)=>b[1]-a[1]).slice(0,8));
+  body.appendChild(itemCard);
+
+  // ── Evoluție lunară ──
+  const byMonth=new Map();
+  data.forEach(r=>{
+    const d=r.entryDt||r.savedAt||'';
+    // Extract YYYY-MM from dd.mm.yyyy or yyyy-mm-dd
+    let ym='—';
+    const m1=d.match(/^(\d{2})\.(\d{2})\.(\d{4})/);
+    const m2=d.match(/^(\d{4})-(\d{2})/);
+    if(m1) ym=`${m1[3]}-${m1[2]}`;
+    else if(m2) ym=`${m2[1]}-${m2[2]}`;
+    byMonth.set(ym,(byMonth.get(ym)||0)+1);
+  });
+  const monthCard=buildDctrStatCard('Distribuție lunară (Entry Date)',
+    [...byMonth.entries()].sort((a,b)=>a[0].localeCompare(b[0])));
+  body.appendChild(monthCard);
+
+  panel.appendChild(body);
+  return panel;
+}
+
+function buildDctrStatCard(title, entries){
+  const card=dv('dctr-stat-card');
+  card.appendChild(sp('dctr-stat-card-title',title));
+  const total=entries.reduce((s,[,v])=>s+v,0)||1;
+  entries.forEach(([k,v])=>{
+    const row=dv('dctr-stat-row');
+    const pct=Math.round(v/total*100);
+    const key=sp('dctr-stat-key',String(k));key.title=String(k);
+    // Mini bar
+    const barWrap=dv('');barWrap.style.cssText='flex:1;height:6px;background:#f1f5f9;border-radius:3px;overflow:hidden;margin:0 8px';
+    const barFill=dv('');barFill.style.cssText=`height:100%;width:${pct}%;background:var(--accent);border-radius:3px`;
+    barWrap.appendChild(barFill);
+    const val=sp('dctr-stat-val',String(v));
+    row.appendChild(key);row.appendChild(barWrap);row.appendChild(val);
+    card.appendChild(row);
+  });
+  return card;
+}
 function buildDctrTable(wrap){
   wrap.innerHTML='';
   const rs=S.dctrReport;
