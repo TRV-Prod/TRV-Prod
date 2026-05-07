@@ -6034,8 +6034,8 @@ function extractDctrFromOB(obRows){
     const requestDt= parseDctrDate(r['Request dt']);
     if(!entryDt) continue;
     const diffs=[];
-    if(confirmDt) diffs.push(Math.abs(Math.round((confirmDt-entryDt)/86400000)));
-    if(requestDt) diffs.push(Math.abs(Math.round((requestDt-entryDt)/86400000)));
+    if(confirmDt) diffs.push(Math.round((confirmDt-entryDt)/86400000));
+    if(requestDt) diffs.push(Math.round((requestDt-entryDt)/86400000));
     if(!diffs.length) continue;
     const minDiff=Math.min(...diffs);
     if(minDiff>=14) continue;
