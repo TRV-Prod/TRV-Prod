@@ -5264,22 +5264,25 @@ function addScanHistory(code,name){
 
 // ── Datetime & time formatters for scan data ──
 function fmtScanDt(val){
+  // Excel dates have no timezone. SheetJS parses them as UTC-based Date objects.
+  // Using getUTC* methods returns the original Excel value regardless of local timezone.
   if(val==null||val==='') return '—';
   if(val instanceof Date){
-    const d=val;
-    return `${d.getDate()}.${d.getMonth()+1}.${d.getFullYear()} ${String(d.getHours()).padStart(2,'0')}:${String(d.getMinutes()).padStart(2,'0')}:${String(d.getSeconds()).padStart(2,'0')}`;
+    return `${val.getUTCDate()}.${val.getUTCMonth()+1}.${val.getUTCFullYear()} `+
+      `${String(val.getUTCHours()).padStart(2,'0')}:${String(val.getUTCMinutes()).padStart(2,'0')}:${String(val.getUTCSeconds()).padStart(2,'0')}`;
   }
   if(typeof val==='number'&&val>1){
+    // Serial number fallback — treat as UTC directly
     const d=new Date(Math.round((val-25569)*86400*1000));
-    const local=new Date(d.getTime()-d.getTimezoneOffset()*60000);
-    return `${local.getUTCDate()}.${local.getUTCMonth()+1}.${local.getUTCFullYear()} ${String(local.getUTCHours()).padStart(2,'0')}:${String(local.getUTCMinutes()).padStart(2,'0')}:${String(local.getUTCSeconds()).padStart(2,'0')}`;
+    return `${d.getUTCDate()}.${d.getUTCMonth()+1}.${d.getUTCFullYear()} `+
+      `${String(d.getUTCHours()).padStart(2,'0')}:${String(d.getUTCMinutes()).padStart(2,'0')}:${String(d.getUTCSeconds()).padStart(2,'0')}`;
   }
   return String(val);
 }
 function fmtScanTime(val){
   if(val==null||val==='') return '—';
   let totalSec=0;
-  if(val instanceof Date){totalSec=val.getHours()*3600+val.getMinutes()*60+val.getSeconds();}
+  if(val instanceof Date){totalSec=val.getUTCHours()*3600+val.getUTCMinutes()*60+val.getUTCSeconds();}
   else if(typeof val==='number'){totalSec=Math.round(val*86400);}
   else return String(val);
   const h=Math.floor(totalSec/3600);
@@ -5294,8 +5297,9 @@ function fmtTrDate(val){
   return String(val);
 }
 function scanTimeToMin(val){
+  // Use getUTC* to avoid timezone shifts on time-only values
   if(val==null||val==='') return 0;
-  if(val instanceof Date) return (val.getHours()*3600+val.getMinutes()*60+val.getSeconds())/60;
+  if(val instanceof Date) return (val.getUTCHours()*3600+val.getUTCMinutes()*60+val.getUTCSeconds())/60;
   if(typeof val==='number') return Math.round(val*86400)/60;
   return 0;
 }
