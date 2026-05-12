@@ -6386,11 +6386,14 @@ function buildDctrStatsPanel(data){
 
   const body=dv('dctr-stats-body');
   body.id='dctr-stats-body';
-  let open=true;
+  let open=false;
+  body.style.display='none';
+  toggle.style.transform='rotate(-90deg)';
   hdr.addEventListener('click',()=>{
     open=!open;
     body.style.display=open?'grid':'none';
     toggle.style.transform=open?'':'rotate(-90deg)';
+    if(open) refreshDctrStats();  // rebuild on expand to get fresh data
   });
 
   if(!data.length){
