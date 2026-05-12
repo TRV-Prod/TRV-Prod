@@ -6372,12 +6372,14 @@ function renderDctrTab(){
 }
 
 
-function buildDctrStatsPanel(){
-  const data=S.dctrData||[];
+function buildDctrStatsPanel(data){
+  data=data||getDctrRows();
   const panel=dv('dctr-stats-panel');
   const hdr=dv('dctr-stats-header');
   const title=dv('dctr-stats-title');
-  title.innerHTML='📊 Statistici Disciplina CTR <span style="font-weight:400;color:var(--text3)">('+data.length+' înreg. totale)</span>';
+  const total=(S.dctrData||[]).length;
+  const isFiltered=data.length!==total;
+  title.innerHTML='📊 Statistici Disciplina CTR <span style="font-weight:400;color:var(--text3)">('+data.length+(isFiltered?' filtrate din '+total+' totale':' înreg. totale')+')</span>';
   const toggle=sp('dctr-stats-toggle','▾');
   hdr.appendChild(title);hdr.appendChild(toggle);
   panel.appendChild(hdr);
@@ -6491,6 +6493,16 @@ function buildDctrStatCard(title, entries){
   });
   return card;
 }
+
+function refreshDctrStats(){
+  const body=document.getElementById('dctr-stats-body');
+  if(!body||body.style.display==='none') return;  // collapsed — skip
+  const panel=body.parentElement;
+  // Rebuild only the stats body, keep header intact
+  const newPanel=buildDctrStatsPanel(getDctrRows());
+  const newBody=newPanel.querySelector('#dctr-stats-body');
+  if(newBody) panel.replaceChild(newBody, body);
+}
 function buildDctrTable(wrap){
   wrap.innerHTML='';
   const rs=S.dctrReport;
@@ -6603,6 +6615,7 @@ function rebuildDctrBody(wrap){
   const old=tbl.querySelector('tbody');
   const nb=buildDctrTbody(cols,widths);
   if(old)tbl.replaceChild(nb,old);else tbl.appendChild(nb);
+  refreshDctrStats();
 }
 
 function showDctrCtxMenu(ev,colKey,cellText){
