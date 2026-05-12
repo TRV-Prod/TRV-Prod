@@ -1092,6 +1092,11 @@ button { font-family: var(--sans); }
 .dctr-kpi{background:#fff;border:1px solid var(--border);border-radius:7px;padding:8px 14px;text-align:center;min-width:90px}
 .dctr-kpi-val{font-size:20px;font-weight:800;color:var(--accent)}
 .dctr-kpi-lbl{font-size:9px;font-weight:600;color:var(--text3);text-transform:uppercase;letter-spacing:.06em;margin-top:2px}
+
+/* ─── OB FORECAST ROWS (CO_no starts with 9999) ─── */
+.ob-forecast-row td{background:#fffbeb!important}
+.ob-forecast-row:hover td{background:#fef3c7!important}
+.ob-forecast-badge{display:inline-block;background:#f59e0b;color:#fff;font-size:9px;font-weight:800;padding:1px 5px;border-radius:3px;margin-left:4px;vertical-align:middle;letter-spacing:.04em}
 </style>
 </head>
 <body>
@@ -3791,6 +3796,8 @@ function _buildObTbody(){
   for(const row of rows){
     const tr=el('tr');
     const itemNo=str(row['Item_no']);
+    const isForecast=str(row['CO_no']||'').startsWith('9999');
+    if(isForecast) tr.classList.add('ob-forecast-row');
     visCols.forEach(col=>{
       const td=el('td');td.setAttribute('data-col',col);
       td.style.width=(f.colWidths[col]||120)+'px';
@@ -3838,7 +3845,12 @@ function _buildObTbody(){
         const n=parseFloat(String(v||'0').replace(',','.'));
         td.appendChild(sp(`ob-num${n>0?' pos':' zero'}`,isNaN(n)?String(v||'—'):(col==='Sales price EUR'?n.toFixed(2):Number.isInteger(n)?n.toFixed(0):n.toFixed(2))));
       } else {
-        td.textContent=v!=null?String(v):'—';
+        if(col==='Customer_name'&&isForecast){
+          td.textContent=v!=null?String(v):'—';
+          td.appendChild(sp('ob-forecast-badge','F'));
+        } else {
+          td.textContent=v!=null?String(v):'—';
+        }
       }
       tr.appendChild(td);
     });
