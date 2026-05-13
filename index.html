@@ -4404,6 +4404,7 @@ function buildNecTbody(cols, NUM){
     const tr=el('tr');
     cols.forEach(c=>{
       const td=el('td');
+      td.setAttribute('data-col',c.key);
       if(c.key==='group') td.textContent=r.group||'';
       else if(c.key==='matNo'){td.appendChild(sp('nec-mat-code',r.matNo));}
       else if(c.key==='name') td.textContent=r.name||'';
@@ -6739,12 +6740,12 @@ function getCtxMenuConfig(filterAttr, colKey){
       allInputSel:'input[data-nec-filter]',
     },
     'data-vs-filter': {   // Verificare Stocuri
-      getFilters: ()=>S.vsReport?.colFilters||{},
-      setFilter:  (k,v)=>{if(S.vsReport)S.vsReport.colFilters[k]=v;},
-      clearFilter:(k)=>{if(S.vsReport)delete S.vsReport.colFilters[k];},
-      clearAll:   ()=>{if(S.vsReport)S.vsReport.colFilters={};},
+      getFilters: ()=>S.stocVerifFilter?.colFilters||{},
+      setFilter:  (k,v)=>{if(!S.stocVerifFilter.colFilters)S.stocVerifFilter.colFilters={};S.stocVerifFilter.colFilters[k]=v;},
+      clearFilter:(k)=>{if(S.stocVerifFilter)delete S.stocVerifFilter.colFilters[k];},
+      clearAll:   ()=>{if(S.stocVerifFilter)S.stocVerifFilter.colFilters={};},
       rebuild:    ()=>{if(S.tab==='rapoarte')render();},
-      inputSel:   `input[data-vs-filter="${colKey}"]`,
+      inputSel:   `input[data-vs-filter="${'${colKey}'}"]`,
       allInputSel:'input[data-vs-filter]',
     },
     'data-plan-filter': { // Planificare
@@ -6838,21 +6839,18 @@ document.addEventListener('contextmenu', ev=>{
   const colKey=td.getAttribute('data-col');
   const cellText=(td.textContent||'').trim();
 
-  // Determine which filter attr this table uses
-  const filterInput=table.querySelector(`th[data-col="${colKey}"] input`)
-    || table.querySelector(`input[data-col="${colKey}"]`);
-
-  // Also search in thead by checking data attributes on inputs near this column
+  // Find which filter attr this table uses by looking for filter inputs in the table
   const allAttrs=['data-stk-filter','data-col-filter','data-nec-filter','data-vs-filter','data-plan-filter','data-pwc-filter'];
   let foundAttr=null;
   for(const attr of allAttrs){
-    if(table.querySelector(`input[${attr}]`)||document.querySelector(`input[${attr}="${colKey}"]`)){foundAttr=attr;break;}
+    // Check if this table has ANY input with this attr (for the right column or any column)
+    if(table.querySelector(`input[${attr}]`)){foundAttr=attr;break;}
   }
   if(!foundAttr) return;  // not a filterable table
 
   // Get column label from th
   const th=table.querySelector(`th[data-col="${colKey}"]`);
-  const colLabel=th?(th.querySelector('span,b,div')?.textContent||th.textContent||colKey).trim().replace(/[↑↓]/g,'').trim():colKey;
+  const colLabel=th?((th.querySelector('.scan-th-lbl,.dctr-th-lbl,span:not(.dctr-th-sort):not(.scan-th-sort)')?.textContent||th.querySelector('div')?.textContent||th.textContent||colKey)).trim().replace(/[↑↓▾▴]/g,'').trim():colKey;
 
   ev.preventDefault();
   showUniversalCtxMenu(ev, colKey, cellText, foundAttr, colLabel);
@@ -8085,7 +8083,7 @@ function renderVerificareStocuriPanel(container){
 
   // Print / PDF
   const printBtn=el('button','tbtn');printBtn.textContent='🖨 Printeaza / PDF';
-  printBtn.addEventListener('click',()=>printVerificareStocuri(allData,f,LABELS));
+  printBtn.addEventListener('click',()=>printVerificareStocuri(allData,f,LABELS,getFilteredRows));
   tb.appendChild(printBtn);
 
   // Export Excel
@@ -8171,6 +8169,7 @@ function renderVerificareStocuriPanel(container){
         document.addEventListener('mousemove',mm);document.addEventListener('mouseup',mu);
       });
       inner.appendChild(rh);th.appendChild(inner);
+      th.setAttribute('data-col',colId);  // needed for universal ctx menu
       th.setAttribute('draggable','true');
       th.addEventListener('dragstart',e=>{dragSrc=colId;e.dataTransfer.effectAllowed='move';});
       th.addEventListener('dragover',e=>{e.preventDefault();th.classList.add('plan-drag-over');});
@@ -8214,6 +8213,7 @@ function renderVerificareStocuriPanel(container){
       const tr=el('tr');
       vc.forEach(colId=>{
         const td=el('td');td.style.width=(f.colWidths[colId]||120)+'px';
+        td.setAttribute('data-col',colId);
         td.style.cssText+='overflow:hidden;padding:4px 8px;border-bottom:1px solid var(--border2);border-right:1px solid var(--border2);vertical-align:middle;font-size:12px';
         if(colId==='matNo'){td.appendChild(sp('stk-code',matNo));}
         else if(colId==='matName'){td.textContent=m.matName;td.title=m.matName;}
@@ -8292,17 +8292,9 @@ function renderVerificareStocuriPanel(container){
   rebuild();
 }
 
-function printVerificareStocuri(allData,f,LABELS){
-  const filteredFn=()=>{
-    return [...allData.entries()].filter(([matNo,m])=>{
-      if(f.fpFilter!=='all'&&!m.fpList.includes(f.fpFilter))return false;
-      if(f.tipFilter!=='all'&&m.matType!==f.tipFilter)return false;
-      const cf=f.colFilters||{};
-      if(cf.matNo&&!matNo.toLowerCase().includes(cf.matNo.toLowerCase()))return false;
-      if(cf.matName&&!m.matName.toLowerCase().includes(cf.matName.toLowerCase()))return false;
-      return true;
-    });
-  };
+function printVerificareStocuri(allData,f,LABELS,getFilteredRowsFn){
+  // Use closure's getFilteredRows() — includes ALL active colFilters
+  const filteredFn=getFilteredRowsFn||(()=>[...allData.entries()]);
   const rows=filteredFn();
   const vc=f.colOrder.filter(c=>f.visibleCols.has(c));
   const printWin=window.open('','_blank','width=1100,height=800');
