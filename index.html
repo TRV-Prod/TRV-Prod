@@ -2129,6 +2129,15 @@ function mkOpsGroup(opsId, ops, depth, color, matNo){
       const body=el('div','n-inner');
       body.appendChild(el('div','op-tri'));
       body.appendChild(sp('op-name',str(op['Ope name']||op['Ope descr']||'—')));
+      // For Subcontracting ops: show Text_line1 inline (what is being subcontracted)
+      const _opNameLow=str(op['Ope name']||op['Ope descr']||'').toLowerCase();
+      const _textLine=str(op['Text_line1']||'').trim();
+      if(_opNameLow==='subcontracting'&&_textLine){
+        const _note=el('span');
+        _note.style.cssText='margin-left:6px;font-size:10px;font-style:italic;color:#6366f1;font-weight:500';
+        _note.textContent='('+_textLine+')';
+        body.appendChild(_note);
+      }
       const ot=el('span','op-time');
       ot.innerHTML=`Run tm: <b>${fmtT(op['Run time'])}</b> min,&nbsp;Setup: <b>${fmtT(op['Setup time'])}</b> min`;
       body.appendChild(ot);
