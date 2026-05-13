@@ -1097,6 +1097,13 @@ button { font-family: var(--sans); }
 .ob-forecast-row td{background:#fffbeb!important}
 .ob-forecast-row:hover td{background:#fef3c7!important}
 .ob-forecast-badge{display:inline-block;background:#f59e0b;color:#fff;font-size:9px;font-weight:800;padding:1px 5px;border-radius:3px;margin-left:4px;vertical-align:middle;letter-spacing:.04em}
+
+/* ─── UNIVERSAL CTX MENU ─── */
+.u-ctx-menu{position:fixed;z-index:99999;background:#fff;border:1px solid var(--border);border-radius:7px;box-shadow:0 6px 24px rgba(0,0,0,.18);padding:4px 0;min-width:230px;user-select:none}
+.u-ctx-item{display:flex;align-items:center;gap:9px;padding:7px 14px;font-size:11.5px;color:var(--text1);cursor:pointer;transition:background .1s}
+.u-ctx-item:hover{background:#eff6ff;color:var(--accent)}
+.u-ctx-item .u-ctx-icon{font-size:13px;width:16px;text-align:center;flex-shrink:0}
+.u-ctx-sep{height:1px;background:var(--border);margin:3px 0}
 </style>
 </head>
 <body>
@@ -6692,6 +6699,164 @@ function exportDctrExcel(){
   XLSX.writeFile(wb,`Disciplina_CTR_${new Date().toISOString().slice(0,10)}.xlsx`);
 }
 
+
+/* ═══════════════════════════════════════════════════════════════
+   UNIVERSAL RIGHT-CLICK CONTEXT MENU
+   Detects which module's table was right-clicked by checking
+   the filter-input data attribute on the corresponding th.
+═══════════════════════════════════════════════════════════════ */
+
+// Map from data-*-filter attribute → {getFilters, setFilter, clearFilter, clearAll, rebuild, labelFor}
+function getCtxMenuConfig(filterAttr, colKey){
+  const configs = {
+    'data-stk-filter': {
+      getFilters: ()=>S.stockFilter.colFilters||{},
+      setFilter:  (k,v)=>{if(!S.stockFilter.colFilters)S.stockFilter.colFilters={};S.stockFilter.colFilters[k]=v;},
+      clearFilter:(k)=>{if(S.stockFilter.colFilters)delete S.stockFilter.colFilters[k];},
+      clearAll:   ()=>{S.stockFilter.colFilters={};},
+      rebuild:    ()=>{const w=document.getElementById('stk-table-wrap');if(w){const fn=window._rebuildStockTable;if(fn)fn();else{const t=w.querySelector('table');if(t)t.dispatchEvent(new Event('rebuild'));}}
+                       // Fallback: find rebuildTable closure via re-render
+                       if(S.tab==='stocuri') render();},
+      inputSel:   `input[data-stk-filter="${colKey}"]`,
+      allInputSel:'input[data-stk-filter]',
+    },
+    'data-col-filter': {  // OrderBook
+      getFilters: ()=>S.obFilter.colFilters||{},
+      setFilter:  (k,v)=>{S.obFilter.colFilters[k]=v;},
+      clearFilter:(k)=>{delete S.obFilter.colFilters[k];},
+      clearAll:   ()=>{S.obFilter.colFilters={};},
+      rebuild:    ()=>{const w=document.getElementById('ob-table-wrap');if(w){buildObTable(w);updateObCount();}},
+      inputSel:   `input[data-col-filter="${colKey}"]`,
+      allInputSel:'input[data-col-filter]',
+    },
+    'data-nec-filter': {  // Necesar materii prime
+      getFilters: ()=>S.necReport.colFilters||{},
+      setFilter:  (k,v)=>{S.necReport.colFilters[k]=v;},
+      clearFilter:(k)=>{delete S.necReport.colFilters[k];},
+      clearAll:   ()=>{S.necReport.colFilters={};},
+      rebuild:    ()=>{const w=document.getElementById('nec-table-wrap')||document.querySelector('.nec-table-wrap');if(w){rebuildNecBody(w);updateNecInfo();}},
+      inputSel:   `input[data-nec-filter="${colKey}"]`,
+      allInputSel:'input[data-nec-filter]',
+    },
+    'data-vs-filter': {   // Verificare Stocuri
+      getFilters: ()=>S.vsReport?.colFilters||{},
+      setFilter:  (k,v)=>{if(S.vsReport)S.vsReport.colFilters[k]=v;},
+      clearFilter:(k)=>{if(S.vsReport)delete S.vsReport.colFilters[k];},
+      clearAll:   ()=>{if(S.vsReport)S.vsReport.colFilters={};},
+      rebuild:    ()=>{if(S.tab==='rapoarte')render();},
+      inputSel:   `input[data-vs-filter="${colKey}"]`,
+      allInputSel:'input[data-vs-filter]',
+    },
+    'data-plan-filter': { // Planificare
+      getFilters: ()=>S.planFilter?.colFilters||{},
+      setFilter:  (k,v)=>{if(!S.planFilter)S.planFilter={colFilters:{}};S.planFilter.colFilters[k]=v;},
+      clearFilter:(k)=>{if(S.planFilter)delete S.planFilter.colFilters[k];},
+      clearAll:   ()=>{if(S.planFilter)S.planFilter.colFilters={};},
+      rebuild:    ()=>{const w=document.getElementById('plan-table-wrap');if(w){rebuildPlanBody(w);}else if(S.tab==='planificare')render();},
+      inputSel:   `input[data-plan-filter="${colKey}"]`,
+      allInputSel:'input[data-plan-filter]',
+    },
+    'data-pwc-filter': {  // Programare WC
+      getFilters: ()=>S.pwcState?.colFilters||{},
+      setFilter:  (k,v)=>{if(!S.pwcState.colFilters)S.pwcState.colFilters={};S.pwcState.colFilters[k]=v;},
+      clearFilter:(k)=>{if(S.pwcState.colFilters)delete S.pwcState.colFilters[k];},
+      clearAll:   ()=>{if(S.pwcState.colFilters)S.pwcState.colFilters={};},
+      rebuild:    ()=>{const w=document.getElementById('pwc-table-wrap');if(w){rebuildPwcBody(w);}else if(S.tab==='pwc')render();},
+      inputSel:   `input[data-pwc-filter="${colKey}"]`,
+      allInputSel:'input[data-pwc-filter]',
+    },
+  };
+  return configs[filterAttr]||null;
+}
+
+function showUniversalCtxMenu(ev, colKey, cellText, filterAttr, colLabel){
+  // Remove any existing menus
+  document.getElementById('u-ctx-active')?.remove();
+  if(!cellText||cellText==='—'||cellText==='') return;
+
+  const cfg=getCtxMenuConfig(filterAttr, colKey);
+  if(!cfg) return;
+
+  const menu=dv('u-ctx-menu');menu.id='u-ctx-active';
+  menu.style.top=Math.min(ev.clientY, window.innerHeight-180)+'px';
+  menu.style.left=Math.min(ev.clientX, window.innerWidth-245)+'px';
+
+  // ── Filter by value ──
+  const item1=dv('u-ctx-item');
+  const displayText=cellText.length>32?cellText.slice(0,32)+'…':cellText;
+  item1.innerHTML=`<span class="u-ctx-icon">🔍</span><span>Filtrează <b>${colLabel}</b> = "<b>${displayText}</b>"</span>`;
+  item1.addEventListener('click',()=>{
+    cfg.setFilter(colKey, cellText);
+    const inp=document.querySelector(cfg.inputSel);
+    if(inp){inp.value=cellText;inp.dispatchEvent(new Event('input',{bubbles:true}));}
+    else cfg.rebuild();
+    menu.remove();
+  });
+  menu.appendChild(item1);
+
+  const filters=cfg.getFilters();
+  // ── Clear this column filter ──
+  if(filters[colKey]){
+    menu.appendChild(Object.assign(dv('u-ctx-sep'),{}));
+    const item2=dv('u-ctx-item');
+    item2.innerHTML=`<span class="u-ctx-icon">✕</span><span>Șterge filtrul pe <b>${colLabel}</b></span>`;
+    item2.addEventListener('click',()=>{
+      cfg.clearFilter(colKey);
+      const inp=document.querySelector(cfg.inputSel);
+      if(inp){inp.value='';inp.dispatchEvent(new Event('input',{bubbles:true}));}
+      else cfg.rebuild();
+      menu.remove();
+    });
+    menu.appendChild(item2);
+  }
+
+  // ── Clear ALL filters ──
+  const hasAny=Object.values(filters).some(v=>v);
+  if(hasAny){
+    menu.appendChild(Object.assign(dv('u-ctx-sep'),{}));
+    const item3=dv('u-ctx-item');
+    item3.innerHTML=`<span class="u-ctx-icon">🧹</span><span>Șterge toate filtrele</span>`;
+    item3.addEventListener('click',()=>{
+      cfg.clearAll();
+      document.querySelectorAll(cfg.allInputSel).forEach(i=>{i.value='';i.dispatchEvent(new Event('input',{bubbles:true}));});
+      menu.remove();
+    });
+    menu.appendChild(item3);
+  }
+
+  document.body.appendChild(menu);
+  const close=e=>{if(!menu.contains(e.target)){menu.remove();document.removeEventListener('mousedown',close);}};
+  setTimeout(()=>document.addEventListener('mousedown',close),10);
+}
+
+// ── Global delegation: right-click on any td[data-col] inside a module table ──
+document.addEventListener('contextmenu', ev=>{
+  const td=ev.target.closest('td[data-col]');
+  if(!td) return;
+  const table=td.closest('table');
+  if(!table) return;
+  const colKey=td.getAttribute('data-col');
+  const cellText=(td.textContent||'').trim();
+
+  // Determine which filter attr this table uses
+  const filterInput=table.querySelector(`th[data-col="${colKey}"] input`)
+    || table.querySelector(`input[data-col="${colKey}"]`);
+
+  // Also search in thead by checking data attributes on inputs near this column
+  const allAttrs=['data-stk-filter','data-col-filter','data-nec-filter','data-vs-filter','data-plan-filter','data-pwc-filter'];
+  let foundAttr=null;
+  for(const attr of allAttrs){
+    if(table.querySelector(`input[${attr}]`)||document.querySelector(`input[${attr}="${colKey}"]`)){foundAttr=attr;break;}
+  }
+  if(!foundAttr) return;  // not a filterable table
+
+  // Get column label from th
+  const th=table.querySelector(`th[data-col="${colKey}"]`);
+  const colLabel=th?(th.querySelector('span,b,div')?.textContent||th.textContent||colKey).trim().replace(/[↑↓]/g,'').trim():colKey;
+
+  ev.preventDefault();
+  showUniversalCtxMenu(ev, colKey, cellText, foundAttr, colLabel);
+});
 function renderScanner(){
   const page=dv('scanner-page');
 
