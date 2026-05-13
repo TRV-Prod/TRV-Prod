@@ -1104,6 +1104,15 @@ button { font-family: var(--sans); }
 .u-ctx-item:hover{background:#eff6ff;color:var(--accent)}
 .u-ctx-item .u-ctx-icon{font-size:13px;width:16px;text-align:center;flex-shrink:0}
 .u-ctx-sep{height:1px;background:var(--border);margin:3px 0}
+
+/* ─── NECESAR STATUS COLUMN ─── */
+.nec-status-critic{display:inline-flex;align-items:center;gap:4px;padding:2px 8px;border-radius:10px;font-size:10px;font-weight:800;background:#fee2e2;color:#991b1b;border:1.5px solid #fca5a5;white-space:nowrap}
+.nec-status-warn{display:inline-flex;align-items:center;gap:4px;padding:2px 8px;border-radius:10px;font-size:10px;font-weight:800;background:#fef9c3;color:#854d0e;border:1.5px solid #fde047;white-space:nowrap}
+.nec-status-ok{display:inline-flex;align-items:center;gap:4px;padding:2px 8px;border-radius:10px;font-size:10px;font-weight:700;background:#dcfce7;color:#15803d;border:1.5px solid #86efac;white-space:nowrap}
+.nec-row-critic td{background:#fff5f5!important}
+.nec-row-critic:hover td{background:#fee2e2!important}
+.nec-row-warn td{background:#fffdf0!important}
+.nec-row-warn:hover td{background:#fef9c3!important}
 </style>
 </head>
 <body>
@@ -4133,6 +4142,11 @@ function getNecRows(){
     const dir=rs.sortDir;
     if(rs.sortCol==='group') return dir*a.group.localeCompare(b.group)||a.matNo.localeCompare(b.matNo);
     if(rs.sortCol==='needed02w') return dir*(b.needed02w-a.needed02w);
+    if(rs.sortCol==='totalNeeded') return dir*((b.needed02w+b.needed34w)-(a.needed02w+a.needed34w));
+    if(rs.sortCol==='status'){
+      const statusRank=r=>(r.onHand||0)<=(r.needed02w||0)?0:(r.onHand||0)<(r.needed02w||0)+(r.needed34w||0)?1:2;
+      return dir*(statusRank(a)-statusRank(b));
+    }
     if(rs.sortCol==='needed34w') return dir*(b.needed34w-a.needed34w);
     if(rs.sortCol==='netNeeded') return dir*(b.netNeeded-a.netNeeded);
     if(rs.sortCol==='onHand') return dir*(b.onHand-a.onHand);
@@ -4147,11 +4161,12 @@ function fmtN2(n){return Number.isInteger(n)?n.toLocaleString('ro-RO'):n.toLocal
 function exportNecExcel(){
   const rows = getNecRows();
   if(!rows.length){alert('Nu exista date de exportat.');return;}
-  const ws_data=[['Tip material','Cod material','Denumire','U/M','Necesar 0-2W','Necesar 3-4W','On Hand','WIP','Necesar net (dupa stoc)','Consumat in produse finale','Observatii']];
+  const ws_data=[['Tip material','Cod material','Denumire','U/M','Necesar 0-2W','Necesar 3-4W','Total Necesar','On Hand','WIP','Necesar net (dupa stoc)','Status','Consumat in produse finale','Observatii']];
   for(const r of rows){
     ws_data.push([
       r.group, r.matNo, r.name, r.unit,
-      r.needed02w, r.needed34w, r.onHand, r.wip, r.netNeeded,
+      r.needed02w, r.needed34w, (r.needed02w||0)+(r.needed34w||0), r.onHand, r.wip, r.netNeeded,
+      (r.onHand||0)<=(r.needed02w||0)?'CRITIC!':(r.onHand||0)<(r.needed02w||0)+(r.needed34w||0)?'Atentie!':'OK',
       r.fps.map(([fp,q])=>`${fp}: ${Math.round(q)}`).join('; '),
       S.reportObs[r.matNo]||'',
     ]);
@@ -4253,19 +4268,21 @@ function buildNecTable(wrap, panel){
   wrap.innerHTML='';
   const rs=S.necReport;
   const cols=[
-    {key:'group',     label:'Tip material',     w:165},
-    {key:'matNo',     label:'Cod material',      w:145},
-    {key:'name',      label:'Denumire',           w:210},
-    {key:'unit',      label:'U/M',               w:50},
-    {key:'needed02w', label:'Necesar 0-2W',      w:105},
-    {key:'needed34w', label:'Necesar 3-4W',      w:105},
-    {key:'onHand',    label:'On Hand',            w:95},
-    {key:'wip',       label:'WIP',               w:80},
-    {key:'netNeeded', label:'Necesar net',        w:105},
-    {key:'fps',       label:'Consumat in PF',     w:210},
-    {key:'obs',       label:'Observatii',         w:190},
+    {key:'group',        label:'Tip material',     w:165},
+    {key:'matNo',        label:'Cod material',      w:145},
+    {key:'name',         label:'Denumire',           w:210},
+    {key:'unit',         label:'U/M',               w:50},
+    {key:'needed02w',    label:'Necesar 0-2W',      w:105},
+    {key:'needed34w',    label:'Necesar 3-4W',      w:105},
+    {key:'totalNeeded',  label:'Total Necesar',      w:105},
+    {key:'onHand',       label:'On Hand',            w:95},
+    {key:'wip',          label:'WIP',               w:80},
+    {key:'netNeeded',    label:'Necesar net',        w:105},
+    {key:'status',       label:'Status',             w:90},
+    {key:'fps',          label:'Consumat in PF',     w:210},
+    {key:'obs',          label:'Observatii',         w:190},
   ];
-  const NUM=new Set(['needed02w','needed34w','onHand','wip','netNeeded']);
+  const NUM=new Set(['needed02w','needed34w','totalNeeded','onHand','wip','netNeeded']);
 
   const tbl=el('table','nec-table');
 
@@ -4409,6 +4426,25 @@ function buildNecTbody(cols, NUM){
       else if(c.key==='matNo'){td.appendChild(sp('nec-mat-code',r.matNo));}
       else if(c.key==='name') td.textContent=r.name||'';
       else if(c.key==='unit') td.textContent=r.unit||'';
+      else if(c.key==='totalNeeded'){
+        const n=(r.needed02w||0)+(r.needed34w||0);
+        td.appendChild(sp('nec-num',fmtN2(n)));
+      }
+      else if(c.key==='status'){
+        const total=(r.needed02w||0)+(r.needed34w||0);
+        const oh=r.onHand||0;
+        let badge;
+        if(oh<=( r.needed02w||0)){
+          badge=sp('nec-status-critic','🔴 CRITIC!');
+          tr.classList.add('nec-row-critic');
+        } else if(oh<total){
+          badge=sp('nec-status-warn','⚠ Atenție!');
+          tr.classList.add('nec-row-warn');
+        } else {
+          badge=sp('nec-status-ok','✓ OK');
+        }
+        td.appendChild(badge);
+      }
       else if(NUM.has(c.key)){
         const n=r[c.key]||0;
         const cls=c.key==='netNeeded'?(n>0?'nec-num need':'nec-num ok'):'nec-num';
@@ -4444,10 +4480,11 @@ function buildNecTbody(cols, NUM){
 function rebuildNecBody(wrap){
   const cols=[
     {key:'group',w:165},{key:'matNo',w:145},{key:'name',w:210},{key:'unit',w:50},
-    {key:'needed02w',w:105},{key:'needed34w',w:105},{key:'onHand',w:95},{key:'wip',w:80},
-    {key:'netNeeded',w:105},{key:'fps',w:210},{key:'obs',w:190},
+    {key:'needed02w',w:105},{key:'needed34w',w:105},{key:'totalNeeded',w:105},
+    {key:'onHand',w:95},{key:'wip',w:80},{key:'netNeeded',w:105},
+    {key:'status',w:90},{key:'fps',w:210},{key:'obs',w:190},
   ];
-  const NUM=new Set(['needed02w','needed34w','onHand','wip','netNeeded']);
+  const NUM=new Set(['needed02w','needed34w','totalNeeded','onHand','wip','netNeeded']);
   const tbl=wrap.querySelector('.nec-table');
   if(!tbl){buildNecTable(wrap);return;}
   const old=tbl.querySelector('tbody');
