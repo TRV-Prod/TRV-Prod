@@ -3083,8 +3083,8 @@ function renderFisiereTab(){
         const fileCrTs=file.lastModified||ts;  // file creation/modification date
         S.meta._fileCrTs=S.meta._fileCrTs||{};
         S.meta._fileCrTs[fc.key]=fileCrTs;
-        if(fc.key==='bom')applyBom(rows,ts);else if(fc.key==='bow')applyBow(rows,ts);else if(fc.key==='po')applyPo(rows,ts);else if(fc.key==='wcs'){applyWcSetup(rows,ts);rows._ts=ts;}else if(fc.key==='intransit'){applyInTransit(rows,ts);rows._ts=ts;}else if(fc.key==='shipping'){await dbSave(fc.key,{rows,ts});if(S.sbCfg&&S.session?.role==='admin'){try{await sbSaveData(fc.key,rows,ts);}catch(e){console.warn('Supabase shipping:',e);}}}
-        else if(fc.key==='scanari'){applyScanari(rows,ts);}else if(fc.key==='shipping'){applyShipping(rows,ts);}else applyOb(rows,ts);
+        if(fc.key==='bom')applyBom(rows,ts);else if(fc.key==='bow')applyBow(rows,ts);else if(fc.key==='po')applyPo(rows,ts);else if(fc.key==='wcs'){applyWcSetup(rows,ts);rows._ts=ts;}else if(fc.key==='intransit'){applyInTransit(rows,ts);rows._ts=ts;}else if(fc.key==='shipping'){applyShipping(rows,ts);await dbSave(fc.key,{rows,ts});if(S.sbCfg&&S.session?.role==='admin'){try{await sbSaveData(fc.key,rows,ts);}catch(e){console.warn('Supabase shipping:',e);}}}
+        else if(fc.key==='scanari'){applyScanari(rows,ts);}else applyOb(rows,ts);
         if(fc.key==='scanari'){
           // Large file: split by month in IDB, binary in Supabase
           lbl.innerHTML='';lbl.appendChild(el('span','spin-sm'));lbl.appendChild(document.createTextNode(' Se salveaza local...'));
