@@ -1113,52 +1113,6 @@ button { font-family: var(--sans); }
 .nec-row-critic:hover td{background:#fee2e2!important}
 .nec-row-warn td{background:#fffdf0!important}
 .nec-row-warn:hover td{background:#fef9c3!important}
-
-/* ─── SHIPPING TAB ─── */
-.ship-page{display:flex;flex-direction:column;height:100%;overflow:hidden;background:#f8f9fb}
-.ship-header{flex-shrink:0;background:#1e3a5f;color:#fff;padding:10px 20px;display:flex;align-items:center;gap:16px;flex-wrap:wrap;box-shadow:0 2px 6px rgba(0,0,0,.2)}
-.ship-header-title{font-size:14px;font-weight:800;letter-spacing:.05em;white-space:nowrap}
-.ship-cust-search{height:32px;padding:0 12px;border:none;border-radius:6px;font-size:12px;font-weight:600;background:rgba(255,255,255,.15);color:#fff;min-width:260px;outline:none}
-.ship-cust-search::placeholder{color:rgba(255,255,255,.5)}
-.ship-cust-search:focus{background:rgba(255,255,255,.25)}
-.ship-cust-drop{position:absolute;top:100%;left:0;right:0;background:#fff;border:1px solid var(--border);border-radius:6px;box-shadow:0 8px 24px rgba(0,0,0,.18);max-height:280px;overflow-y:auto;z-index:999}
-.ship-cust-opt{padding:8px 14px;font-size:12px;color:#1e293b;cursor:pointer;border-bottom:1px solid #f1f5f9}
-.ship-cust-opt:hover,.ship-cust-opt.active{background:#eff6ff;color:var(--accent)}
-.ship-nr-auto{height:32px;padding:0 12px;border:none;border-radius:6px;font-size:12px;background:rgba(255,255,255,.15);color:#fff;width:140px;outline:none}
-.ship-nr-auto::placeholder{color:rgba(255,255,255,.5)}
-.ship-nr-auto:focus{background:rgba(255,255,255,.25)}
-.ship-header-label{font-size:10px;font-weight:600;color:rgba(255,255,255,.6);text-transform:uppercase;letter-spacing:.06em;white-space:nowrap}
-.ship-btn{height:30px;padding:0 12px;border:1px solid rgba(255,255,255,.3);border-radius:5px;font-size:11px;font-weight:600;background:rgba(255,255,255,.12);color:#fff;cursor:pointer;white-space:nowrap;transition:background .15s}
-.ship-btn:hover{background:rgba(255,255,255,.25)}
-.ship-btn.green{border-color:#4ade80;color:#4ade80;background:rgba(74,222,128,.1)}
-.ship-btn.green:hover{background:rgba(74,222,128,.2)}
-.ship-summary{flex-shrink:0;background:#fff;border-bottom:2px solid var(--border);padding:8px 20px;display:flex;align-items:center;gap:16px;font-size:11px;flex-wrap:wrap}
-.ship-sum-item{display:flex;align-items:center;gap:5px;color:var(--text2)}
-.ship-sum-val{font-weight:700;color:var(--accent)}
-.ship-table-wrap{flex:1;overflow:auto}
-.ship-table-wrap::-webkit-scrollbar{width:8px;height:8px}
-.ship-table-wrap::-webkit-scrollbar-track{background:#f1f5f9}
-.ship-table-wrap::-webkit-scrollbar-thumb{background:#94a3b8;border-radius:4px}
-.ship-table-wrap::-webkit-scrollbar-corner{background:#f1f5f9}
-.ship-table{border-collapse:separate;border-spacing:0;min-width:max-content;font-size:11.5px;table-layout:fixed}
-.ship-table th{position:sticky;top:0;z-index:10;background:#1e3a5f;color:#e2e8f0;padding:6px 8px;font-size:9.5px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;text-align:left;white-space:nowrap;border-right:1px solid #2d4e7a;box-shadow:0 2px 0 0 #2d4e7a;user-select:none}
-.ship-table th:last-child{border-right:none}
-.ship-table td{border-bottom:1px solid #e5e7eb;border-right:1px solid #f1f5f9;padding:4px 8px;vertical-align:middle;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.ship-table td:last-child{border-right:1px solid #e5e7eb}
-.ship-table tbody tr:nth-child(odd) td{background:#fff}
-.ship-table tbody tr:nth-child(even) td{background:#f8fafc}
-.ship-table tbody tr:hover td{background:#eff6ff!important}
-/* Row where OnHand > Ordered Quantity */
-.ship-row-excess td{background:#fef9c3!important;border-bottom-color:#fde047}
-.ship-row-excess:hover td{background:#fef08a!important}
-.ship-qty-inp{width:100%;height:26px;padding:0 6px;border:1px solid #d1d5db;border-radius:3px;font-size:11.5px;background:#fff;box-sizing:border-box;text-align:right}
-.ship-qty-inp:focus{outline:none;border-color:var(--accent);box-shadow:0 0 0 2px rgba(59,130,246,.15)}
-.ship-qty-inp.excess{background:#fef9c3;border-color:#f59e0b}
-.ship-loc-inp{width:100%;height:26px;padding:0 6px;border:1px solid #d1d5db;border-radius:3px;font-size:11px;background:#fff;box-sizing:border-box}
-.ship-loc-inp:focus{outline:none;border-color:var(--accent)}
-.ship-weight{text-align:right;font-weight:600;color:#374151}
-.ship-empty{display:flex;flex-direction:column;align-items:center;justify-content:center;flex:1;gap:12px;padding:48px;color:var(--text3)}
-.ship-cust-wrap{position:relative}
 </style>
 </head>
 <body>
@@ -1213,8 +1167,6 @@ const S={
   inTransitData:null,  // parsed In_transit rows
   scanData:null,        // parsed QV_Start-Stop_History rows
   dctrData:null,         // disciplina CTR historical records (loaded from Supabase)
-  shippingData:null,     // parsed Shipping List rows
-  shippingState:{custFilter:'',nrAuto:'',qtyEdits:{},locEdits:{}},
   inTransitIdx:null,   // itemNo → transitQty (sum)
   wcSetupData:null,   // parsed Workcenter_Setup rows
   wcSetupIdx:null,    // wcName → {prodTeam, wcType}
@@ -1625,12 +1577,6 @@ function buildBowFlatIdx(){
 }
 
 
-function applyShipping(rows,ts){
-  // Filter out total rows (rows with no Cust. Name or no ItemNo)
-  const data=rows.filter(r=>str(r['Cust. Name'])&&str(r['ItemNo']));
-  S.shippingData=data;
-  S.shippingData._ts=ts;
-}
 function applyInTransit(rows,ts){
   S.inTransitData=rows;
   S.inTransitData._ts=ts;
@@ -1822,8 +1768,6 @@ async function loadFromIndexedDB(){
     const dctrRec=await loadDctrFromSupabase();
     if(dctrRec?.length) S.dctrData=dctrRec;
   }catch(e){console.warn('DCTR load:',e);}
-  const shipE=await dbLoad('shipping');
-  if(shipE?.rows?.length){applyShipping(shipE.rows,shipE.ts);}
   const scanE=await loadScanariFromIDB();
   if(scanE?.rows?.length){applyScanari(scanE.rows,scanE.ts);}
   await yieldFrame();
@@ -2898,7 +2842,6 @@ function render(){
     {id:'pwc',label:'Programare WC'},
 
     {id:'scanari',label:'Raport Scanari'},
-    {id:'shipping',label:'📦 Shipping'},
     {id:'scanner',label:'📷 Scanner'},
   ];
   if(S.session.role==='admin') tabs.push({id:'dctr',label:'Disciplina CTR'});
@@ -3001,7 +2944,6 @@ function render(){
   else if(S.tab==='rapoarte') body.appendChild(renderRapoarte());
   else if(S.tab==='planificare')body.appendChild(renderPlanificare());
   else if(S.tab==='pwc')body.appendChild(renderPwcTab());
-  else if(S.tab==='shipping')body.appendChild(renderShippingTab());
   else if(S.tab==='dctr')body.appendChild(renderDctrTab());
   else if(S.tab==='scanari')body.appendChild(renderScanariTab());
   else if(S.tab==='scanner')body.appendChild(renderScanner());
@@ -3045,11 +2987,10 @@ function renderFisiereTab(){
    {key:'ob',icon:'📦',title:'Open Order Lines',desc:'Comenzi deschise: Entry/Confirm/Request dt, cantitati, clienti, preturi'},
    {key:'wcs',icon:'🔧',title:'Workcenter Setup',desc:'Workcenter Type (Initial/Intermediary/Final Op), numarul de echipe (Prod Team) pentru calculul capacitatii'},
    {key:'scanari',icon:'📡',title:'QV Start-Stop History',desc:'Date de scanare productie: timpi efectivi per operator, workcenter si operatie'},
-   {key:'intransit',icon:'🚚',title:'In Transit',desc:'Produse finite expediate, neinca receptionate de client. Se scad din stocul On Hand al produselor finale.'},
-   {key:'shipping',icon:'🚢',title:'Shipping List',desc:'Lista de expeditie (Shipping Lists): comenzi, cantitati, greutati, clienti'}]
+   {key:'intransit',icon:'🚚',title:'In Transit',desc:'Produse finite expediate, neinca receptionate de client. Se scad din stocul On Hand al produselor finale.'}]
   .forEach(fc=>{
-    const loaded=fc.key==='bom'?!!S.bomData:fc.key==='bow'?!!S.bowData:fc.key==='po'?!!S.poData:fc.key==='wcs'?!!S.wcSetupData:fc.key==='intransit'?!!S.inTransitData:fc.key==='scanari'?!!S.scanData:fc.key==='shipping'?!!S.shippingData:!!S.obData;
-    const meta=fc.key==='wcs'?{rows:S.wcSetupData?.length||0,ts:S.wcSetupData?._ts}:fc.key==='intransit'?{rows:S.inTransitData?.length||0,ts:S.inTransitData?._ts}:fc.key==='scanari'?{rows:S.scanData?._rows||0,ts:S.scanData?._ts}:fc.key==='shipping'?{rows:S.shippingData?.length||0,ts:S.shippingData?._ts}:(S.meta[fc.key]||{rows:0,ts:null});
+    const loaded=fc.key==='bom'?!!S.bomData:fc.key==='bow'?!!S.bowData:fc.key==='po'?!!S.poData:fc.key==='wcs'?!!S.wcSetupData:fc.key==='intransit'?!!S.inTransitData:fc.key==='scanari'?!!S.scanData:!!S.obData;
+    const meta=fc.key==='wcs'?{rows:S.wcSetupData?.length||0,ts:S.wcSetupData?._ts}:fc.key==='intransit'?{rows:S.inTransitData?.length||0,ts:S.inTransitData?._ts}:fc.key==='scanari'?{rows:S.scanData?._rows||0,ts:S.scanData?._ts}:(S.meta[fc.key]||{rows:0,ts:null});
     const card=dv(`file-card${loaded?' loaded':''}`);
     const fch=dv('fc-header');
     fch.appendChild(sp('fc-icon',fc.icon));
@@ -3084,8 +3025,7 @@ function renderFisiereTab(){
         const fileCrTs=file.lastModified||ts;  // file creation/modification date
         S.meta._fileCrTs=S.meta._fileCrTs||{};
         S.meta._fileCrTs[fc.key]=fileCrTs;
-        if(fc.key==='bom')applyBom(rows,ts);else if(fc.key==='bow')applyBow(rows,ts);else if(fc.key==='po')applyPo(rows,ts);else if(fc.key==='wcs'){applyWcSetup(rows,ts);rows._ts=ts;}else if(fc.key==='intransit'){applyInTransit(rows,ts);rows._ts=ts;}else if(fc.key==='shipping'){applyShipping(rows,ts);await dbSave(fc.key,{rows,ts});if(S.sbCfg&&S.session?.role==='admin'){try{await sbSaveData(fc.key,rows,ts);}catch(e){console.warn('Supabase shipping:',e);}}}
-        else if(fc.key==='scanari'){applyScanari(rows,ts);}else applyOb(rows,ts);
+        if(fc.key==='bom')applyBom(rows,ts);else if(fc.key==='bow')applyBow(rows,ts);else if(fc.key==='po')applyPo(rows,ts);else if(fc.key==='wcs'){applyWcSetup(rows,ts);rows._ts=ts;}else if(fc.key==='intransit'){applyInTransit(rows,ts);rows._ts=ts;}else if(fc.key==='scanari'){applyScanari(rows,ts);}else applyOb(rows,ts);
         if(fc.key==='scanari'){
           // Large file: split by month in IDB, binary in Supabase
           lbl.innerHTML='';lbl.appendChild(el('span','spin-sm'));lbl.appendChild(document.createTextNode(' Se salveaza local...'));
@@ -6957,296 +6897,6 @@ document.addEventListener('contextmenu', ev=>{
   showUniversalCtxMenu(ev, colKey, cellText, foundAttr, colLabel);
 });
 
-/* ═══════════════════════════════════════════════════════════════
-   SHIPPING MODULE
-═══════════════════════════════════════════════════════════════ */
-
-const SHIP_COLS=[
-  {key:'PO',          label:'Purchase',           w:110},
-  {key:'OrderNo',     label:'Order',              w:130},
-  {key:'ItemNo',      label:'MOVEX Item No',       w:140},
-  {key:'Alias',       label:'MFG Item No',         w:140},
-  {key:'Description', label:'Descriere',           w:200},
-  {key:'Quantity',    label:'Ordered Qty',         w:90},
-  {key:'qtyToShip',   label:'Q-ty to Ship',        w:90},
-  {key:'Location',    label:'Location',            w:100},
-  {key:'Weight',      label:'Greutate (kg)',        w:100},
-];
-
-function getShipRows(){
-  const ss=S.shippingState;
-  const data=S.shippingData||[];
-  const fl=(ss.custFilter||'').trim().toLowerCase();
-  return fl ? data.filter(r=>str(r['Cust. Name']).toLowerCase().includes(fl)) : data;
-}
-
-function getShipCustomers(){
-  const data=S.shippingData||[];
-  return [...new Set(data.map(r=>str(r['Cust. Name'])).filter(Boolean))].sort();
-}
-
-function renderShippingTab(){
-  const page=dv('ship-page');
-  if(!S.shippingData){
-    const empty=dv('ship-empty');
-    empty.innerHTML='<div style="font-size:40px">🚢</div><div style="font-size:14px;font-weight:700">Niciun fișier Shipping List încărcat</div><div style="font-size:11px;text-align:center;max-width:360px;line-height:1.6">Mergeți în Fisiere și încărcați fișierul Shipping List (.xlsx)</div>';
-    page.appendChild(empty);return page;
-  }
-
-  const ss=S.shippingState;
-
-  // ── Header ──
-  const hdr=dv('ship-header');
-  hdr.appendChild(sp('ship-header-title','📦 SHIPPING'));
-
-  // Customer search with dropdown
-  const custWrap=dv('ship-cust-wrap');
-  const custInp=el('input','ship-cust-search');
-  custInp.placeholder='🔍 Filtru client...';
-  custInp.value=ss.custFilter||'';
-  custInp.setAttribute('autocomplete','off');
-  custWrap.appendChild(custInp);
-  hdr.appendChild(custWrap);
-
-  // Nr Auto
-  const nrLabel=sp('ship-header-label','Nr. Auto:');
-  const nrInp=el('input','ship-nr-auto');
-  nrInp.placeholder='ex: B-123-ABC';
-  nrInp.value=ss.nrAuto||'';
-  nrInp.addEventListener('input',e=>{ss.nrAuto=e.target.value;});
-  hdr.appendChild(nrLabel);hdr.appendChild(nrInp);
-
-  // Buttons
-  const printBtn=el('button','ship-btn');printBtn.textContent='🖨 PDF';
-  printBtn.addEventListener('click',()=>printShippingList());
-  const excelBtn=el('button','ship-btn green');excelBtn.textContent='⬇ Excel';
-  excelBtn.addEventListener('click',()=>exportShippingExcel());
-  hdr.appendChild(printBtn);hdr.appendChild(excelBtn);
-  page.appendChild(hdr);
-
-  // ── Summary bar ──
-  const sumBar=dv('ship-summary');
-  sumBar.id='ship-summary';
-  page.appendChild(sumBar);
-
-  // ── Table ──
-  const tw=dv('ship-table-wrap');tw.id='ship-table-wrap';
-  page.appendChild(tw);
-
-  buildShipTable(tw);
-  updateShipSummary();
-
-  // Customer dropdown logic
-  function showCustDrop(){
-    document.getElementById('ship-cust-drop')?.remove();
-    const q=(custInp.value||'').toLowerCase();
-    const matches=getShipCustomers().filter(c=>!q||c.toLowerCase().includes(q));
-    if(!matches.length) return;
-    const drop=dv('ship-cust-drop');drop.id='ship-cust-drop';
-    matches.forEach(c=>{
-      const opt=dv('ship-cust-opt');opt.textContent=c;
-      if(c===ss.custFilter) opt.classList.add('active');
-      opt.addEventListener('mousedown',e=>{
-        e.preventDefault();
-        ss.custFilter=c;custInp.value=c;
-        drop.remove();buildShipTable(tw);updateShipSummary();
-      });
-      drop.appendChild(opt);
-    });
-    custWrap.appendChild(drop);
-  }
-  custInp.addEventListener('focus',showCustDrop);
-  custInp.addEventListener('input',e=>{
-    ss.custFilter=e.target.value;
-    buildShipTable(tw);updateShipSummary();
-    showCustDrop();
-  });
-  custInp.addEventListener('blur',()=>setTimeout(()=>document.getElementById('ship-cust-drop')?.remove(),150));
-  document.addEventListener('keydown',e=>{if(e.key==='Escape')document.getElementById('ship-cust-drop')?.remove();});
-
-  return page;
-}
-
-function buildShipTable(wrap){
-  wrap.innerHTML='';
-  const rows=getShipRows();
-  const ss=S.shippingState;
-
-  const tbl=el('table','ship-table');tbl.id='ship-tbl';
-  const thead=el('thead');const hr=el('tr');
-  SHIP_COLS.forEach(c=>{
-    const th=el('th');th.style.width=c.w+'px';th.style.minWidth=c.w+'px';
-    th.textContent=c.label;hr.appendChild(th);
-  });
-  thead.appendChild(hr);tbl.appendChild(thead);
-
-  const tbody=el('tbody');
-  rows.forEach((r,idx)=>{
-    const uid=`${str(r['OrderNo'])}_${str(r['ItemNo'])}_${idx}`;
-    const orderedQty=parseFloat(r['Quantity'])||0;
-    const onHand=parseFloat(r['OnHand'])||0;
-    const isExcess=onHand>orderedQty;
-
-    const savedQty=ss.qtyEdits[uid];
-    const qtyToShip=savedQty!==undefined?savedQty:onHand;
-    const unitWeight=parseFloat(r['Total Net Weight'])||0;
-    const weight=qtyToShip*unitWeight;
-
-    const tr=el('tr');
-    if(isExcess) tr.classList.add('ship-row-excess');
-
-    SHIP_COLS.forEach(c=>{
-      const td=el('td');
-      if(c.key==='PO')         td.textContent=str(r['PO']||'—');
-      else if(c.key==='OrderNo') td.textContent=str(r['OrderNo']||'—');
-      else if(c.key==='ItemNo') td.textContent=str(r['ItemNo']||'—');
-      else if(c.key==='Alias')  td.textContent=str(r['Alias']||'—');
-      else if(c.key==='Description'){td.textContent=str(r['Description']||'—');td.title=str(r['Description']||'');}
-      else if(c.key==='Quantity'){td.textContent=fmtN(orderedQty);td.style.textAlign='right';td.style.fontWeight='600';}
-      else if(c.key==='qtyToShip'){
-        td.style.padding='2px 4px';td.style.overflow='visible';
-        const inp=el('input','ship-qty-inp');
-        if(isExcess) inp.classList.add('excess');
-        inp.type='number';inp.min='0';inp.step='any';
-        inp.value=qtyToShip||0;
-        inp.title=isExcess?`⚠ On Hand (${fmtN(onHand)}) > Ordered (${fmtN(orderedQty)}) — verificați cantitatea!`:'';
-        inp.addEventListener('input',e=>{
-          ss.qtyEdits[uid]=parseFloat(e.target.value)||0;
-          // Update weight cell dynamically
-          const weightTd=tr.querySelector('[data-weight]');
-          if(weightTd) weightTd.textContent=fmtN3((parseFloat(e.target.value)||0)*unitWeight)+' kg';
-          updateShipSummary();
-        });
-        td.appendChild(inp);
-      }
-      else if(c.key==='Location'){
-        td.style.padding='2px 4px';td.style.overflow='visible';
-        const inp=el('input','ship-loc-inp');
-        inp.value=ss.locEdits[uid]||str(r['Locations']||'');
-        inp.placeholder='Locatie...';
-        inp.addEventListener('input',e=>{ss.locEdits[uid]=e.target.value;});
-        td.appendChild(inp);
-      }
-      else if(c.key==='Weight'){
-        td.setAttribute('data-weight','1');
-        td.textContent=fmtN3(weight)+' kg';
-        td.className='ship-weight';
-      }
-      tr.appendChild(td);
-    });
-    tbody.appendChild(tr);
-  });
-
-  if(!rows.length){
-    const tr=el('tr');const td=el('td');td.colSpan=SHIP_COLS.length;
-    td.style.cssText='text-align:center;padding:32px;color:var(--text3);font-size:13px';
-    td.textContent='Nicio linie găsită. Introduceți un filtru client în header.';
-    tr.appendChild(td);tbody.appendChild(tr);
-  }
-  tbl.appendChild(tbody);wrap.appendChild(tbl);
-}
-
-function fmtN3(n){return n==null||isNaN(n)?'—':Number(n.toFixed(2)).toLocaleString('ro-RO',{minimumFractionDigits:2,maximumFractionDigits:2});}
-
-function updateShipSummary(){
-  const bar=document.getElementById('ship-summary');if(!bar)return;
-  const rows=getShipRows();
-  const ss=S.shippingState;
-  let totalLines=rows.length, totalOrdered=0, totalQtyShip=0, totalWeight=0, excessCount=0;
-  rows.forEach((r,idx)=>{
-    const uid=`${str(r['OrderNo'])}_${str(r['ItemNo'])}_${idx}`;
-    const orderedQty=parseFloat(r['Quantity'])||0;
-    const onHand=parseFloat(r['OnHand'])||0;
-    const savedQty=ss.qtyEdits[uid];
-    const qtyToShip=savedQty!==undefined?savedQty:onHand;
-    const unitWeight=parseFloat(r['Total Net Weight'])||0;
-    totalOrdered+=orderedQty;
-    totalQtyShip+=qtyToShip;
-    totalWeight+=qtyToShip*unitWeight;
-    if(onHand>orderedQty) excessCount++;
-  });
-  bar.innerHTML='';
-  const items=[
-    {l:'Client:',v:ss.custFilter||'—',accent:true},
-    {l:'Linii:',v:totalLines.toLocaleString()},
-    {l:'Cant. comandată:',v:fmtN(totalOrdered)},
-    {l:'Q-ty to Ship:',v:fmtN(totalQtyShip)},
-    {l:'Greutate totală:',v:fmtN3(totalWeight)+' kg'},
-    ...(excessCount>0?[{l:'⚠ Linii cu depășire On Hand:',v:excessCount,warn:true}]:[]),
-  ];
-  items.forEach(({l,v,accent,warn})=>{
-    const item=dv('ship-sum-item');
-    item.appendChild(sp('',l+' '));
-    const val=sp('ship-sum-val',String(v));
-    if(warn) val.style.color='#ca8a04';
-    item.appendChild(val);
-    bar.appendChild(item);
-  });
-  if(ss.nrAuto){const ni=dv('ship-sum-item');ni.innerHTML=`Nr. Auto: <span class="ship-sum-val">${ss.nrAuto}</span>`;bar.appendChild(ni);}
-}
-
-function exportShippingExcel(){
-  const rows=getShipRows();
-  const ss=S.shippingState;
-  if(!rows.length){alert('Nicio linie de exportat.');return;}
-  const wsData=[['Purchase','Order','MOVEX Item No','MFG Item No','Descriere','Ordered Qty','Q-ty to Ship','Location','Greutate (kg)']];
-  rows.forEach((r,idx)=>{
-    const uid=`${str(r['OrderNo'])}_${str(r['ItemNo'])}_${idx}`;
-    const savedQty=ss.qtyEdits[uid];
-    const qtyToShip=savedQty!==undefined?savedQty:(parseFloat(r['OnHand'])||0);
-    const unitWeight=parseFloat(r['Total Net Weight'])||0;
-    wsData.push([
-      str(r['PO']),str(r['OrderNo']),str(r['ItemNo']),str(r['Alias']),
-      str(r['Description']),parseFloat(r['Quantity'])||0,qtyToShip,
-      ss.locEdits[uid]||str(r['Locations']||''),
-      +(qtyToShip*unitWeight).toFixed(2),
-    ]);
-  });
-  const wb=XLSX.utils.book_new();
-  const ws=XLSX.utils.aoa_to_sheet(wsData);
-  ws['!cols']=[{wch:14},{wch:18},{wch:18},{wch:18},{wch:28},{wch:12},{wch:12},{wch:14},{wch:12}];
-  const custLabel=(ss.custFilter||'All').replace(/[^a-zA-Z0-9\-_ ]/g,'').slice(0,30);
-  XLSX.utils.book_append_sheet(wb,ws,'Shipping');
-  XLSX.writeFile(wb,`Shipping_${custLabel}_${new Date().toISOString().slice(0,10)}.xlsx`);
-}
-
-function printShippingList(){
-  const rows=getShipRows();
-  const ss=S.shippingState;
-  if(!rows.length){alert('Nicio linie de exportat.');return;}
-  const w=window.open('','_blank','width=1200,height=800');
-  if(!w){alert('Permite popup-urile.');return;}
-  let totalWeight=0;
-  const bodyRows=rows.map((r,idx)=>{
-    const uid=`${str(r['OrderNo'])}_${str(r['ItemNo'])}_${idx}`;
-    const orderedQty=parseFloat(r['Quantity'])||0;
-    const onHand=parseFloat(r['OnHand'])||0;
-    const savedQty=ss.qtyEdits[uid];
-    const qtyToShip=savedQty!==undefined?savedQty:onHand;
-    const unitWeight=parseFloat(r['Total Net Weight'])||0;
-    const wt=qtyToShip*unitWeight; totalWeight+=wt;
-    const isExcess=onHand>orderedQty;
-    const style=isExcess?'background:#fef9c3':idx%2===0?'background:#fff':'background:#f8fafc';
-    return `<tr style="${style}"><td>${str(r['PO'])}</td><td>${str(r['OrderNo'])}</td><td>${str(r['ItemNo'])}</td><td>${str(r['Alias'])}</td><td>${str(r['Description'])}</td><td style="text-align:right">${fmtN(orderedQty)}</td><td style="text-align:right;font-weight:700">${fmtN(qtyToShip)}</td><td>${ss.locEdits[uid]||str(r['Locations']||'')}</td><td style="text-align:right">${fmtN3(wt)}</td></tr>`;
-  }).join('');
-  const title=`Shipping List — ${ss.custFilter||'Toți clienții'}`;
-  w.document.write(`<!DOCTYPE html><html><head><meta charset="UTF-8"><title>${title}</title>
-<style>*{box-sizing:border-box;margin:0;padding:0}body{font-family:Arial,sans-serif;font-size:8.5pt;padding:12mm}
-h2{font-size:13pt;margin-bottom:3px}p.sub{font-size:9pt;color:#555;margin-bottom:10px}
-table{width:100%;border-collapse:collapse;font-size:8pt}
-th{background:#1e293b;color:#fff;padding:4px 6px;font-size:7.5pt;font-weight:700;text-align:left;border:1px solid #0f172a;white-space:nowrap}
-td{padding:3px 6px;border:1px solid #d1d5db}
-tfoot td{background:#f1f5f9;font-weight:700;border-top:2px solid #1e293b}
-@page{size:A3 landscape;margin:10mm}@media print{@page{size:A3 landscape;margin:10mm}}</style>
-</head><body>
-<h2>${title}</h2>
-<p class="sub">${ss.nrAuto?'Nr. Auto: '+ss.nrAuto+' · ':''}Data: ${new Date().toLocaleDateString('ro-RO')} · ${rows.length} linii · Greutate totală: ${fmtN3(totalWeight)} kg</p>
-<table><thead><tr><th>Purchase</th><th>Order</th><th>MOVEX Item No</th><th>MFG Item No</th><th>Descriere</th><th>Ordered Qty</th><th>Q-ty to Ship</th><th>Location</th><th>Greutate (kg)</th></tr></thead>
-<tbody>${bodyRows}</tbody>
-<tfoot><tr><td colspan="5">TOTAL</td><td></td><td></td><td></td><td style="text-align:right">${fmtN3(totalWeight)} kg</td></tr></tfoot>
-</table></body></html>`);
-  w.document.close();setTimeout(()=>w.print(),500);
-}
 function renderScanner(){
   const page=dv('scanner-page');
 
