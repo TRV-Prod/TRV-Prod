@@ -1163,6 +1163,8 @@ const S={
   reportObs:{},
   eficientaPlan:100,
   wcAvailHours:{},
+  planCurrentWeek:'',  // current week label e.g. 'W21'
+  planHistory:[],     // [{week, savedAt, entries:[{itemNo,itemName,customer,qty,salesPrice,obs}]}]
   wcLoadMode:'wip',  // 'wip' | 'total'
   inTransitData:null,  // parsed In_transit rows
   scanData:null,        // parsed QV_Start-Stop_History rows
@@ -3832,26 +3834,20 @@ function _buildObTbody(){
       td.style.width=(f.colWidths[col]||120)+'px';
       const v=row[col];
       if(col==='_planWeeks'){
-        // Collect all plan weeks for this itemNo from all plan entries
+        // Show S.planCurrentWeek if this item is planned, plus history from DB
         const planEntry=S.planData?.get(itemNo);
-        if(planEntry?.entries?.length){
-          // Each entry has a _obKey — look up the confirm_week of that OB row
-          const weeks=new Set();
-          for(const e of planEntry.entries){
-            if(!e._obKey) continue;
-            // Find the OB row by _obKey
-            const obRow=S.obData?.find(r=>r._obKey===e._obKey);
-            const wk=obRow?.['Confirm_week']||obRow?.['Request_week'];
-            if(wk) weeks.add(String(wk).trim());
-          }
-          if(weeks.size){
-            const pill=sp('');
-            pill.style.cssText='font-size:10px;font-weight:700;color:#6366f1;white-space:normal;line-height:1.4';
-            pill.textContent=[...weeks].sort().map(w=>'W'+String(w).replace(/^20\d{2}-?/,'')).join(', ');
-            td.appendChild(pill);
-          } else {
-            td.textContent='—';td.style.color='#9ca3af';
-          }
+        const weeks=new Set();
+        // Add current week if item is in current plan
+        if(planEntry?.entries?.length&&S.planCurrentWeek) weeks.add(S.planCurrentWeek);
+        // Add weeks from saved history
+        for(const snap of (S.planHistory||[])){
+          if(snap.entries?.some(e=>e.itemNo===itemNo)) weeks.add(snap.week);
+        }
+        if(weeks.size){
+          const pill=sp('');
+          pill.style.cssText='font-size:10px;font-weight:700;color:#6366f1;white-space:normal;line-height:1.4';
+          pill.textContent=[...weeks].sort().join(', ');
+          td.appendChild(pill);
         } else {
           td.textContent='—';td.style.color='#9ca3af';
         }
@@ -4712,6 +4708,102 @@ function exportPlan(){
   XLSX.writeFile(wb,`Plan_productie_${new Date().toISOString().slice(0,10)}.xlsx`);
 }
 
+
+function getISOWeek(d){
+  const dt=new Date(d);dt.setHours(0,0,0,0);
+  dt.setDate(dt.getDate()+3-(dt.getDay()+6)%7);
+  const week1=new Date(dt.getFullYear(),0,4);
+  return Math.round(((dt-week1)/86400000-3+(week1.getDay()+6)%7)/7)+1;
+}
+function getCurrentWeekLabel(){
+  return 'W'+getISOWeek(new Date());
+}
+
+// ── Save plan snapshot to Supabase ──
+async function savePlanSnapshot(weekLabel){
+  if(!S.sbCfg) return;
+  // Build snapshot entries
+  const entries=[];
+  for(const [itemNo,plan] of S.planData){
+    entries.push({
+      itemNo,
+      itemName:plan.entries[0]?.itemName||'',
+      customer:[...new Set(plan.entries.map(e=>e.customer).filter(Boolean))].join(', '),
+      qty:plan.totalQty,
+      salesPrice:plan.entries[0]?.salesPrice||0,
+      obs:S.planObs[itemNo]||'',
+    });
+  }
+  const snapshot={week:weekLabel,savedAt:new Date().toISOString(),entries};
+  // Load existing history, upsert by week
+  let history=[];
+  try{const d=await sbDownload(S.sbCfg,'data-plan-history.json');history=Array.isArray(d?.history)?d.history:[];}catch(_){}
+  const idx=history.findIndex(h=>h.week===weekLabel);
+  if(idx>=0) history[idx]=snapshot; else history.push(snapshot);
+  history.sort((a,b)=>a.week.localeCompare(b.week));
+  await sbUpload(S.sbCfg,'data-plan-history.json',{history});
+  S.planHistory=history;
+}
+
+// ── Open plan history viewer ──
+async function openPlanHistoryViewer(){
+  let history=S.planHistory;
+  if(!history.length&&S.sbCfg){
+    try{const d=await sbDownload(S.sbCfg,'data-plan-history.json');history=Array.isArray(d?.history)?d.history:[];}catch(_){}
+    S.planHistory=history;
+  }
+  const w=window.open('','_blank','width=1100,height=750');
+  if(!w){alert('Permite popup-urile.');return;}
+
+  const weeks=[...new Set(history.map(h=>h.week))].sort();
+  if(!weeks.length){
+    w.document.write('<html><body style="font-family:Arial;padding:20px"><h2>Nu există istoric salvat.</h2></body></html>');
+    w.document.close();return;
+  }
+
+  // Build HTML
+  let tabs='';let panels='';
+  weeks.forEach((wk,wi)=>{
+    const snap=history.find(h=>h.week===wk);
+    const date=snap?.savedAt?new Date(snap.savedAt).toLocaleDateString('ro-RO',{day:'2-digit',month:'2-digit',year:'numeric',hour:'2-digit',minute:'2-digit'}):'';
+    tabs+=`<button class="tab${wi===0?' active':''}" onclick="showWeek('${wk}',this)">${wk}<span class="tab-date">${date}</span></button>`;
+    const rows=snap?.entries?.map((e,i)=>{
+      const cls=i%2===0?'':'alt';
+      return `<tr class="${cls}"><td>${i+1}</td><td><b>${e.itemNo}</b></td><td>${e.itemName}</td><td>${e.customer}</td><td style="text-align:right">${(e.qty||0).toLocaleString('ro-RO')}</td><td style="text-align:right">${e.salesPrice?e.salesPrice.toFixed(2):''}</td><td>${e.obs||''}</td></tr>`;
+    }).join('')||'<tr><td colspan="7" style="text-align:center;padding:20px;color:#999">Nicio înregistrare</td></tr>';
+    const totalQty=(snap?.entries||[]).reduce((s,e)=>s+(e.qty||0),0);
+    const totalVal=(snap?.entries||[]).reduce((s,e)=>s+(e.salesPrice||0)*(e.qty||0),0);
+    panels+=`<div class="panel${wi===0?'':' hidden'}" id="panel-${wk}">
+      <div class="panel-meta">Salvat: ${date} &nbsp;·&nbsp; ${snap?.entries?.length||0} produse &nbsp;·&nbsp; ${totalQty.toLocaleString()} buc &nbsp;·&nbsp; ${totalVal.toLocaleString('ro-RO',{maximumFractionDigits:0})} EUR</div>
+      <table><thead><tr><th>#</th><th>Item No</th><th>Denumire</th><th>Client</th><th>Cantitate</th><th>Preț EUR</th><th>Observații</th></tr></thead><tbody>${rows}</tbody></table>
+    </div>`;
+  });
+
+  w.document.write(`<!DOCTYPE html><html><head><meta charset="UTF-8"><title>Istoric Plan Producție</title>
+<style>
+*{box-sizing:border-box;margin:0;padding:0}body{font-family:Arial,sans-serif;font-size:12px;background:#f8f9fb}
+h1{background:#1e3a5f;color:#fff;padding:14px 20px;font-size:16px;font-weight:800}
+.tabs{display:flex;flex-wrap:wrap;gap:4px;padding:12px 16px;background:#fff;border-bottom:2px solid #e2e8f0}
+.tab{padding:6px 14px;border:1px solid #e2e8f0;border-radius:6px;background:#f8f9fb;cursor:pointer;font-size:11px;font-weight:700;color:#475569;display:flex;flex-direction:column;align-items:center;gap:2px}
+.tab.active{background:#1e3a5f;color:#fff;border-color:#1e3a5f}
+.tab-date{font-size:9px;font-weight:400;opacity:.7}
+.panel{padding:16px}
+.panel.hidden{display:none}
+.panel-meta{font-size:11px;color:#64748b;margin-bottom:10px;padding:8px 12px;background:#fff;border-radius:6px;border:1px solid #e2e8f0}
+table{width:100%;border-collapse:collapse;background:#fff;border-radius:8px;overflow:hidden;box-shadow:0 1px 4px rgba(0,0,0,.08)}
+th{background:#1e293b;color:#f1f5f9;padding:7px 10px;font-size:9.5px;font-weight:700;text-transform:uppercase;letter-spacing:.07em;text-align:left}
+td{padding:5px 10px;border-bottom:1px solid #f1f5f9;font-size:11px}
+tr.alt td{background:#f8fafc}
+@media print{.tabs{display:none}.panel.hidden{display:block}.panel-meta{break-after:avoid}}
+</style>
+<script>function showWeek(wk,btn){document.querySelectorAll('.panel').forEach(p=>p.classList.add('hidden'));document.querySelectorAll('.tab').forEach(t=>t.classList.remove('active'));document.getElementById('panel-'+wk).classList.remove('hidden');btn.classList.add('active');}<\/script>
+</head><body>
+<h1>📅 Istoric Plan Producție</h1>
+<div class="tabs">${tabs}</div>
+${panels}
+</body></html>`);
+  w.document.close();
+}
 function renderPlanificare(){
   const page=dv('plan-page');
 
@@ -4732,6 +4824,34 @@ function renderPlanificare(){
   const clearBtn=el('button','tbtn');clearBtn.innerHTML='✕ Goleste planul';clearBtn.style.color='#dc2626';
   clearBtn.addEventListener('click',()=>{if(confirm('Golesti tot planul de productie?')){S.planData=new Map();savePlan();renderPlanPage(planWrap);updatePlanStatsBar();}});
   tb.appendChild(clearBtn);
+
+  // ── Week label input ──
+  const wkSep=dv('');wkSep.style.cssText='width:1px;height:22px;background:var(--border);margin:0 6px';tb.appendChild(wkSep);
+  const wkLbl=sp('','');wkLbl.style.cssText='font-size:10px;font-weight:600;color:var(--text3);margin-right:4px';wkLbl.textContent='Săptămâna:';
+  tb.appendChild(wkLbl);
+  if(!S.planCurrentWeek) S.planCurrentWeek=getCurrentWeekLabel();
+  const wkInp=el('input');wkInp.type='text';wkInp.value=S.planCurrentWeek;
+  wkInp.style.cssText='height:28px;width:70px;padding:0 8px;border:1px solid var(--border);border-radius:4px;font-size:12px;font-weight:700;color:var(--accent);text-align:center';
+  wkInp.addEventListener('input',e=>{S.planCurrentWeek=e.target.value.trim()||getCurrentWeekLabel();});
+  tb.appendChild(wkInp);
+
+  // ── Save to DB button ──
+  const saveDbBtn=el('button','tbtn');saveDbBtn.innerHTML='💾 Salvează în DB';saveDbBtn.style.cssText='color:#15803d;border-color:#16a34a;font-weight:700';
+  saveDbBtn.addEventListener('click',async()=>{
+    if(!S.planCurrentWeek){alert('Introduceți eticheta săptămânii.');return;}
+    if(!S.sbCfg){alert('Conexiunea Supabase nu este configurată.');return;}
+    if(![...S.planData.keys()].length){alert('Planul este gol.');return;}
+    saveDbBtn.disabled=true;saveDbBtn.textContent='...';
+    await savePlanSnapshot(S.planCurrentWeek);
+    saveDbBtn.disabled=false;saveDbBtn.innerHTML='💾 Salvează în DB';
+    showToast(`✓ Planul ${S.planCurrentWeek} salvat în baza de date`,'ok',3000);
+  });
+  tb.appendChild(saveDbBtn);
+
+  // ── History button ──
+  const histBtn=el('button','tbtn');histBtn.innerHTML='📅 Istoric plan';
+  histBtn.addEventListener('click',()=>openPlanHistoryViewer());
+  tb.appendChild(histBtn);
 
   // Column picker
   const colPickBtn=el('button','tbtn');colPickBtn.textContent='⚙ Coloane';
@@ -6475,9 +6595,17 @@ function buildDctrStatsPanel(data){
   toggle.style.transform=S.dctrReport._statsOpen?'':'rotate(-90deg)';
   hdr.addEventListener('click',()=>{
     S.dctrReport._statsOpen=!S.dctrReport._statsOpen;
-    body.style.display=S.dctrReport._statsOpen?'grid':'none';
     toggle.style.transform=S.dctrReport._statsOpen?'':'rotate(-90deg)';
-    if(S.dctrReport._statsOpen) refreshDctrStats();
+    if(S.dctrReport._statsOpen){
+      refreshDctrStats();
+      // refreshDctrStats may have replaced the body node — get fresh reference
+      const freshBody=document.getElementById('dctr-stats-body');
+      if(freshBody) freshBody.style.display='grid';
+    } else {
+      // Get fresh reference (may have been replaced by a previous refreshDctrStats)
+      const freshBody=document.getElementById('dctr-stats-body');
+      if(freshBody) freshBody.style.display='none';
+    }
   });
 
   if(!data.length){
