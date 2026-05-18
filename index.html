@@ -3037,10 +3037,11 @@ function renderFisiereTab(){
    {key:'ob',icon:'📦',title:'Open Order Lines',desc:'Comenzi deschise: Entry/Confirm/Request dt, cantitati, clienti, preturi'},
    {key:'wcs',icon:'🔧',title:'Workcenter Setup',desc:'Workcenter Type (Initial/Intermediary/Final Op), numarul de echipe (Prod Team) pentru calculul capacitatii'},
    {key:'scanari',icon:'📡',title:'QV Start-Stop History',desc:'Date de scanare productie: timpi efectivi per operator, workcenter si operatie'},
-   {key:'intransit',icon:'🚚',title:'In Transit',desc:'Produse finite expediate, neinca receptionate de client. Se scad din stocul On Hand al produselor finale.'}]
+   {key:'intransit',icon:'🚚',title:'In Transit',desc:'Produse finite expediate, neinca receptionate de client. Se scad din stocul On Hand al produselor finale.'},
+   {key:'molist',icon:'🏭',title:'MO List (PMO/MO)',desc:'Lista Manufacturing Orders cu operatii: MO, produs, workcenter, cantitati raportate'}]
   .forEach(fc=>{
-    const loaded=fc.key==='bom'?!!S.bomData:fc.key==='bow'?!!S.bowData:fc.key==='po'?!!S.poData:fc.key==='wcs'?!!S.wcSetupData:fc.key==='intransit'?!!S.inTransitData:fc.key==='scanari'?!!S.scanData:!!S.obData;
-    const meta=fc.key==='wcs'?{rows:S.wcSetupData?.length||0,ts:S.wcSetupData?._ts}:fc.key==='intransit'?{rows:S.inTransitData?.length||0,ts:S.inTransitData?._ts}:fc.key==='scanari'?{rows:S.scanData?._rows||0,ts:S.scanData?._ts}:(S.meta[fc.key]||{rows:0,ts:null});
+    const loaded=fc.key==='bom'?!!S.bomData:fc.key==='bow'?!!S.bowData:fc.key==='po'?!!S.poData:fc.key==='wcs'?!!S.wcSetupData:fc.key==='intransit'?!!S.inTransitData:fc.key==='scanari'?!!S.scanData:fc.key==='molist'?!!S.moListData:!!S.obData;
+    const meta=fc.key==='wcs'?{rows:S.wcSetupData?.length||0,ts:S.wcSetupData?._ts}:fc.key==='intransit'?{rows:S.inTransitData?.length||0,ts:S.inTransitData?._ts}:fc.key==='scanari'?{rows:S.scanData?._rows||0,ts:S.scanData?._ts}:fc.key==='molist'?{rows:S.moListData?.length||0,ts:S.moListData?._ts}:(S.meta[fc.key]||{rows:0,ts:null});
     const card=dv(`file-card${loaded?' loaded':''}`);
     const fch=dv('fc-header');
     fch.appendChild(sp('fc-icon',fc.icon));
@@ -7470,7 +7471,8 @@ function showScanResult(rawCode,resultArea,histWrap){
     grid.appendChild(mkCard('On Hand',st.onHand||0));
 
     // On MO — clickable if moListIdx has data
-    const moRows=S.moListIdx?.get(result.code)||[];
+    // moListIdx is keyed by Product code; try exact match + alias fallback
+    const moRows=S.moListIdx?.get(result.code)||S.moListIdx?.get(result.alias)||[];
     const onMoCard=mkCard('On MO',st.onMO||0,
       moRows.length?()=>openMoModal(result.code):null,
       moRows.length?`${moRows.length} op · click pt detalii`:null
