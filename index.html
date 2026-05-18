@@ -1409,7 +1409,7 @@ async function sbLoadAllData(){
     {k:'ob', label:'Order Book',apply:(r,t)=>applyOb(r,t)},
     {k:'wcs',label:'Workcenter Setup',apply:(r,t)=>applyWcSetup(r,t)},
     {k:'intransit',label:'In Transit',apply:(r,t)=>applyInTransit(r,t)},
-    {k:'molist',label:'MO List',apply:(r,t)=>applyMoList(r,t)},
+    // molist handled separately below (binary XLSX, ~5-8MB JSON would exceed limit)
     // scanari handled separately below (binary XLSX)
   ]){
     S.loadMsg=`Se incarca ${label}...`;setLoadMsg(S.loadMsg);await yieldFrame();
@@ -1426,6 +1426,23 @@ async function sbLoadAllData(){
       loaded=true;
     }
   }catch(e){console.warn('Supabase scanari download:',e);}
+
+  // molist: binary XLSX download
+  S.loadMsg='Se incarca MO List...';setLoadMsg(S.loadMsg);await yieldFrame();
+  try{
+    const moMeta=await sbDownload(cfg,'data-molist-meta.json');
+    if(moMeta){
+      const moUrl=`${cfg.url}/storage/v1/object/${cfg.bucket}/data-molist.xlsx`;
+      const moR=await fetch(moUrl,{headers:{'Authorization':'Bearer '+cfg.key,'apikey':cfg.key}});
+      if(moR.ok){
+        const moBuf=await moR.arrayBuffer();
+        const moRows=parseBuffer(new Uint8Array(moBuf));
+        applyMoList(moRows,moMeta.ts);
+        await dbSave('molist',{rows:moRows,ts:moMeta.ts});
+        loaded=true;
+      }
+    }
+  }catch(e){console.warn('Supabase molist download:',e);}
 
   const planData=await sbDownload(cfg,'data-plan.json');
   if(planData){
@@ -3078,7 +3095,7 @@ function renderFisiereTab(){
         const fileCrTs=file.lastModified||ts;  // file creation/modification date
         S.meta._fileCrTs=S.meta._fileCrTs||{};
         S.meta._fileCrTs[fc.key]=fileCrTs;
-        if(fc.key==='bom')applyBom(rows,ts);else if(fc.key==='bow')applyBow(rows,ts);else if(fc.key==='po')applyPo(rows,ts);else if(fc.key==='wcs'){applyWcSetup(rows,ts);rows._ts=ts;}else if(fc.key==='intransit'){applyInTransit(rows,ts);rows._ts=ts;}else if(fc.key==='molist'){applyMoList(rows,ts);await dbSave(fc.key,{rows,ts});if(S.sbCfg&&S.session?.role==='admin'){try{await sbSaveData(fc.key,rows,ts);}catch(e){console.warn('Supabase molist:',e);}}}else if(fc.key==='scanari'){applyScanari(rows,ts);}else applyOb(rows,ts);
+        if(fc.key==='bom')applyBom(rows,ts);else if(fc.key==='bow')applyBow(rows,ts);else if(fc.key==='po')applyPo(rows,ts);else if(fc.key==='wcs'){applyWcSetup(rows,ts);rows._ts=ts;}else if(fc.key==='intransit'){applyInTransit(rows,ts);rows._ts=ts;}else if(fc.key==='molist'){applyMoList(rows,ts);await dbSave(fc.key,{rows,ts});if(S.sbCfg&&S.session?.role==='admin'){lbl.innerHTML='';lbl.appendChild(el('span','spin-sm'));lbl.appendChild(document.createTextNode(' Upload Supabase (.xlsx)...'));try{const xlsxBlob=new Blob([buf],{type:'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'});const moUrl=`${S.sbCfg.url}/storage/v1/object/${S.sbCfg.bucket}/data-molist.xlsx`;const moR=await fetch(moUrl,{method:'POST',headers:{'Authorization':'Bearer '+S.sbCfg.key,'apikey':S.sbCfg.key,'x-upsert':'true','Content-Type':'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'},body:xlsxBlob});if(!moR.ok)throw new Error(await moR.text());await sbUpload(S.sbCfg,'data-molist-meta.json',{ts,rowCount:rows.length});}catch(e){console.warn('Supabase molist upload:',e);showToast('⚠ Supabase molist upload esuat: '+e.message,'err',4000);}}}else if(fc.key==='scanari'){applyScanari(rows,ts);}else applyOb(rows,ts);
         if(fc.key==='scanari'){
           // Large file: split by month in IDB, binary in Supabase
           lbl.innerHTML='';lbl.appendChild(el('span','spin-sm'));lbl.appendChild(document.createTextNode(' Se salveaza local...'));
