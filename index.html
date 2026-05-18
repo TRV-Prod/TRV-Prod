@@ -3075,7 +3075,7 @@ function renderFisiereTab(){
         const fileCrTs=file.lastModified||ts;  // file creation/modification date
         S.meta._fileCrTs=S.meta._fileCrTs||{};
         S.meta._fileCrTs[fc.key]=fileCrTs;
-        if(fc.key==='bom')applyBom(rows,ts);else if(fc.key==='bow')applyBow(rows,ts);else if(fc.key==='po')applyPo(rows,ts);else if(fc.key==='wcs'){applyWcSetup(rows,ts);rows._ts=ts;}else if(fc.key==='intransit'){applyInTransit(rows,ts);rows._ts=ts;}else if(fc.key==='scanari'){applyScanari(rows,ts);}else applyOb(rows,ts);
+        if(fc.key==='bom')applyBom(rows,ts);else if(fc.key==='bow')applyBow(rows,ts);else if(fc.key==='po')applyPo(rows,ts);else if(fc.key==='wcs'){applyWcSetup(rows,ts);rows._ts=ts;}else if(fc.key==='intransit'){applyInTransit(rows,ts);rows._ts=ts;}else if(fc.key==='molist'){applyMoList(rows,ts);}else if(fc.key==='scanari'){applyScanari(rows,ts);}else applyOb(rows,ts);
         if(fc.key==='scanari'){
           // Large file: split by month in IDB, binary in Supabase
           lbl.innerHTML='';lbl.appendChild(el('span','spin-sm'));lbl.appendChild(document.createTextNode(' Se salveaza local...'));
@@ -4891,8 +4891,6 @@ function renderPlanificare(){
   const wkSep=dv('');wkSep.style.cssText='width:1px;height:22px;background:var(--border);margin:0 6px';tb.appendChild(wkSep);
   const wkLbl=sp('','');wkLbl.style.cssText='font-size:10px;font-weight:600;color:var(--text3);margin-right:4px';wkLbl.textContent='Săptămâna:';
   tb.appendChild(wkLbl);
-  const moE=await dbLoad('molist');
-  if(moE?.rows?.length){applyMoList(moE.rows,moE.ts);}
   if(!S.planCurrentWeek) S.planCurrentWeek=getCurrentWeekLabel();
   const wkInp=el('input');wkInp.type='text';wkInp.value=S.planCurrentWeek;
   wkInp.style.cssText='height:28px;width:70px;padding:0 8px;border:1px solid var(--border);border-radius:4px;font-size:12px;font-weight:700;color:var(--accent);text-align:center';
@@ -7491,7 +7489,7 @@ function showScanResult(rawCode,resultArea,histWrap){
         box.style.cssText='background:#fff;border-radius:8px;padding:16px 20px;min-width:260px;max-width:90vw;box-shadow:0 8px 32px rgba(0,0,0,.2)';
         box.innerHTML='<div style="font-weight:800;font-size:13px;margin-bottom:12px;color:#1e3a5f">WIP detaliat — '+result.code+'</div>'+
           wipEntries.sort((a,b)=>b[1]-a[1]).map(([wc,q])=>`<div style="display:flex;justify-content:space-between;padding:4px 0;border-bottom:1px solid #f1f5f9;font-size:12px"><span>${wcLabel(wc)}</span><b style="color:${q>0?'#15803d':q<0?'#dc2626':'#475569'}">${fmtN(q)}</b></div>`).join('')+
-          '<button onclick="this.closest('div[style*=fixed]').remove()" style="margin-top:12px;width:100%;height:32px;border:1px solid #e2e8f0;border-radius:4px;cursor:pointer;font-size:12px;background:#f8f9fb">Inchide</button>';
+          '<button onclick="this.parentElement.remove()" style="margin-top:12px;width:100%;height:32px;border:1px solid #e2e8f0;border-radius:4px;cursor:pointer;font-size:12px;background:#f8f9fb">Inchide</button>';
         d.appendChild(box);d.addEventListener('click',e=>{if(e.target===d)d.remove();});
         document.body.appendChild(d);
       }:null,
