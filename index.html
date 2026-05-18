@@ -1273,6 +1273,7 @@ const GH_COLS={
        'Customer_no','Customer_name','Sales_price','Currency','Sales price EUR','Ordered','Allocated',
        'Delivered','Invoiced','Open qty','Net weight','CO_no','CO_line','Valoare de livrat EUR'],
   scanari: ['Transaction dt','MO','Product','Workcenter','Workcenter name','Op no','Employee name','Manufact qty','Start_MS','Finish_MS','Used_tm_MS'],
+  molist:  ['MO','Product','Prod name','Whs','MO start','MO finish','MO st','MO tp','Op no','Seq no','W/C-Comp','Name','U/M','Status','Order qty','Report qty','Report dt','Hrs'],
 };
 
 function ghFilterRows(key,rows){
@@ -1408,6 +1409,7 @@ async function sbLoadAllData(){
     {k:'ob', label:'Order Book',apply:(r,t)=>applyOb(r,t)},
     {k:'wcs',label:'Workcenter Setup',apply:(r,t)=>applyWcSetup(r,t)},
     {k:'intransit',label:'In Transit',apply:(r,t)=>applyInTransit(r,t)},
+    {k:'molist',label:'MO List',apply:(r,t)=>applyMoList(r,t)},
     // scanari handled separately below (binary XLSX)
   ]){
     S.loadMsg=`Se incarca ${label}...`;setLoadMsg(S.loadMsg);await yieldFrame();
@@ -3076,7 +3078,7 @@ function renderFisiereTab(){
         const fileCrTs=file.lastModified||ts;  // file creation/modification date
         S.meta._fileCrTs=S.meta._fileCrTs||{};
         S.meta._fileCrTs[fc.key]=fileCrTs;
-        if(fc.key==='bom')applyBom(rows,ts);else if(fc.key==='bow')applyBow(rows,ts);else if(fc.key==='po')applyPo(rows,ts);else if(fc.key==='wcs'){applyWcSetup(rows,ts);rows._ts=ts;}else if(fc.key==='intransit'){applyInTransit(rows,ts);rows._ts=ts;}else if(fc.key==='molist'){applyMoList(rows,ts);}else if(fc.key==='scanari'){applyScanari(rows,ts);}else applyOb(rows,ts);
+        if(fc.key==='bom')applyBom(rows,ts);else if(fc.key==='bow')applyBow(rows,ts);else if(fc.key==='po')applyPo(rows,ts);else if(fc.key==='wcs'){applyWcSetup(rows,ts);rows._ts=ts;}else if(fc.key==='intransit'){applyInTransit(rows,ts);rows._ts=ts;}else if(fc.key==='molist'){applyMoList(rows,ts);await dbSave(fc.key,{rows,ts});if(S.sbCfg&&S.session?.role==='admin'){try{await sbSaveData(fc.key,rows,ts);}catch(e){console.warn('Supabase molist:',e);}}}else if(fc.key==='scanari'){applyScanari(rows,ts);}else applyOb(rows,ts);
         if(fc.key==='scanari'){
           // Large file: split by month in IDB, binary in Supabase
           lbl.innerHTML='';lbl.appendChild(el('span','spin-sm'));lbl.appendChild(document.createTextNode(' Se salveaza local...'));
