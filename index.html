@@ -3637,6 +3637,18 @@ function getObRows(){
     }
     for(const[col,fval] of Object.entries(f.colFilters||{})){
       if(!fval)continue;
+      if(col==='_planWeeks'){
+        // Virtual column — compute weeks for this row on the fly
+        const itemNo=str(r['Item_no']);
+        const weeks=new Set();
+        if(S.planData?.get(itemNo)?.entries?.length&&S.planCurrentWeek) weeks.add(S.planCurrentWeek);
+        for(const snap of (S.planHistory||[])){
+          if(snap.entries?.some(e=>e.itemNo===itemNo)) weeks.add(snap.week);
+        }
+        const weeksStr=[...weeks].sort().join(', ');
+        if(!weeksStr.toLowerCase().includes(fval.toLowerCase()))return false;
+        continue;
+      }
       const v=r[col];
       if(v==null||!String(v).toLowerCase().includes(fval.toLowerCase()))return false;
     }
