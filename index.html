@@ -1113,6 +1113,37 @@ button { font-family: var(--sans); }
 .nec-row-critic:hover td{background:#fee2e2!important}
 .nec-row-warn td{background:#fffdf0!important}
 .nec-row-warn:hover td{background:#fef9c3!important}
+
+/* ─── MO LIST MODAL ─── */
+.mo-overlay{position:fixed;inset:0;background:rgba(0,0,0,.5);z-index:8000;display:flex;align-items:center;justify-content:center;padding:16px}
+.mo-modal{background:#fff;border-radius:10px;box-shadow:0 20px 60px rgba(0,0,0,.3);width:min(900px,96vw);max-height:85vh;display:flex;flex-direction:column;overflow:hidden}
+.mo-modal-hdr{display:flex;align-items:center;justify-content:space-between;padding:14px 18px;border-bottom:2px solid var(--border);background:#1e3a5f;color:#fff;flex-shrink:0}
+.mo-modal-title{font-size:14px;font-weight:800}
+.mo-modal-sub{font-size:11px;color:rgba(255,255,255,.7);margin-top:2px}
+.mo-modal-hdr-btns{display:flex;gap:8px;align-items:center}
+.mo-modal-btn{height:28px;padding:0 10px;border:1px solid rgba(255,255,255,.3);border-radius:4px;font-size:11px;font-weight:600;background:rgba(255,255,255,.1);color:#fff;cursor:pointer;white-space:nowrap}
+.mo-modal-btn:hover{background:rgba(255,255,255,.25)}
+.mo-modal-btn.green{border-color:#4ade80;color:#4ade80}
+.mo-modal-close{width:28px;height:28px;border:none;background:rgba(255,255,255,.15);color:#fff;border-radius:4px;cursor:pointer;font-size:16px;display:flex;align-items:center;justify-content:center}
+.mo-modal-close:hover{background:rgba(255,255,255,.3)}
+.mo-modal-body{flex:1;overflow:auto;padding:12px}
+.mo-table{width:100%;border-collapse:collapse;font-size:11.5px}
+.mo-table th{position:sticky;top:0;background:#1e3a5f;color:#e2e8f0;padding:6px 8px;font-size:9.5px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;text-align:left;border-right:1px solid #2d4e7a;white-space:nowrap;z-index:1}
+.mo-table td{border-bottom:1px solid #f1f5f9;border-right:1px solid #f8fafc;padding:5px 8px;vertical-align:middle;white-space:nowrap}
+.mo-table tbody tr:nth-child(even) td{background:#f8fafc}
+.mo-table tbody tr:hover td{background:#eff6ff}
+.mo-table td:last-child,.mo-table th:last-child{border-right:none}
+.mo-st-badge{display:inline-block;padding:1px 6px;border-radius:3px;font-size:9.5px;font-weight:700}
+.mo-st-20{background:#dcfce7;color:#15803d}
+.mo-st-40{background:#fef9c3;color:#854d0e}
+.mo-st-60{background:#dbeafe;color:#1d4ed8}
+.mo-st-other{background:#f1f5f9;color:#475569}
+/* Scanner card clickable cards */
+.scan-mo-card{cursor:pointer;border:1px solid #c7d2fe;border-radius:4px;padding:6px 10px;background:#f0f4ff;margin-bottom:4px;display:flex;justify-content:space-between;align-items:center}
+.scan-mo-card:hover{background:#e0e7ff}
+.scan-mo-label{font-size:10px;color:#6366f1;font-weight:700;text-transform:uppercase}
+.scan-mo-val{font-size:16px;font-weight:800;color:#312e81}
+.scan-mo-hint{font-size:9.5px;color:#6366f1;margin-top:1px}
 </style>
 </head>
 <body>
@@ -1579,6 +1610,23 @@ function buildBowFlatIdx(){
 }
 
 
+
+function applyMoList(rows,ts){
+  S.moListData=rows;
+  S.moListData._ts=ts;
+  // Build index: Product → array of operation rows (only W/C-Comp starting with digit)
+  const idx=new Map();
+  for(const r of rows){
+    const prod=str(r['Product']||'');
+    if(!prod) continue;
+    const wc=str(r['W/C-Comp']||'');
+    const isOpRow=/^\d/.test(wc);  // W/C-Comp starts with digit
+    if(!isOpRow) continue;
+    if(!idx.has(prod)) idx.set(prod,[]);
+    idx.get(prod).push(r);
+  }
+  S.moListIdx=idx;
+}
 function applyInTransit(rows,ts){
   S.inTransitData=rows;
   S.inTransitData._ts=ts;
@@ -4843,6 +4891,8 @@ function renderPlanificare(){
   const wkSep=dv('');wkSep.style.cssText='width:1px;height:22px;background:var(--border);margin:0 6px';tb.appendChild(wkSep);
   const wkLbl=sp('','');wkLbl.style.cssText='font-size:10px;font-weight:600;color:var(--text3);margin-right:4px';wkLbl.textContent='Săptămâna:';
   tb.appendChild(wkLbl);
+  const moE=await dbLoad('molist');
+  if(moE?.rows?.length){applyMoList(moE.rows,moE.ts);}
   if(!S.planCurrentWeek) S.planCurrentWeek=getCurrentWeekLabel();
   const wkInp=el('input');wkInp.type='text';wkInp.value=S.planCurrentWeek;
   wkInp.style.cssText='height:28px;width:70px;padding:0 8px;border:1px solid var(--border);border-radius:4px;font-size:12px;font-weight:700;color:var(--accent);text-align:center';
@@ -7069,6 +7119,118 @@ document.addEventListener('contextmenu', ev=>{
   showUniversalCtxMenu(ev, colKey, cellText, foundAttr, colLabel);
 });
 
+
+function openMoModal(productCode){
+  document.querySelector('.mo-overlay')?.remove();
+  const rows=(S.moListIdx?.get(productCode)||[]);
+
+  const overlay=dv('mo-overlay');
+  const modal=dv('mo-modal');
+
+  // Header
+  const hdr=dv('mo-modal-hdr');
+  const hdrLeft=dv('');
+  hdrLeft.appendChild(sp('mo-modal-title','📋 Manufacturing Orders — '+productCode));
+  const moCount=new Set(rows.map(r=>str(r['MO']))).size;
+  hdrLeft.appendChild(sp('mo-modal-sub',`${rows.length} operatii · ${moCount} MO-uri`));
+  hdr.appendChild(hdrLeft);
+  const hdrBtns=dv('mo-modal-hdr-btns');
+  const excelBtn=el('button','mo-modal-btn green');excelBtn.textContent='⬇ Excel';
+  excelBtn.addEventListener('click',()=>exportMoExcel(productCode,rows));
+  const pdfBtn=el('button','mo-modal-btn');pdfBtn.textContent='🖨 PDF';
+  pdfBtn.addEventListener('click',()=>printMoList(productCode,rows));
+  const closeBtn=el('button','mo-modal-close');closeBtn.innerHTML='✕';
+  closeBtn.addEventListener('click',()=>overlay.remove());
+  hdrBtns.appendChild(excelBtn);hdrBtns.appendChild(pdfBtn);hdrBtns.appendChild(closeBtn);
+  hdr.appendChild(hdrBtns);
+  modal.appendChild(hdr);
+
+  // Body
+  const body=dv('mo-modal-body');
+  if(!rows.length){
+    body.innerHTML='<div style="padding:24px;text-align:center;color:var(--text3);font-size:12px">Nu există Manufacturing Orders pentru acest produs în fișierul MO List.</div>';
+  } else {
+    const tbl=el('table','mo-table');
+    const thead=el('thead');const hr=el('tr');
+    ['MO','MO St','W/C','Denumire','Order Qty','Report Qty','Report Date'].forEach(h=>{
+      const th=el('th');th.textContent=h;hr.appendChild(th);
+    });
+    thead.appendChild(hr);tbl.appendChild(thead);
+    const tbody=el('tbody');
+    rows.forEach((r,i)=>{
+      const tr=el('tr');
+      const mo=str(r['MO']||'');
+      const moSt=str(r['MO st']||'');
+      const stCls=moSt==='20'?'mo-st-20':moSt==='40'?'mo-st-40':moSt==='60'?'mo-st-60':'mo-st-other';
+      const wc=str(r['W/C-Comp']||'');
+      const name=str(r['Name']||'');
+      const oqty=parseFloat(r['Order qty'])||0;
+      const rqty=parseFloat(r['Report qty'])||0;
+      const rdt=str(r['Report dt']||'');
+      const fmtDt=v=>{if(!v||v==='0')return'—';const s=String(v).replace(/[^0-9]/g,'');if(s.length===8)return`${s.slice(6,8)}.${s.slice(4,6)}.${s.slice(0,4)}`;return v;};
+      [mo,'','wc',name,oqty,rqty,'rdt'].forEach((v,ci)=>{
+        const td=el('td');
+        if(ci===0){td.textContent=mo;td.style.fontWeight='700';td.style.fontFamily='monospace';}
+        else if(ci===1){const badge=sp('mo-st-badge '+stCls,moSt);td.appendChild(badge);}
+        else if(ci===2){td.textContent=wc;td.style.fontFamily='monospace';}
+        else if(ci===3){td.textContent=name;td.title=name;}
+        else if(ci===4){td.textContent=oqty.toLocaleString('ro-RO');td.style.textAlign='right';}
+        else if(ci===5){
+          td.textContent=rqty.toLocaleString('ro-RO');
+          td.style.textAlign='right';
+          if(rqty>0) td.style.color='#15803d';
+          if(rqty>=oqty&&oqty>0){td.style.fontWeight='700';td.style.background='#dcfce7';}
+        }
+        else if(ci===6){td.textContent=fmtDt(rdt);}
+        tr.appendChild(td);
+      });
+      tbody.appendChild(tr);
+    });
+    tbl.appendChild(tbody);body.appendChild(tbl);
+  }
+  modal.appendChild(body);
+  overlay.appendChild(modal);
+  overlay.addEventListener('click',e=>{if(e.target===overlay)overlay.remove();});
+  document.addEventListener('keydown',function esc(e){if(e.key==='Escape'){overlay.remove();document.removeEventListener('keydown',esc);}});
+  document.body.appendChild(overlay);
+}
+
+function exportMoExcel(productCode,rows){
+  const wb=XLSX.utils.book_new();
+  const ws=XLSX.utils.aoa_to_sheet([
+    ['MO','MO St','W/C-Comp','Name','Order qty','Report qty','Report dt'],
+    ...rows.map(r=>[str(r['MO']),str(r['MO st']),str(r['W/C-Comp']),str(r['Name']),parseFloat(r['Order qty'])||0,parseFloat(r['Report qty'])||0,str(r['Report dt']||'—')])
+  ]);
+  ws['!cols']=[{wch:14},{wch:7},{wch:10},{wch:36},{wch:11},{wch:11},{wch:12}];
+  XLSX.utils.book_append_sheet(wb,ws,'MO List');
+  XLSX.writeFile(wb,`MO_List_${productCode}_${new Date().toISOString().slice(0,10)}.xlsx`);
+}
+
+function printMoList(productCode,rows){
+  const w=window.open('','_blank','width=900,height=700');
+  if(!w){alert('Permite popup-urile.');return;}
+  const bodyRows=rows.map((r,i)=>{
+    const moSt=str(r['MO st']||'');
+    const stColor=moSt==='20'?'#15803d':moSt==='40'?'#854d0e':moSt==='60'?'#1d4ed8':'#475569';
+    const rqty=parseFloat(r['Report qty'])||0;
+    const oqty=parseFloat(r['Order qty'])||0;
+    const rdt=v=>{if(!v||v==='0')return'—';const s=String(v).replace(/[^0-9]/g,'');return s.length===8?`${s.slice(6,8)}.${s.slice(4,6)}.${s.slice(0,4)}`:v;};
+    return `<tr style="${i%2?'background:#f8fafc':''}"><td style="font-family:monospace;font-weight:700">${str(r['MO'])}</td><td style="color:${stColor};font-weight:700">${moSt}</td><td style="font-family:monospace">${str(r['W/C-Comp'])}</td><td>${str(r['Name'])}</td><td style="text-align:right">${oqty.toLocaleString('ro-RO')}</td><td style="text-align:right;${rqty>=oqty&&oqty>0?'color:#15803d;font-weight:700':rqty>0?'color:#15803d':''}">${rqty.toLocaleString('ro-RO')}</td><td>${rdt(str(r['Report dt']||''))}</td></tr>`;
+  }).join('');
+  const moCount=new Set(rows.map(r=>str(r['MO']))).size;
+  w.document.write(`<!DOCTYPE html><html><head><meta charset="UTF-8"><title>MO List — ${productCode}</title>
+<style>*{box-sizing:border-box;margin:0;padding:0}body{font-family:Arial;font-size:8.5pt;padding:12mm}
+h2{font-size:12pt;margin-bottom:3px}p.sub{font-size:9pt;color:#555;margin-bottom:10px}
+table{width:100%;border-collapse:collapse}
+th{background:#1e293b;color:#fff;padding:4px 7px;font-size:8pt;font-weight:700;text-align:left;border:1px solid #0f172a}
+td{padding:3px 7px;border:1px solid #e2e8f0;font-size:8pt}
+@page{size:A4 landscape;margin:10mm}</style></head><body>
+<h2>Manufacturing Orders — ${productCode}</h2>
+<p class="sub">${rows.length} operatii · ${moCount} MO-uri · ${new Date().toLocaleDateString('ro-RO')}</p>
+<table><thead><tr><th>MO</th><th>MO St</th><th>W/C-Comp</th><th>Denumire</th><th>Order Qty</th><th>Report Qty</th><th>Report Date</th></tr></thead>
+<tbody>${bodyRows}</tbody></table></body></html>`);
+  w.document.close();setTimeout(()=>w.print(),400);
+}
 function renderScanner(){
   const page=dv('scanner-page');
 
@@ -7297,16 +7459,45 @@ function showScanResult(rawCode,resultArea,histWrap){
     const st=result.stock;
     const grid=dv('scan-stock-grid');
 
-    const mkCard=(label,val)=>{
+    const mkCard=(label,val,onClick,hint)=>{
       const card=dv('scan-stock-card');
+      if(onClick){card.classList.add('scan-mo-card');card.style.cursor='pointer';}
       card.appendChild(sp('scan-stock-label',label));
       const cls=val>0?'pos':val<0?'neg':'zero';
       card.appendChild(sp(`scan-stock-val ${cls}`,fmtN(val)));
+      if(hint){const h=sp('scan-mo-hint',hint);card.appendChild(h);}
+      if(onClick) card.addEventListener('click',onClick);
       return card;
     };
     grid.appendChild(mkCard('On Hand',st.onHand||0));
-    grid.appendChild(mkCard('On MO',st.onMO||0));
-    grid.appendChild(mkCard('Total WIP',st.totalWIP||0));
+
+    // On MO — clickable if moListIdx has data
+    const moRows=S.moListIdx?.get(result.code)||[];
+    const onMoCard=mkCard('On MO',st.onMO||0,
+      moRows.length?()=>openMoModal(result.code):null,
+      moRows.length?`${moRows.length} op · click pt detalii`:null
+    );
+    grid.appendChild(onMoCard);
+
+    // Total WIP — clickable to show breakdown
+    const totalWIPval=st.totalWIP||0;
+    const wipEntries=Object.entries(st.wipByWC||{}).filter(([,q])=>q!==0);
+    const wipHint=wipEntries.length?wipEntries.map(([wc,q])=>`${wcLabel(wc)}: ${fmtN(q)}`).join(', ').slice(0,60)+(wipEntries.length>3?'...':''):null;
+    const wipCard=mkCard('Total WIP',totalWIPval,
+      wipEntries.length?()=>{
+        const d=document.createElement('div');
+        d.style.cssText='position:fixed;inset:0;background:rgba(0,0,0,.4);z-index:8001;display:flex;align-items:center;justify-content:center';
+        const box=document.createElement('div');
+        box.style.cssText='background:#fff;border-radius:8px;padding:16px 20px;min-width:260px;max-width:90vw;box-shadow:0 8px 32px rgba(0,0,0,.2)';
+        box.innerHTML='<div style="font-weight:800;font-size:13px;margin-bottom:12px;color:#1e3a5f">WIP detaliat — '+result.code+'</div>'+
+          wipEntries.sort((a,b)=>b[1]-a[1]).map(([wc,q])=>`<div style="display:flex;justify-content:space-between;padding:4px 0;border-bottom:1px solid #f1f5f9;font-size:12px"><span>${wcLabel(wc)}</span><b style="color:${q>0?'#15803d':q<0?'#dc2626':'#475569'}">${fmtN(q)}</b></div>`).join('')+
+          '<button onclick="this.closest('div[style*=fixed]').remove()" style="margin-top:12px;width:100%;height:32px;border:1px solid #e2e8f0;border-radius:4px;cursor:pointer;font-size:12px;background:#f8f9fb">Inchide</button>';
+        d.appendChild(box);d.addEventListener('click',e=>{if(e.target===d)d.remove();});
+        document.body.appendChild(d);
+      }:null,
+      wipHint
+    );
+    grid.appendChild(wipCard);
 
     // Available (On Hand + WIP, min 0)
     const avail=Math.max(0,st.onHand||0)+Math.max(0,st.totalWIP||0);
@@ -7314,13 +7505,6 @@ function showScanResult(rawCode,resultArea,histWrap){
     availCard.style.borderColor=avail>0?'#86efac':'#e5e7eb';
     grid.appendChild(availCard);
     wrap.appendChild(grid);
-
-    // WIP by WC
-    if(st.totalWIP>0&&Object.keys(st.wipByWC||{}).length>0){
-      const wcs=dv('scan-wip-wcs');
-      wcs.textContent='WIP: '+Object.entries(st.wipByWC).map(([wc,q])=>`${wcLabel(wc)}: ${fmtN(q)}`).join(' · ');
-      wrap.appendChild(wcs);
-    }
 
     // Plan info
     const planQ=planQty(result.code);
