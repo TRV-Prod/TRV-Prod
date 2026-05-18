@@ -3789,6 +3789,7 @@ function renderOrderBook(){
   buildObTable(tableWrap);
   updateObCount();
 
+  window._updateObCount=updateObCount;
   function updateObCount(){
     const c=document.getElementById('ob-count');
     if(c)c.textContent=`${getObRows().length.toLocaleString()} / ${(S.obData||[]).length.toLocaleString()} comenzi`;
@@ -4005,8 +4006,9 @@ function _buildObFull(wrap){
       S.obFilter.colFilters[col]=e.target.value;
       // Rebuild only tbody — keep thead intact to preserve focus
       rebuildObBody(wrap);
-      const c=document.getElementById('ob-count');
-      if(c)c.textContent=`${getObRows().length.toLocaleString()} / ${(S.obData||[]).length.toLocaleString()} comenzi`;
+      // Update full stats bar
+      if(window._updateObCount) window._updateObCount();
+      else{const c=document.getElementById('ob-count');if(c)c.textContent=`${getObRows().length.toLocaleString()} / ${(S.obData||[]).length.toLocaleString()} comenzi`;}
       // Restore focus and cursor
       const restored=wrap.querySelector(`input[data-col-filter="${activeCol}"]`);
       if(restored){restored.focus();try{restored.setSelectionRange(selStart,selEnd);}catch(_){}}
@@ -6937,7 +6939,7 @@ function getCtxMenuConfig(filterAttr, colKey){
       setFilter:  (k,v)=>{S.obFilter.colFilters[k]=v;},
       clearFilter:(k)=>{delete S.obFilter.colFilters[k];},
       clearAll:   ()=>{S.obFilter.colFilters={};},
-      rebuild:    ()=>{const w=document.getElementById('ob-table-wrap');if(w){buildObTable(w);updateObCount();}},
+      rebuild:    ()=>{const w=document.getElementById('ob-table-wrap');if(w){buildObTable(w);if(window._updateObCount)window._updateObCount();}},
       inputSel:   `input[data-col-filter="${colKey}"]`,
       allInputSel:'input[data-col-filter]',
     },
