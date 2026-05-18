@@ -1154,9 +1154,9 @@ const S={
     q:'',
     sortCol:'Confirm dt', sortDir:1,
     weekFilter:'current',   // 'current'|'next'|'2weeks'|'4weeks'|'all'  — default: current week + 0Late
-    colOrder:['Entry dt','Confirm dt','Request dt','Request_week','Confirm_week','Item_no','Alias_no','Item_name','Customer_no','Customer_name','Sales price EUR','Ordered','Allocated','Delivered','Invoiced','Open qty','Valoare de livrat EUR','Net weight','_plan'],
-    visibleCols:new Set(['Confirm dt','Request dt','Confirm_week','Item_no','Item_name','Customer_name','Sales price EUR','Ordered','Open qty','Valoare de livrat EUR','_plan']),
-    colWidths:{'Entry dt':90,'Confirm dt':95,'Request dt':95,'Request_week':90,'Confirm_week':90,'Item_no':140,'Alias_no':140,'Item_name':200,'Customer_no':90,'Customer_name':200,'Sales price EUR':110,'Ordered':80,'Allocated':80,'Delivered':80,'Invoiced':80,'Open qty':80,'Valoare de livrat EUR':130,'Net weight':90,'_plan':130},
+    colOrder:['Entry dt','Confirm dt','Request dt','Request_week','Confirm_week','Item_no','Alias_no','Item_name','Customer_no','Customer_name','Sales price EUR','Ordered','Allocated','Delivered','Invoiced','Open qty','Valoare de livrat EUR','Net weight','_planWeeks','_plan'],
+    visibleCols:new Set(['Confirm dt','Request dt','Confirm_week','Item_no','Item_name','Customer_name','Sales price EUR','Ordered','Open qty','Valoare de livrat EUR','_planWeeks','_plan']),
+    colWidths:{'Entry dt':90,'Confirm dt':95,'Request dt':95,'Request_week':90,'Confirm_week':90,'Item_no':140,'Alias_no':140,'Item_name':200,'Customer_no':90,'Customer_name':200,'Sales price EUR':110,'Ordered':80,'Allocated':80,'Delivered':80,'Invoiced':80,'Open qty':80,'Valoare de livrat EUR':130,'Net weight':90,'_planWeeks':150,'_plan':130},
     colFilters:{},
   },
   zoom:{structura:100, stocuri:100, fisiere:100, orderbook:100, rapoarte:100, planificare:100, pwc:100},
@@ -3582,7 +3582,7 @@ function renderStockTable(wrap){buildTable(wrap);}
 /* ═══════════════════════════════════════════════════════════════
    ORDER BOOK MODULE
 ═══════════════════════════════════════════════════════════════ */
-const OB_COLS_ALL=['Entry dt','Confirm dt','Request dt','Request_week','Confirm_week','Item_no','Alias_no','Item_name','Customer_no','Customer_name','Sales price EUR','Ordered','Allocated','Delivered','Invoiced','Open qty','Valoare de livrat EUR','Net weight','_plan'];
+const OB_COLS_ALL=['Entry dt','Confirm dt','Request dt','Request_week','Confirm_week','Item_no','Alias_no','Item_name','Customer_no','Customer_name','Sales price EUR','Ordered','Allocated','Delivered','Invoiced','Open qty','Valoare de livrat EUR','Net weight','_planWeeks','_plan'];
 const OB_NUMERIC=new Set(['Sales price EUR','Ordered','Allocated','Delivered','Invoiced','Open qty','Valoare de livrat EUR','Net weight']);
 const OB_DATE=new Set(['Entry dt','Confirm dt','Request dt']);
 
@@ -3831,7 +3831,31 @@ function _buildObTbody(){
       const td=el('td');td.setAttribute('data-col',col);
       td.style.width=(f.colWidths[col]||120)+'px';
       const v=row[col];
-      if(col==='_plan'){
+      if(col==='_planWeeks'){
+        // Collect all plan weeks for this itemNo from all plan entries
+        const planEntry=S.planData?.get(itemNo);
+        if(planEntry?.entries?.length){
+          // Each entry has a _obKey — look up the confirm_week of that OB row
+          const weeks=new Set();
+          for(const e of planEntry.entries){
+            if(!e._obKey) continue;
+            // Find the OB row by _obKey
+            const obRow=S.obData?.find(r=>r._obKey===e._obKey);
+            const wk=obRow?.['Confirm_week']||obRow?.['Request_week'];
+            if(wk) weeks.add(String(wk).trim());
+          }
+          if(weeks.size){
+            const pill=sp('');
+            pill.style.cssText='font-size:10px;font-weight:700;color:#6366f1;white-space:normal;line-height:1.4';
+            pill.textContent=[...weeks].sort().map(w=>'W'+String(w).replace(/^20\d{2}-?/,'')).join(', ');
+            td.appendChild(pill);
+          } else {
+            td.textContent='—';td.style.color='#9ca3af';
+          }
+        } else {
+          td.textContent='—';td.style.color='#9ca3af';
+        }
+      } else if(col==='_plan'){
         const ps=rowPlanStatus(row);
         const wrap2=dv('ob-plan-input-wrap');
 
@@ -3908,7 +3932,8 @@ function _buildObFull(wrap){
     const th=el('th');th.style.width=w+'px';th.setAttribute('data-col',col);
 
     const inner=dv('ob-th-inner');
-    const lbl=sp('ob-th-label',col);
+    const _OB_COL_LABELS={'_plan':'Plan','_planWeeks':'Săpt. planif.'};
+    const lbl=sp('ob-th-label',_OB_COL_LABELS[col]||col);
     inner.appendChild(lbl);
     if(f.sortCol===col)inner.appendChild(sp('ob-th-sort',f.sortDir===1?'↑':'↓'));
 
@@ -6444,14 +6469,15 @@ function buildDctrStatsPanel(data){
 
   const body=dv('dctr-stats-body');
   body.id='dctr-stats-body';
-  let open=false;
-  body.style.display='none';
-  toggle.style.transform='rotate(-90deg)';
+  // Persist open state on S.dctrReport so it survives refreshDctrStats rebuilds
+  if(!S.dctrReport._statsOpen) S.dctrReport._statsOpen=false;
+  body.style.display=S.dctrReport._statsOpen?'grid':'none';
+  toggle.style.transform=S.dctrReport._statsOpen?'':'rotate(-90deg)';
   hdr.addEventListener('click',()=>{
-    open=!open;
-    body.style.display=open?'grid':'none';
-    toggle.style.transform=open?'':'rotate(-90deg)';
-    if(open) refreshDctrStats();  // rebuild on expand to get fresh data
+    S.dctrReport._statsOpen=!S.dctrReport._statsOpen;
+    body.style.display=S.dctrReport._statsOpen?'grid':'none';
+    toggle.style.transform=S.dctrReport._statsOpen?'':'rotate(-90deg)';
+    if(S.dctrReport._statsOpen) refreshDctrStats();
   });
 
   if(!data.length){
@@ -6557,12 +6583,16 @@ function buildDctrStatCard(title, entries){
 
 function refreshDctrStats(){
   const body=document.getElementById('dctr-stats-body');
-  if(!body||body.style.display==='none') return;  // collapsed — skip
+  if(!body) return;
+  // If panel is closed, just mark dirty — it will rebuild on next open
+  if(!S.dctrReport._statsOpen){body.style.display='none';return;}
   const panel=body.parentElement;
-  // Rebuild only the stats body, keep header intact
   const newPanel=buildDctrStatsPanel(getDctrRows());
   const newBody=newPanel.querySelector('#dctr-stats-body');
-  if(newBody) panel.replaceChild(newBody, body);
+  if(newBody){
+    newBody.style.display='grid';  // ensure visible after replace
+    panel.replaceChild(newBody, body);
+  }
 }
 function buildDctrTable(wrap){
   wrap.innerHTML='';
