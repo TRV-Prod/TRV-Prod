@@ -3709,16 +3709,15 @@ function getObRows(){
     for(const[col,fval] of Object.entries(f.colFilters||{})){
       if(!fval)continue;
       if(col==='_planWeeks'){
-        // Virtual column — check this specific OB row's _obKey against plan entries
+        // Virtual column: add current week only if row is planned (full or partial)
         const itemNo=str(r['Item_no']);
-        const obKey=r._obKey;
-        const planEntry=S.planData?.get(itemNo);
         const weeks=new Set();
-        if(planEntry?.entries?.length&&S.planCurrentWeek){
-          if(planEntry.entries.some(e=>e._obKey===obKey)) weeks.add(S.planCurrentWeek);
+        if(S.planCurrentWeek){
+          const ps=rowPlanStatus(r);
+          if(ps.status==='full'||ps.status==='partial') weeks.add(S.planCurrentWeek);
         }
         for(const snap of (S.planHistory||[])){
-          if(snap.entries?.some(e=>e.itemNo===itemNo&&(e.obKey===obKey||!e.obKey))) weeks.add(snap.week);
+          if(snap.entries?.some(e=>e.itemNo===itemNo)) weeks.add(snap.week);
         }
         const weeksStr=[...weeks].sort().join(', ');
         if(!weeksStr.toLowerCase().includes(fval.toLowerCase()))return false;
@@ -3922,17 +3921,15 @@ function _buildObTbody(){
       td.style.width=(f.colWidths[col]||120)+'px';
       const v=row[col];
       if(col==='_planWeeks'){
-        const planEntry=S.planData?.get(itemNo);
-        const obKey=row._obKey;  // unique key for this specific OB line
         const weeks=new Set();
-        // Add current week ONLY if this specific OB row is planned (matched by _obKey)
-        if(planEntry?.entries?.length&&S.planCurrentWeek){
-          const thisRowPlanned=planEntry.entries.some(e=>e._obKey===obKey);
-          if(thisRowPlanned) weeks.add(S.planCurrentWeek);
+        // Add current week if this OB row is fully or partially planned
+        if(S.planCurrentWeek){
+          const ps=rowPlanStatus(row);
+          if(ps.status==='full'||ps.status==='partial') weeks.add(S.planCurrentWeek);
         }
-        // Add weeks from saved history (also check by itemNo+obKey if available, else itemNo)
+        // Add weeks from saved history
         for(const snap of (S.planHistory||[])){
-          if(snap.entries?.some(e=>e.itemNo===itemNo&&(e.obKey===obKey||!e.obKey))) weeks.add(snap.week);
+          if(snap.entries?.some(e=>e.itemNo===itemNo)) weeks.add(snap.week);
         }
         if(weeks.size){
           const pill=sp('');
