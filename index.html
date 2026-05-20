@@ -4134,11 +4134,28 @@ function calcNecesarMaterii(){
     if(weeks34w.has(wk)) fpQty34w.set(fp, (fpQty34w.get(fp)||0)+qty);
   }
 
+  // Deduct FP stock (onHand + WIP) from OB quantities before BOM walk
+  // Priority: deduct from 0-2W first, remainder from 3-4W
+  for(const fp of new Set([...fpQty02w.keys(), ...fpQty34w.keys()])){
+    const fpStock = S.stockIdx?.get(fp);
+    if(!fpStock) continue;
+    const avail = Math.max(0, fpStock.onHand||0) + Math.max(0, fpStock.totalWIP||0);
+    if(avail <= 0) continue;
+    const q02 = fpQty02w.get(fp)||0;
+    const q34 = fpQty34w.get(fp)||0;
+    const deduct02 = Math.min(avail, q02);
+    const deduct34 = Math.min(avail - deduct02, q34);
+    if(deduct02 > 0) fpQty02w.set(fp, q02 - deduct02);
+    if(deduct34 > 0) fpQty34w.set(fp, q34 - deduct34);
+  }
+
   // Step 2: For each FP walk BOM and collect BUY materials per bucket
+  // At each MAKE sub-assembly, subtract its own stock before recursing
   const matMap = new Map();
 
   function collectBuy(fpCtx, compNo, parentNeed02, parentNeed34, vis){
     if(vis.has(compNo)) return;
+    if(parentNeed02 <= 0 && parentNeed34 <= 0) return;
     const vNext = new Set(vis); vNext.add(compNo);
     const rows = S.bomIdx?.get(`${fpCtx}__${compNo}`) || [];
     for(const row of rows){
@@ -4165,7 +4182,17 @@ function calcNecesarMaterii(){
         m.needed34w += needed34;
         m.fps.set(fpCtx, (m.fps.get(fpCtx)||0)+needed02+needed34);
       } else if(type==='MAKE'){
-        collectBuy(fpCtx, matNo, needed02, needed34, vNext);
+        // Subtract sub-assembly stock before propagating need to its children
+        const subStock = S.stockIdx?.get(matNo);
+        const subAvail = subStock ? Math.max(0,subStock.onHand||0)+Math.max(0,subStock.totalWIP||0) : 0;
+        let eff02 = needed02, eff34 = needed34;
+        if(subAvail > 0){
+          const d02 = Math.min(subAvail, eff02);
+          const d34 = Math.min(subAvail - d02, eff34);
+          eff02 = Math.max(0, eff02 - d02);
+          eff34 = Math.max(0, eff34 - d34);
+        }
+        collectBuy(fpCtx, matNo, eff02, eff34, vNext);
       }
     }
   }
