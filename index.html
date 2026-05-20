@@ -4153,8 +4153,9 @@ function calcNecesarMaterii(){
   // At each MAKE sub-assembly, subtract its own stock before recursing
   const matMap = new Map();
 
-  // collectBuy: both needed and fps use eff quantities (net after stock deductions at each level)
-  // eff02/34 = what actually needs to be produced at this level
+  // collectBuy: walk BOM from FP level with eff quantities (already net of FP stock)
+  // Sub-assembly stock is NOT deducted here — the FP-level deduction is sufficient.
+  // Sub-assembly WIP = material already consumed; sub-assembly onHand is captured in FP stock.
   function collectBuy(fpCtx, compNo, eff02, eff34, vis){
     if(vis.has(compNo)) return;
     const vNext = new Set(vis); vNext.add(compNo);
@@ -4181,20 +4182,9 @@ function calcNecesarMaterii(){
         const m = matMap.get(matNo);
         m.needed02w += child02;
         m.needed34w += child34;
-        // fps: net quantity this FP still needs produced × BOM qty
         m.fps.set(fpCtx, (m.fps.get(fpCtx)||0) + child02 + child34);
       } else if(type==='MAKE'){
-        // Subtract sub-assembly stock before recursing (only from eff)
-        const subStock = S.stockIdx?.get(matNo);
-        const subAvail = subStock ? Math.max(0,subStock.onHand||0)+Math.max(0,subStock.totalWIP||0) : 0;
-        let sub02 = child02, sub34 = child34;
-        if(subAvail > 0){
-          const d02 = Math.min(subAvail, sub02);
-          const d34 = Math.min(subAvail - d02, sub34);
-          sub02 = Math.max(0, sub02 - d02);
-          sub34 = Math.max(0, sub34 - d34);
-        }
-        collectBuy(fpCtx, matNo, sub02, sub34, vNext);
+        collectBuy(fpCtx, matNo, child02, child34, vNext);
       }
     }
   }
