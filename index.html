@@ -4155,7 +4155,6 @@ function calcNecesarMaterii(){
 
   function collectBuy(fpCtx, compNo, parentNeed02, parentNeed34, vis){
     if(vis.has(compNo)) return;
-    if(parentNeed02 <= 0 && parentNeed34 <= 0) return;
     const vNext = new Set(vis); vNext.add(compNo);
     const rows = S.bomIdx?.get(`${fpCtx}__${compNo}`) || [];
     for(const row of rows){
@@ -4182,7 +4181,8 @@ function calcNecesarMaterii(){
         m.needed34w += needed34;
         m.fps.set(fpCtx, (m.fps.get(fpCtx)||0)+needed02+needed34);
       } else if(type==='MAKE'){
-        // Subtract sub-assembly stock before propagating need to its children
+        // Sub-assembly MAKE: subtract its own stock from need before recursing into its BOM
+        // This ensures we only request raw materials for the sub-qty that needs to be produced
         const subStock = S.stockIdx?.get(matNo);
         const subAvail = subStock ? Math.max(0,subStock.onHand||0)+Math.max(0,subStock.totalWIP||0) : 0;
         let eff02 = needed02, eff34 = needed34;
@@ -4192,6 +4192,8 @@ function calcNecesarMaterii(){
           eff02 = Math.max(0, eff02 - d02);
           eff34 = Math.max(0, eff34 - d34);
         }
+        // Always recurse even if eff=0, so all materials appear in the report
+        // Materials with needed=0 will show as OK (status green) rather than missing
         collectBuy(fpCtx, matNo, eff02, eff34, vNext);
       }
     }
