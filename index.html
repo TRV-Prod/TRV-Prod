@@ -3709,15 +3709,12 @@ function getObRows(){
     for(const[col,fval] of Object.entries(f.colFilters||{})){
       if(!fval)continue;
       if(col==='_planWeeks'){
-        // Virtual column: add current week only if row is planned (full or partial)
-        const itemNo=str(r['Item_no']);
         const weeks=new Set();
-        if(S.planCurrentWeek){
-          const ps=rowPlanStatus(r);
-          if(ps.status==='full'||ps.status==='partial') weeks.add(S.planCurrentWeek);
+        if(S.planCurrentWeek && planQtyForRow(r._obKey) > 0){
+          weeks.add(S.planCurrentWeek);
         }
         for(const snap of (S.planHistory||[])){
-          if(snap.entries?.some(e=>e.itemNo===itemNo)) weeks.add(snap.week);
+          if(snap.entries?.some(e=>e.obKey===r._obKey && (e.qty||0)>0)) weeks.add(snap.week);
         }
         const weeksStr=[...weeks].sort().join(', ');
         if(!weeksStr.toLowerCase().includes(fval.toLowerCase()))return false;
@@ -3922,14 +3919,13 @@ function _buildObTbody(){
       const v=row[col];
       if(col==='_planWeeks'){
         const weeks=new Set();
-        // Add current week if this OB row is fully or partially planned
-        if(S.planCurrentWeek){
-          const ps=rowPlanStatus(row);
-          if(ps.status==='full'||ps.status==='partial') weeks.add(S.planCurrentWeek);
+        // Add current week ONLY if a specific quantity from this exact OB row is in plan
+        if(S.planCurrentWeek && planQtyForRow(row._obKey) > 0){
+          weeks.add(S.planCurrentWeek);
         }
-        // Add weeks from saved history
+        // Add weeks from saved history where this specific OB row was allocated
         for(const snap of (S.planHistory||[])){
-          if(snap.entries?.some(e=>e.itemNo===itemNo)) weeks.add(snap.week);
+          if(snap.entries?.some(e=>e.obKey===row._obKey && (e.qty||0)>0)) weeks.add(snap.week);
         }
         if(weeks.size){
           const pill=sp('');
@@ -4833,14 +4829,19 @@ async function savePlanSnapshot(weekLabel){
   // Build snapshot entries
   const entries=[];
   for(const [itemNo,plan] of S.planData){
-    entries.push({
-      itemNo,
-      itemName:plan.entries[0]?.itemName||'',
-      customer:[...new Set(plan.entries.map(e=>e.customer).filter(Boolean))].join(', '),
-      qty:plan.totalQty,
-      salesPrice:plan.entries[0]?.salesPrice||0,
-      obs:S.planObs[itemNo]||'',
-    });
+    // Store each OB allocation separately so history can track per-row
+    for(const e of plan.entries){
+      if((e.qty||0)<=0) continue;
+      entries.push({
+        itemNo,
+        itemName:e.itemName||'',
+        customer:e.customer||'',
+        qty:e.qty,
+        obKey:e._obKey||null,
+        salesPrice:e.salesPrice||0,
+        obs:S.planObs[itemNo]||'',
+      });
+    }
   }
   const snapshot={week:weekLabel,savedAt:new Date().toISOString(),entries};
   // Load existing history, upsert by week
