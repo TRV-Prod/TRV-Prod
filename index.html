@@ -4917,6 +4917,22 @@ function getISOWeek(d){
 function getCurrentWeekLabel(){
   return 'W'+getISOWeek(new Date());
 }
+// Returns 'YYYY-WW' key matching Confirm_week format in OB
+function getISOWeekKey(d){
+  const dt=new Date(d||Date.now());dt.setHours(0,0,0,0);
+  dt.setDate(dt.getDate()+3-(dt.getDay()+6)%7);
+  const week1=new Date(dt.getFullYear(),0,4);
+  const wn=Math.round(((dt-week1)/86400000-3+(week1.getDay()+6)%7)/7)+1;
+  return dt.getFullYear()+'-'+String(wn).padStart(2,'0');
+}
+function getNextWeekKey(wkKey){
+  if(!wkKey||wkKey==='0Late') return getISOWeekKey(new Date(Date.now()+7*86400000));
+  const [y,w]=wkKey.split('-').map(Number);
+  const jan4=new Date(y,0,4);
+  const wMon=new Date(jan4.getTime()+((w-1)*7-(jan4.getDay()+6)%7)*86400000);
+  wMon.setDate(wMon.getDate()+7);
+  return getISOWeekKey(wMon);
+}
 
 // ── Save plan snapshot to Supabase ──
 async function savePlanSnapshot(weekLabel){
@@ -7491,6 +7507,7 @@ function buildBOMForItem(itemNo, qty){
 }
 
 function renderPlanV2(){
+  try{
   initPlanV2State();
   const st=S.planV2State;
   const page=dv('pv2-page');
@@ -7747,6 +7764,12 @@ function renderPlanV2(){
   rebuildSidebar();
   rebuildMain();
   return page;
+  }catch(err){
+    const errPage=dv('pv2-page');
+    errPage.style.cssText='padding:24px;font-family:monospace;color:#dc2626;background:#fff1f1';
+    errPage.textContent='Eroare Planificare V2: '+err.message+'\n'+err.stack;
+    return errPage;
+  }
 }
 
 function exportPlanV2Excel(){
