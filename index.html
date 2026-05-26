@@ -1148,6 +1148,68 @@ button { font-family: var(--sans); }
 .scan-mo-val{font-size:16px;font-weight:800;color:#312e81}
 .scan-mo-hint{font-size:9.5px;color:#6366f1;margin-top:1px}
 .pv2-qty-total{font-weight:800;font-size:13px;color:var(--accent)}
+
+/* ─── PLANIFICARE V2 ─── */
+.pv2-page{display:flex;height:100%;overflow:hidden;background:#f1f5f9}
+/* Sidebar */
+.pv2-sidebar{display:flex;flex-direction:column;width:340px;min-width:180px;max-width:560px;background:#fff;border-right:2px solid var(--border);flex-shrink:0;overflow:hidden}
+.pv2-sidebar-hdr{background:#1e3a5f;color:#fff;padding:10px 12px;flex-shrink:0}
+.pv2-sidebar-title{font-size:12px;font-weight:800;letter-spacing:.05em;margin-bottom:8px}
+.pv2-week-checks{display:flex;flex-wrap:wrap;gap:4px}
+.pv2-wck{display:inline-flex;align-items:center;gap:4px;padding:2px 8px;border-radius:10px;font-size:10px;font-weight:700;cursor:pointer;border:1.5px solid rgba(255,255,255,.3);color:rgba(255,255,255,.7);transition:all .15s;user-select:none}
+.pv2-wck.active{background:rgba(255,255,255,.2);color:#fff;border-color:rgba(255,255,255,.7)}
+.pv2-wck input{display:none}
+.pv2-sidebar-filter{padding:6px 10px;border-bottom:1px solid var(--border);flex-shrink:0}
+.pv2-sidebar-filter input{width:100%;height:28px;padding:0 10px;border:1px solid var(--border);border-radius:5px;font-size:11px}
+.pv2-sidebar-filter input:focus{outline:none;border-color:var(--accent)}
+.pv2-sidebar-table-wrap{flex:1;overflow:auto}
+.pv2-sidebar-table{width:100%;border-collapse:collapse;font-size:11px;table-layout:fixed}
+.pv2-sidebar-table th{position:sticky;top:0;background:#f0f4fa;border-bottom:2px solid var(--border);padding:5px 8px;font-size:9.5px;font-weight:700;color:var(--text2);text-transform:uppercase;letter-spacing:.06em;cursor:pointer;user-select:none;white-space:nowrap;overflow:hidden;position:sticky;top:0;z-index:1}
+.pv2-sidebar-table th:hover{background:#e2e8f0}
+.pv2-sidebar-table td{border-bottom:1px solid #f1f5f9;padding:5px 8px;color:var(--text1);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.pv2-sidebar-table tr:hover td{background:#eff6ff;cursor:grab}
+.pv2-sidebar-table tr.dragging td{opacity:.4;background:#dbeafe}
+.pv2-sidebar-table tr.pv2-planned td{background:#f0fdf4}
+.pv2-0late{color:#dc2626;font-weight:700}
+.pv2-resize-handle{position:absolute;right:0;top:0;bottom:0;width:4px;cursor:col-resize;background:transparent}
+.pv2-resize-handle:hover{background:var(--accent);opacity:.4}
+/* Splitter */
+.pv2-splitter{width:5px;background:#e2e8f0;cursor:col-resize;flex-shrink:0;transition:background .15s}
+.pv2-splitter:hover{background:var(--accent)}
+/* Main area */
+.pv2-main{display:flex;flex-direction:column;flex:1;overflow:hidden}
+.pv2-main-toolbar{display:flex;align-items:center;gap:8px;padding:8px 14px;background:#fff;border-bottom:2px solid var(--border);flex-shrink:0;flex-wrap:wrap}
+.pv2-drop-zone{flex:1;overflow:auto;padding:12px}
+.pv2-drop-hint{display:flex;flex-direction:column;align-items:center;justify-content:center;height:200px;border:2px dashed #cbd5e1;border-radius:12px;color:#94a3b8;gap:10px;margin-bottom:12px}
+.pv2-drop-hint.over{border-color:var(--accent);background:#eff6ff;color:var(--accent)}
+.pv2-drop-hint-icon{font-size:40px}
+.pv2-item-card{background:#fff;border:1px solid var(--border);border-radius:8px;margin-bottom:12px;overflow:hidden;box-shadow:0 1px 4px rgba(0,0,0,.06)}
+.pv2-item-hdr{display:flex;align-items:center;justify-content:space-between;padding:8px 14px;background:#1e3a5f;color:#fff;cursor:pointer;user-select:none}
+.pv2-item-title{font-size:13px;font-weight:800;font-family:monospace}
+.pv2-item-meta{font-size:10px;color:rgba(255,255,255,.7);margin-top:2px}
+.pv2-item-qty{font-size:18px;font-weight:800;color:#93c5fd;margin-left:auto;margin-right:12px}
+.pv2-item-remove{width:26px;height:26px;border:none;background:rgba(255,255,255,.15);color:#fff;border-radius:4px;cursor:pointer;font-size:14px;display:flex;align-items:center;justify-content:center}
+.pv2-item-remove:hover{background:rgba(220,38,38,.5)}
+.pv2-item-body{display:none;padding:12px}
+.pv2-item-body.open{display:block}
+.pv2-comp-table{width:100%;border-collapse:collapse;font-size:11px;margin-top:6px}
+.pv2-comp-table th{padding:4px 8px;font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:var(--text3);background:#f8f9fb;border-bottom:1px solid var(--border);text-align:left}
+.pv2-comp-table td{padding:4px 8px;border-bottom:1px solid #f1f5f9;vertical-align:top}
+.pv2-comp-table tr:hover td{background:#f8fafc}
+.pv2-type-make{display:inline-block;padding:1px 5px;border-radius:3px;font-size:9px;font-weight:700;background:#dbeafe;color:#1d4ed8}
+.pv2-type-buy{display:inline-block;padding:1px 5px;border-radius:3px;font-size:9px;font-weight:700;background:#dcfce7;color:#15803d}
+.pv2-stock-ok{color:#15803d;font-weight:700}
+.pv2-stock-warn{color:#dc2626;font-weight:700}
+.pv2-ops-toggle{font-size:10px;color:var(--accent);cursor:pointer;text-decoration:underline;white-space:nowrap}
+.pv2-ops-list{margin-top:4px;padding:4px 8px;background:#f8fafc;border-radius:4px;font-size:10px;border-left:2px solid #e2e8f0}
+.pv2-op-row{display:flex;flex-wrap:wrap;gap:6px;padding:2px 0;border-bottom:1px solid #f1f5f9}
+.pv2-op-row:last-child{border-bottom:none}
+.pv2-op-name{font-weight:700;color:#1e293b;min-width:140px}
+.pv2-op-time{color:var(--text3);font-size:9.5px}
+.pv2-subco-tag{background:#fef3c7;color:#92400e;border:1px solid #fde68a;border-radius:3px;padding:1px 5px;font-size:9px;font-weight:700}
+.pv2-btn{height:28px;padding:0 11px;border:1px solid var(--border);border-radius:4px;font-size:11px;font-weight:600;color:var(--text1);background:#f8f9fb;cursor:pointer;display:inline-flex;align-items:center;gap:5px}
+.pv2-btn:hover{background:#eff6ff;border-color:var(--accent);color:var(--accent)}
+.pv2-btn.green{border-color:#16a34a;color:#15803d;background:#f0fdf4}
 </style>
 </head>
 <body>
@@ -1198,8 +1260,9 @@ const S={
   reportObs:{},
   eficientaPlan:100,
   wcAvailHours:{},
-  planCurrentWeek:'',  // current week label e.g. 'W21'
-  planHistory:[],     // [{week, savedAt, entries:[{itemNo,itemName,customer,qty,salesPrice,obs}]}]
+  planCurrentWeek:'',
+  planHistory:[],
+  planV2State:null,
   wcLoadMode:'wip',  // 'wip' | 'total'
   inTransitData:null,  // parsed In_transit rows
   scanData:null,        // parsed QV_Start-Stop_History rows
@@ -2941,6 +3004,7 @@ function render(){
     {id:'orderbook',label:'Order Book'},
     {id:'rapoarte',label:'Rapoarte'},
     {id:'planificare',label:'Planificare'},
+    {id:'planv2',label:'Planificare V2'},
     {id:'pwc',label:'Programare WC'},
 
     {id:'scanari',label:'Raport Scanari'},
@@ -3045,6 +3109,7 @@ function render(){
   else if(S.tab==='orderbook')body.appendChild(renderOrderBook());
   else if(S.tab==='rapoarte') body.appendChild(renderRapoarte());
   else if(S.tab==='planificare')body.appendChild(renderPlanificare());
+  else if(S.tab==='planv2')body.appendChild(renderPlanV2());
   else if(S.tab==='pwc')body.appendChild(renderPwcTab());
   else if(S.tab==='dctr')body.appendChild(renderDctrTab());
   else if(S.tab==='scanari')body.appendChild(renderScanariTab());
@@ -7314,6 +7379,428 @@ td{padding:3px 7px;border:1px solid #e2e8f0;font-size:8pt}
 <tbody>${bodyRows}</tbody></table></body></html>`);
   w.document.close();setTimeout(()=>w.print(),400);
 }
+
+
+/* ═══════════════════════════════════════════════════════════════
+   PLANIFICARE V2
+═══════════════════════════════════════════════════════════════ */
+/* ═══════════════════════════════════════════════════════════════
+   PLANIFICARE V2 — Split-pane with drag & drop from OB sidebar
+═══════════════════════════════════════════════════════════════ */
+
+function initPlanV2State(){
+  if(S.planV2State) return;
+  S.planV2State={
+    weeks:{w0late:true,w1:true,w2:true,w3:false,w4:false,w5:false,w6:false},
+    sidebarFilter:'',
+    sidebarSort:{col:'wk',dir:1},
+    sidebarWidths:{wk:60,itemNo:130,qty:55,cust:80},
+    droppedItems:[],   // [{itemNo,qty,itemName,obKey,wk,customer}]
+    expandedItems:new Set(),
+    sidebarWidth:340,
+  };
+}
+
+function getWeekKeys(){
+  // Returns Map: label→isoKey, e.g. '0Late'→'0Late', 'W22'→'2026-22'
+  const m=new Map();m.set('0Late','0Late');
+  for(let i=1;i<=6;i++){
+    const d=new Date();d.setDate(d.getDate()+7*(i-1));
+    m.set('W'+getISOWeekKey(d).split('-')[1],getISOWeekKey(d));
+  }
+  return m;
+}
+
+function getPV2SidebarRows(){
+  const st=S.planV2State;
+  if(!S.obData) return [];
+  const wkMap=getWeekKeys();
+  const allowed=new Set();
+  if(st.weeks.w0late) allowed.add('0Late');
+  const wkArr=[...wkMap.values()].slice(1); // W1..W6 iso keys
+  [1,2,3,4,5,6].forEach((n,i)=>{if(st.weeks['w'+n])allowed.add(wkArr[i]);});
+
+  let rows=S.obData.filter(r=>{
+    const wk=str(r['Confirm_week']||'').trim();
+    if(!allowed.has(wk)) return false;
+    const q=parseFloat(r['Open qty'])||0;
+    return q>0;
+  }).map(r=>({
+    itemNo:str(r['Item_no']),
+    itemName:str(r['Item_name']||''),
+    qty:parseFloat(r['Open qty'])||0,
+    wk:str(r['Confirm_week']||''),
+    customer:str(r['Customer_name']||''),
+    obKey:r._obKey||'',
+    _raw:r,
+  }));
+
+  // Filter
+  const fl=(st.sidebarFilter||'').toLowerCase();
+  if(fl) rows=rows.filter(r=>r.itemNo.toLowerCase().includes(fl)||r.itemName.toLowerCase().includes(fl)||r.customer.toLowerCase().includes(fl));
+
+  // Sort
+  const {col,dir}=st.sidebarSort;
+  rows.sort((a,b)=>{
+    if(col==='wk'){
+      const order={'0Late':-1};
+      const av=order[a.wk]!=null?order[a.wk]:(parseInt((a.wk||'').split('-')[1])||99);
+      const bv=order[b.wk]!=null?order[b.wk]:(parseInt((b.wk||'').split('-')[1])||99);
+      if(av!==bv) return dir*(av-bv);
+    }
+    if(col==='qty') return dir*(a.qty-b.qty);
+    const av=String(a[col]||''),bv=String(b[col]||'');
+    return dir*av.localeCompare(bv);
+  });
+  return rows;
+}
+
+function buildBOMForItem(itemNo, qty){
+  // Returns array of component rows with operations
+  const results=[];
+  const rows=S.bomIdx?.get(`${itemNo}__${itemNo}`)||[];
+  for(const r of rows){
+    const matNo=str(r['Material no']);
+    const matType=str(r['Material type']);
+    const matQty=parseFloat(String(r['Material qty']||'1').replace(',','.'))||1;
+    const needed=qty*matQty;
+    const stock=S.stockIdx?.get(matNo);
+    const onHand=Math.max(0,stock?.onHand||0);
+
+    // Get BOW operations for this component
+    const ops=[];
+    if(S.bowData){
+      for(const b of S.bowData){
+        if(str(b['Product no'])!==matNo) continue;
+        const opeName=str(b['Ope name']||b['Ope descr']||'');
+        if(!opeName) continue;
+        const isSubco=opeName.toLowerCase()==='subcontracting';
+        ops.push({
+          opeName,
+          setupTime:parseFloat(String(b['Setup time']||'0').replace(',','.'))||0,
+          runTime:parseFloat(String(b['Run time']||'0').replace(',','.'))||0,
+          prodDays:isSubco?(parseFloat(String(b['Prod days']||'0').replace(',','.'))||0):null,
+          textLine2:isSubco?str(b['Text_line2']||'').trim():null,
+          supplier:isSubco?str(b['Supplier']||'').trim():null,
+        });
+      }
+    }
+    results.push({matNo,matName:str(r['Mat. name']||r['Mat desc']||''),matType,matQty,needed,onHand,ops});
+  }
+  return results;
+}
+
+function renderPlanV2(){
+  initPlanV2State();
+  const st=S.planV2State;
+  const page=dv('pv2-page');
+
+  // ─── SIDEBAR ───
+  const sidebar=dv('pv2-sidebar');
+  sidebar.style.width=st.sidebarWidth+'px';
+
+  // Header with week checkboxes
+  const sHdr=dv('pv2-sidebar-hdr');
+  sHdr.appendChild(sp('pv2-sidebar-title','📋 Comenzi OB'));
+  const wkMap=getWeekKeys();
+  const wkChecks=dv('pv2-week-checks');
+  const wkDefs=[
+    {key:'w0late',label:'0Late'},
+    {key:'w1',label:'W'+[...wkMap.keys()][1]},
+    {key:'w2',label:'W'+[...wkMap.keys()][2]},
+    {key:'w3',label:'W'+[...wkMap.keys()][3]},
+    {key:'w4',label:'W'+[...wkMap.keys()][4]},
+    {key:'w5',label:'W'+[...wkMap.keys()][5]},
+    {key:'w6',label:'W'+[...wkMap.keys()][6]},
+  ];
+  wkDefs.forEach(({key,label})=>{
+    const lbl=el('label','pv2-wck'+(st.weeks[key]?' active':''));
+    const cb=el('input');cb.type='checkbox';cb.checked=st.weeks[key];
+    lbl.appendChild(cb);lbl.appendChild(document.createTextNode(label));
+    cb.addEventListener('change',()=>{
+      st.weeks[key]=cb.checked;
+      lbl.className='pv2-wck'+(cb.checked?' active':'');
+      rebuildSidebar();
+    });
+    wkChecks.appendChild(lbl);
+  });
+  sHdr.appendChild(wkChecks);
+  sidebar.appendChild(sHdr);
+
+  // Filter input
+  const sFilter=dv('pv2-sidebar-filter');
+  const sInp=el('input');sInp.placeholder='🔍 Caută item, client...';sInp.value=st.sidebarFilter||'';
+  sInp.addEventListener('input',e=>{st.sidebarFilter=e.target.value;rebuildSidebar();});
+  sFilter.appendChild(sInp);sidebar.appendChild(sFilter);
+
+  // Table
+  const sTblWrap=dv('pv2-sidebar-table-wrap');sTblWrap.id='pv2-sidebar-wrap';
+  sidebar.appendChild(sTblWrap);
+
+  // ─── SPLITTER ───
+  const splitter=dv('pv2-splitter');
+  splitter.addEventListener('mousedown',ev=>{
+    ev.preventDefault();
+    const startX=ev.clientX, startW=sidebar.offsetWidth;
+    const onMove=mv=>{
+      const nw=Math.max(180,Math.min(600,startW+mv.clientX-startX));
+      sidebar.style.width=nw+'px';st.sidebarWidth=nw;
+    };
+    const onUp=()=>{document.removeEventListener('mousemove',onMove);document.removeEventListener('mouseup',onUp);};
+    document.addEventListener('mousemove',onMove);document.addEventListener('mouseup',onUp);
+  });
+
+  // ─── MAIN ───
+  const main=dv('pv2-main');
+
+  // Toolbar
+  const tb=dv('pv2-main-toolbar');
+  const clearBtn=el('button','pv2-btn');clearBtn.textContent='🗑 Golește';
+  clearBtn.addEventListener('click',()=>{if(confirm('Golești planul V2?')){st.droppedItems=[];st.expandedItems=new Set();rebuildMain();}});
+  const excelBtn=el('button','pv2-btn green');excelBtn.textContent='⬇ Excel';
+  excelBtn.addEventListener('click',()=>exportPlanV2Excel());
+  const pdfBtn=el('button','pv2-btn');pdfBtn.textContent='🖨 PDF';
+  pdfBtn.addEventListener('click',()=>printPlanV2());
+  const countBadge=dv('');countBadge.id='pv2-main-count';countBadge.style.cssText='font-size:10px;font-weight:600;color:var(--text3);margin-left:auto';
+  tb.appendChild(clearBtn);tb.appendChild(excelBtn);tb.appendChild(pdfBtn);tb.appendChild(countBadge);
+  main.appendChild(tb);
+
+  // Drop zone
+  const dropZone=dv('pv2-drop-zone');dropZone.id='pv2-drop-zone';
+  main.appendChild(dropZone);
+
+  page.appendChild(sidebar);page.appendChild(splitter);page.appendChild(main);
+
+  function rebuildSidebar(){
+    const rows=getPV2SidebarRows();
+    sTblWrap.innerHTML='';
+    const tbl=el('table','pv2-sidebar-table');
+    const thead=el('thead');const hr=el('tr');
+    const cols=[
+      {key:'wk',label:'Săpt.',w:st.sidebarWidths.wk||60},
+      {key:'itemNo',label:'Item No',w:st.sidebarWidths.itemNo||130},
+      {key:'qty',label:'Qty',w:st.sidebarWidths.qty||55},
+      {key:'customer',label:'Client',w:st.sidebarWidths.cust||80},
+    ];
+    cols.forEach((c,ci)=>{
+      const th=el('th');th.style.cssText=`width:${c.w}px;position:relative`;
+      th.textContent=c.label+(st.sidebarSort.col===c.key?(st.sidebarSort.dir===1?' ↑':' ↓'):'');
+      th.addEventListener('click',()=>{st.sidebarSort.col===c.key?st.sidebarSort.dir*=-1:(st.sidebarSort.col=c.key,st.sidebarSort.dir=1);rebuildSidebar();});
+      // Resize
+      const rh=dv('pv2-resize-handle');
+      rh.addEventListener('mousedown',ev2=>{
+        ev2.preventDefault();ev2.stopPropagation();
+        const sx=ev2.clientX,sw=c.w;
+        const mv=m=>{c.w=Math.max(40,sw+m.clientX-sx);th.style.width=c.w+'px';st.sidebarWidths[c.key]=c.w;};
+        const up=()=>{document.removeEventListener('mousemove',mv);document.removeEventListener('mouseup',up);};
+        document.addEventListener('mousemove',mv);document.addEventListener('mouseup',up);
+      });
+      th.appendChild(rh);hr.appendChild(th);
+    });
+    thead.appendChild(hr);tbl.appendChild(thead);
+    const tbody=el('tbody');
+    const plannedKeys=new Set(st.droppedItems.map(d=>d.obKey));
+    rows.forEach(r=>{
+      const tr=el('tr');
+      if(plannedKeys.has(r.obKey)) tr.classList.add('pv2-planned');
+      tr.draggable=true;
+      tr.setAttribute('data-row-json',JSON.stringify({itemNo:r.itemNo,qty:r.qty,itemName:r.itemName,obKey:r.obKey,wk:r.wk,customer:r.customer}));
+      tr.addEventListener('dragstart',ev=>{
+        ev.dataTransfer.setData('text/plain',tr.getAttribute('data-row-json'));
+        ev.dataTransfer.effectAllowed='copy';
+        tr.classList.add('dragging');
+      });
+      tr.addEventListener('dragend',()=>tr.classList.remove('dragging'));
+      tr.addEventListener('dblclick',()=>dropItemToMain(r));
+      [
+        {val:r.wk,cls:r.wk==='0Late'?'pv2-0late':''},
+        {val:r.itemNo,cls:'',title:r.itemName},
+        {val:fmtN(r.qty),cls:'',align:'right'},
+        {val:r.customer.slice(0,18),cls:'',title:r.customer},
+      ].forEach((cell,ci)=>{
+        const td=el('td');td.style.width=cols[ci].w+'px';
+        td.textContent=cell.val;
+        if(cell.cls) td.className=cell.cls;
+        if(cell.align) td.style.textAlign=cell.align;
+        if(cell.title) td.title=cell.title;
+        tr.appendChild(td);
+      });
+      tbody.appendChild(tr);
+    });
+    if(!rows.length){
+      const tr=el('tr');const td=el('td');td.colSpan=4;
+      td.style.cssText='text-align:center;padding:20px;color:var(--text3);font-size:11px';
+      td.textContent='Nicio comandă pentru săptămânile selectate.';
+      tr.appendChild(td);tbody.appendChild(tr);
+    }
+    tbl.appendChild(tbody);sTblWrap.appendChild(tbl);
+  }
+
+  function dropItemToMain(rowData){
+    // Avoid duplicates by obKey
+    if(st.droppedItems.find(d=>d.obKey===rowData.obKey)) return;
+    st.droppedItems.push(rowData);
+    rebuildMain();
+    rebuildSidebar();
+  }
+
+  function rebuildMain(){
+    dropZone.innerHTML='';
+    const countEl=document.getElementById('pv2-main-count');
+    if(countEl) countEl.textContent=st.droppedItems.length+' produse planificate';
+
+    // Drop hint
+    const hint=dv('pv2-drop-hint');hint.id='pv2-drop-hint';
+    hint.innerHTML='<div class="pv2-drop-hint-icon">🎯</div><div style="font-size:12px;font-weight:600">Trage comenzi din sidebar sau dublu-click</div><div style="font-size:10px">Comenzile planificate apar mai jos</div>';
+    hint.addEventListener('dragover',ev=>{ev.preventDefault();hint.classList.add('over');});
+    hint.addEventListener('dragleave',()=>hint.classList.remove('over'));
+    hint.addEventListener('drop',ev=>{
+      ev.preventDefault();hint.classList.remove('over');
+      try{const row=JSON.parse(ev.dataTransfer.getData('text/plain'));dropItemToMain(row);}catch(_){}
+    });
+    dropZone.appendChild(hint);
+
+    // Item cards
+    st.droppedItems.forEach((item,idx)=>{
+      const card=buildPV2ItemCard(item,idx);
+      dropZone.appendChild(card);
+    });
+  }
+
+  function buildPV2ItemCard(item,idx){
+    const card=dv('pv2-item-card');
+    const hdr=dv('pv2-item-hdr');
+    const left=dv('');
+    left.appendChild(sp('pv2-item-title',item.itemNo));
+    left.appendChild(sp('pv2-item-meta',`${item.itemName||''} · ${item.customer} · ${item.wk}`));
+    const qtyEl=sp('pv2-item-qty',fmtN(item.qty)+' buc');
+    const rmBtn=el('button','pv2-item-remove');rmBtn.innerHTML='✕';
+    rmBtn.addEventListener('click',e=>{e.stopPropagation();st.droppedItems.splice(idx,1);st.expandedItems.delete(item.obKey);rebuildMain();rebuildSidebar();});
+    hdr.appendChild(left);hdr.appendChild(qtyEl);hdr.appendChild(rmBtn);
+    hdr.addEventListener('click',()=>{
+      const isOpen=st.expandedItems.has(item.obKey);
+      if(isOpen){st.expandedItems.delete(item.obKey);body.classList.remove('open');}
+      else{st.expandedItems.add(item.obKey);body.classList.add('open');}
+    });
+    card.appendChild(hdr);
+
+    // Body — BOM table
+    const body=dv('pv2-item-body'+(st.expandedItems.has(item.obKey)?' open':''));
+    const comps=buildBOMForItem(item.itemNo,item.qty);
+    if(!comps.length){
+      body.innerHTML='<div style="color:var(--text3);font-size:11px;padding:8px">Nu există structură BOM pentru acest produs.</div>';
+    } else {
+      const tbl=el('table','pv2-comp-table');
+      const thead=el('thead');const hr=el('tr');
+      ['Material No','Tip','Qty/buc','Necesar','On Hand','Operații'].forEach(h=>{
+        const th=el('th');th.textContent=h;hr.appendChild(th);
+      });
+      thead.appendChild(hr);tbl.appendChild(thead);
+      const tbody=el('tbody');
+      comps.forEach(c=>{
+        const tr=el('tr');
+        const stock_ok=c.onHand>=c.needed;
+        // Mat No
+        const td0=el('td');td0.textContent=c.matNo;td0.style.fontFamily='monospace';td0.style.fontWeight='600';tr.appendChild(td0);
+        // Type
+        const td1=el('td');td1.appendChild(sp('pv2-type-'+(c.matType==='MAKE'?'make':'buy'),c.matType));tr.appendChild(td1);
+        // Qty/buc
+        const td2=el('td');td2.textContent=fmtN(c.matQty);td2.style.textAlign='right';tr.appendChild(td2);
+        // Necesar
+        const td3=el('td');td3.textContent=fmtN(c.needed);td3.style.textAlign='right';td3.style.fontWeight='700';tr.appendChild(td3);
+        // On Hand
+        const td4=el('td');td4.textContent=fmtN(c.onHand);td4.style.textAlign='right';
+        td4.className=stock_ok?'pv2-stock-ok':'pv2-stock-warn';tr.appendChild(td4);
+        // Operations
+        const td5=el('td');
+        if(c.ops.length){
+          const toggle=sp('pv2-ops-toggle',`▶ ${c.ops.length} op.`);
+          const opsList=dv('pv2-ops-list');opsList.style.display='none';
+          c.ops.forEach(op=>{
+            const row=dv('pv2-op-row');
+            row.appendChild(sp('pv2-op-name',op.opeName));
+            row.appendChild(sp('pv2-op-time',`run: ${fmtT(op.runTime)} · setup: ${fmtT(op.setupTime)}`));
+            if(op.prodDays){row.appendChild(sp('pv2-subco-tag',op.prodDays+' z'));}
+            if(op.textLine2){const tl=sp('','');tl.style.cssText='font-size:9.5px;color:#6366f1;font-style:italic';tl.textContent='→ '+op.textLine2;row.appendChild(tl);}
+            if(op.supplier){const sv=sp('','');sv.style.cssText='font-size:9.5px;color:#059669;font-weight:600';sv.textContent='📦 '+op.supplier;row.appendChild(sv);}
+            opsList.appendChild(row);
+          });
+          toggle.addEventListener('click',()=>{
+            const open=opsList.style.display==='none';
+            opsList.style.display=open?'block':'none';
+            toggle.textContent=(open?'▼ ':'▶ ')+c.ops.length+' op.';
+          });
+          td5.appendChild(toggle);td5.appendChild(opsList);
+        } else {
+          td5.textContent='—';td5.style.color='#9ca3af';
+        }
+        tr.appendChild(td5);
+        tbody.appendChild(tr);
+      });
+      tbl.appendChild(tbody);body.appendChild(tbl);
+    }
+    card.appendChild(body);
+    return card;
+  }
+
+  // Initial build
+  rebuildSidebar();
+  rebuildMain();
+  return page;
+}
+
+function exportPlanV2Excel(){
+  const st=S.planV2State;if(!st?.droppedItems?.length){alert('Niciun produs planificat.');return;}
+  const wb=XLSX.utils.book_new();
+  const wsData=[['Item No','Denumire','Client','Săpt.','Qty','Material No','Tip','Qty/buc','Necesar','On Hand','Operație','Setup','Run','Prod Days','Text Line 2','Supplier']];
+  st.droppedItems.forEach(item=>{
+    const comps=buildBOMForItem(item.itemNo,item.qty);
+    if(!comps.length){wsData.push([item.itemNo,item.itemName||'',item.customer,item.wk,item.qty]);return;}
+    comps.forEach((c,ci)=>{
+      const baseRow=ci===0?[item.itemNo,item.itemName||'',item.customer,item.wk,item.qty]:['','','','',''];
+      c.ops.forEach((op,oi)=>{
+        const compRow=oi===0?[...baseRow,c.matNo,c.matType,c.matQty,c.needed,c.onHand]:['','','','','','','','','',''];
+        wsData.push([...compRow,op.opeName,op.setupTime,op.runTime,op.prodDays||'',op.textLine2||'',op.supplier||'']);
+      });
+      if(!c.ops.length) wsData.push([...baseRow,c.matNo,c.matType,c.matQty,c.needed,c.onHand]);
+    });
+  });
+  const ws=XLSX.utils.aoa_to_sheet(wsData);
+  ws['!cols']=[{wch:18},{wch:26},{wch:22},{wch:8},{wch:8},{wch:18},{wch:6},{wch:8},{wch:9},{wch:9},{wch:26},{wch:8},{wch:8},{wch:10},{wch:20},{wch:22}];
+  XLSX.utils.book_append_sheet(wb,ws,'Planificare V2');
+  XLSX.writeFile(wb,`PlanificareV2_${new Date().toISOString().slice(0,10)}.xlsx`);
+}
+
+function printPlanV2(){
+  const st=S.planV2State;if(!st?.droppedItems?.length){alert('Niciun produs planificat.');return;}
+  const w=window.open('','_blank','width=1200,height=800');if(!w){alert('Permite popup-urile.');return;}
+  let html='';
+  st.droppedItems.forEach(item=>{
+    const comps=buildBOMForItem(item.itemNo,item.qty);
+    html+=`<div class="item-block"><div class="item-hdr"><b>${item.itemNo}</b> &nbsp;${item.itemName||''} &nbsp;·&nbsp; ${item.customer} &nbsp;·&nbsp; ${item.wk} &nbsp;·&nbsp; <b>${fmtN(item.qty)} buc</b></div>`;
+    if(comps.length){
+      html+='<table><thead><tr><th>Material No</th><th>Tip</th><th>Qty/buc</th><th>Necesar</th><th>On Hand</th><th>Operații</th></tr></thead><tbody>';
+      comps.forEach(c=>{
+        const ops_str=c.ops.map(op=>{let s=op.opeName+` (r:${fmtT(op.runTime)}, s:${fmtT(op.setupTime)})`;if(op.prodDays)s+=` [${op.prodDays}z]`;if(op.supplier)s+=` - ${op.supplier}`;return s;}).join('<br>');
+        const style=c.onHand>=c.needed?'color:#15803d':'color:#dc2626';
+        html+=`<tr><td style="font-family:monospace;font-weight:700">${c.matNo}</td><td>${c.matType}</td><td style="text-align:right">${fmtN(c.matQty)}</td><td style="text-align:right;font-weight:700">${fmtN(c.needed)}</td><td style="text-align:right;${style}">${fmtN(c.onHand)}</td><td style="font-size:8pt">${ops_str||'—'}</td></tr>`;
+      });
+      html+='</tbody></table>';
+    }
+    html+='</div>';
+  });
+  w.document.write(`<!DOCTYPE html><html><head><meta charset="UTF-8"><title>Planificare V2</title>
+<style>*{box-sizing:border-box;margin:0;padding:0}body{font-family:Arial;font-size:8.5pt;padding:10mm}
+.item-block{margin-bottom:16px;page-break-inside:avoid}
+.item-hdr{background:#1e293b;color:#fff;padding:6px 10px;border-radius:4px 4px 0 0;font-size:10pt}
+table{width:100%;border-collapse:collapse;margin-top:0}
+th{background:#f0f4fa;padding:3px 7px;font-size:8pt;font-weight:700;text-align:left;border:1px solid #ccc}
+td{padding:3px 7px;border:1px solid #e2e8f0;font-size:8pt;vertical-align:top}
+tr:nth-child(even) td{background:#f9fafb}
+@page{size:A3 landscape;margin:8mm}</style></head><body>${html}</body></html>`);
+  w.document.close();setTimeout(()=>w.print(),500);
+}
+
 
 function renderScanner(){
   const page=dv('scanner-page');
