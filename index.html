@@ -1147,6 +1147,37 @@ button { font-family: var(--sans); }
 .scan-mo-label{font-size:10px;color:#6366f1;font-weight:700;text-transform:uppercase}
 .scan-mo-val{font-size:16px;font-weight:800;color:#312e81}
 .scan-mo-hint{font-size:9.5px;color:#6366f1;margin-top:1px}
+
+/* ─── PLANIFICARE V2 ─── */
+.pv2-page{display:flex;flex-direction:column;height:100%;overflow:hidden;background:#f8f9fb}
+.pv2-toolbar{display:flex;align-items:center;gap:8px;padding:8px 16px;border-bottom:2px solid var(--border);flex-shrink:0;flex-wrap:wrap;background:#fff;box-shadow:0 1px 4px rgba(0,0,0,.06)}
+.pv2-toolbar-group{display:flex;align-items:center;gap:6px;padding:0 10px 0 0;border-right:1px solid #e2e8f0}
+.pv2-toolbar-group:last-child{border-right:none;margin-left:auto}
+.pv2-label{font-size:10px;font-weight:600;color:var(--text3);text-transform:uppercase;letter-spacing:.05em;white-space:nowrap}
+.pv2-week-badge{display:inline-flex;align-items:center;height:28px;padding:0 10px;background:#eff6ff;border:1px solid #bfdbfe;border-radius:5px;font-size:12px;font-weight:700;color:#1d4ed8}
+.pv2-check{display:inline-flex;align-items:center;gap:6px;cursor:pointer;font-size:11px;font-weight:600;color:var(--text2);user-select:none}
+.pv2-check input{width:15px;height:15px;cursor:pointer;accent-color:var(--accent)}
+.pv2-btn{height:30px;padding:0 12px;border:1px solid var(--border);border-radius:5px;font-size:11px;font-weight:600;color:var(--text1);background:#f8f9fb;cursor:pointer;white-space:nowrap;display:inline-flex;align-items:center;gap:5px;transition:all .15s}
+.pv2-btn:hover{background:#eff6ff;border-color:var(--accent);color:var(--accent)}
+.pv2-btn.green{border-color:#16a34a;color:#15803d;background:#f0fdf4}
+.pv2-badge{display:inline-flex;align-items:center;height:26px;padding:0 10px;background:#f1f5f9;border:1px solid #e2e8f0;border-radius:12px;font-size:10px;font-weight:700;color:var(--text2)}
+.pv2-table-wrap{flex:1;overflow:auto}
+.pv2-table-wrap::-webkit-scrollbar{width:8px;height:8px}
+.pv2-table-wrap::-webkit-scrollbar-track{background:#f1f5f9}
+.pv2-table-wrap::-webkit-scrollbar-thumb{background:#94a3b8;border-radius:4px}
+.pv2-table-wrap::-webkit-scrollbar-corner{background:#f1f5f9}
+.pv2-table{border-collapse:separate;border-spacing:0;min-width:max-content;font-size:11.5px;table-layout:fixed}
+.pv2-table th{position:sticky;top:0;z-index:10;background:#1e3a5f;color:#e2e8f0;padding:6px 8px;font-size:9.5px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;text-align:left;border-right:1px solid #2d4e7a;white-space:nowrap;box-shadow:0 2px 0 0 #2d4e7a}
+.pv2-table th:last-child{border-right:none}
+.pv2-table td{border-bottom:1px solid #e5e7eb;border-right:1px solid #f1f5f9;padding:5px 8px;vertical-align:middle}
+.pv2-table td:last-child{border-right:1px solid #e5e7eb}
+.pv2-table tbody tr:nth-child(odd) td{background:#fff}
+.pv2-table tbody tr:nth-child(even) td{background:#f8fafc}
+.pv2-table tbody tr:hover td{background:#eff6ff!important}
+.pv2-obs{font-size:10px;color:#6b7280;line-height:1.4}
+.pv2-subco-badge{display:inline-block;padding:1px 6px;border-radius:3px;font-size:10px;font-weight:600;background:#fef3c7;color:#92400e;border:1px solid #fde68a;white-space:nowrap}
+.pv2-supplier{font-size:10px;color:#059669;font-weight:600}
+.pv2-qty-total{font-weight:800;font-size:13px;color:var(--accent)}
 </style>
 </head>
 <body>
@@ -1263,7 +1294,7 @@ function dbLoad(key){return openDB().then(db=>new Promise((res,rej)=>{const tx=d
 // Column filter definitions — only essential columns stored in GitHub
 const GH_COLS={
   bom:['Final product','FP name','FP drawing','Comp no.','Material no','Material type','Material qty','Mat U/M','Mat. name','Mat. drawing','Mat product group','Mat. item group','Comp level'],
-  bow:['Final product','Product no','Product seq','Ope seq','Operation no','Ope name','Ope descr','Run time','Setup time','Text_line1'],
+  bow:['Final product','Product no','Product seq','Ope seq','Operation no','Ope name','Ope descr','Run time','Setup time','Text_line1','Supplier','Prod days'],
   po: ['FP','MATERIAL','NAME','M/B/D','On Hand','On MO Not Started','Total WIP',
        '710101-Laser','710103-Shear','710201-CNC Punching','710301-Bending machine','710302-Helper Bending','710303-Inserting',
        '710401-Welding GMAW','710402-Welding GTAW','710403-Welding Spot','710404-Helper Welding GMAW/GTAW','710405-Helper Spotweld',
@@ -1449,7 +1480,21 @@ async function sbLoadAllData(){
 
   const planData=await sbDownload(cfg,'data-plan.json');
   if(planData){
-    if(planData.entries)S.planData=new Map(planData.entries);
+    if(planData.entries){S.planData=new Map(planData.entries);
+    // Migrate: reconstruct _obKey for entries saved before applyOb added _obKey to rows
+    for(const [,plan] of S.planData){
+      for(const e of plan.entries){
+        if(e._obKey==null && S.obData){
+          const match=S.obData.find(r=>
+            r['Confirm dt']===e.confirmDt &&
+            r['Request dt']===e.requestDt &&
+            str(r['Item_no'])===(e.itemNo||plan.entries[0]?.itemNo||'')
+          );
+          if(match) e._obKey=match._obKey;
+        }
+      }
+    }
+    }
     if(planData.obs)S.planObs=planData.obs;
     if(planData.wcAvailHours)S.wcAvailHours=planData.wcAvailHours;
     if(planData.prio)S.planPrio=planData.prio;
@@ -1790,6 +1835,8 @@ function applyOb(rows,ts){
     const price=parseFloat(String(out['Sales price EUR']||'0').replace(',','.'));
     const openQty=parseFloat(String(out['Open qty']||'0').replace(',','.'));
     out['Valoare de livrat EUR']=isNaN(price)||isNaN(openQty)?0:price*openQty;
+    // Add _obKey so all modules can reference this specific OB row
+    out._obKey=str(out['CO_no'])+'_'+str(out['CO_line']);
     return out;
   });
   S.meta.ob={rows:rows.length,ts};
@@ -1846,6 +1893,19 @@ async function loadFromIndexedDB(){
   const plane=await dbLoad('plan');
   if(plane?.entries){
     S.planData=new Map(plane.entries);
+    // Migrate: reconstruct _obKey for entries saved before applyOb added _obKey to rows
+    for(const [,plan] of S.planData){
+      for(const e of plan.entries){
+        if(e._obKey==null && S.obData){
+          const match=S.obData.find(r=>
+            r['Confirm dt']===e.confirmDt &&
+            r['Request dt']===e.requestDt &&
+            str(r['Item_no'])===(e.itemNo||plan.entries[0]?.itemNo||'')
+          );
+          if(match) e._obKey=match._obKey;
+        }
+      }
+    }
     if(plane.obs)S.planObs=plane.obs;
     if(plane.wcAvailHours)S.wcAvailHours=plane.wcAvailHours;
       if(plane.prio)S.planPrio=plane.prio;
@@ -2911,6 +2971,7 @@ function render(){
     {id:'orderbook',label:'Order Book'},
     {id:'rapoarte',label:'Rapoarte'},
     {id:'planificare',label:'Planificare'},
+    {id:'planv2',label:'Planificare V2'},
     {id:'pwc',label:'Programare WC'},
 
     {id:'scanari',label:'Raport Scanari'},
@@ -3015,6 +3076,7 @@ function render(){
   else if(S.tab==='orderbook')body.appendChild(renderOrderBook());
   else if(S.tab==='rapoarte') body.appendChild(renderRapoarte());
   else if(S.tab==='planificare')body.appendChild(renderPlanificare());
+  else if(S.tab==='planv2')body.appendChild(renderPlanV2());
   else if(S.tab==='pwc')body.appendChild(renderPwcTab());
   else if(S.tab==='dctr')body.appendChild(renderDctrTab());
   else if(S.tab==='scanari')body.appendChild(renderScanariTab());
@@ -7283,6 +7345,354 @@ td{padding:3px 7px;border:1px solid #e2e8f0;font-size:8pt}
 <table><thead><tr><th>MO</th><th>MO St</th><th>W/C-Comp</th><th>Denumire</th><th>Order Qty</th><th>Report Qty</th><th>Report Date</th></tr></thead>
 <tbody>${bodyRows}</tbody></table></body></html>`);
   w.document.close();setTimeout(()=>w.print(),400);
+}
+
+/* ═══════════════════════════════════════════════════════════════
+   PLANIFICARE V2 MODULE
+═══════════════════════════════════════════════════════════════ */
+
+// ── Get current ISO week key (e.g. '2026-22') ──
+function getISOWeekKey(d){
+  const dt=new Date(d||Date.now());dt.setHours(0,0,0,0);
+  dt.setDate(dt.getDate()+3-(dt.getDay()+6)%7);
+  const week1=new Date(dt.getFullYear(),0,4);
+  const wn=Math.round(((dt-week1)/86400000-3+(week1.getDay()+6)%7)/7)+1;
+  return `${dt.getFullYear()}-${String(wn).padStart(2,'0')}`;
+}
+function getNextWeekKey(wkKey){
+  const [y,w]=wkKey.split('-').map(Number);
+  // Compute date of Monday of that week, add 7 days
+  const jan4=new Date(y,0,4);
+  const wMon=new Date(jan4.getTime()+((w-1)*7-(jan4.getDay()+6)%7)*86400000);
+  wMon.setDate(wMon.getDate()+7);
+  return getISOWeekKey(wMon);
+}
+
+// ── Build subcontracting index from BOW: productNo → {subcoText, maxProdDays, supplier} ──
+function buildSubcoIdx(){
+  const idx=new Map();
+  if(!S.bowData) return idx;
+  for(const r of S.bowData){
+    const pno=str(r['Product no']);
+    const opeName=str(r['Ope name']||r['Ope descr']||'').toLowerCase();
+    if(!pno||opeName!=='subcontracting') continue;
+    const text=str(r['Text_line1']||'').trim();
+    const prodDays=parseFloat(String(r['Prod days']||'0').replace(',','.'))||0;
+    const supplier=str(r['Supplier']||'').trim();
+    if(!idx.has(pno)) idx.set(pno,{texts:new Set(),maxProdDays:0,suppliers:new Set()});
+    const e=idx.get(pno);
+    if(text) e.texts.add(text);
+    if(prodDays>e.maxProdDays) e.maxProdDays=prodDays;
+    if(supplier) e.suppliers.add(supplier);
+  }
+  return idx;
+}
+
+// ── Build PV2 rows from OB ──
+function buildPV2Rows(includeW2){
+  if(!S.obData) return [];
+  const curWk=getISOWeekKey();
+  const nxtWk=getNextWeekKey(curWk);
+
+  const grouped=new Map(); // itemNo → {itemName,custNames,qty0Late,qtyW1,qtyW2,customers}
+  for(const r of S.obData){
+    const wk=str(r['Confirm_week']||'').trim();
+    const is0Late=wk==='0Late';
+    const isW1=wk===curWk;
+    const isW2=includeW2&&wk===nxtWk;
+    if(!is0Late&&!isW1&&!isW2) continue;
+    const itemNo=str(r['Item_no']);
+    if(!itemNo) continue;
+    const openQty=parseFloat(r['Open qty'])||0;
+    if(openQty<=0) continue;
+    if(!grouped.has(itemNo)){
+      grouped.set(itemNo,{
+        itemNo,
+        itemName:str(r['Item_name']||''),
+        qty0Late:0,qtyW1:0,qtyW2:0,
+        customers:new Set(),
+        salesPrice:parseFloat(String(r['Sales price EUR']||'0').replace(',','.'))||0,
+      });
+    }
+    const g=grouped.get(itemNo);
+    if(is0Late) g.qty0Late+=openQty;
+    else if(isW1) g.qtyW1+=openQty;
+    else if(isW2) g.qtyW2+=openQty;
+    const cust=str(r['Customer_name']||'');
+    if(cust) g.customers.add(cust);
+  }
+
+  return [...grouped.values()].sort((a,b)=>{
+    // Sort: 0Late first (have 0Late qty), then by total qty desc
+    const aLate=a.qty0Late>0?1:0, bLate=b.qty0Late>0?1:0;
+    if(bLate!==aLate) return bLate-aLate;
+    return (b.qty0Late+b.qtyW1+b.qtyW2)-(a.qty0Late+a.qtyW1+a.qtyW2);
+  });
+}
+
+function renderPlanV2(){
+  const page=dv('pv2-page');
+  if(!S.obData){
+    const empty=dv('');empty.style.cssText='display:flex;flex-direction:column;align-items:center;justify-content:center;flex:1;gap:12px;padding:48px;color:var(--text3)';
+    empty.innerHTML='<div style="font-size:36px">📋</div><div style="font-size:14px;font-weight:700">Încărcați Order Book din Fisiere</div>';
+    page.appendChild(empty);return page;
+  }
+
+  const curWk=getISOWeekKey();
+  const nxtWk=getNextWeekKey(curWk);
+  // Persistent state
+  if(!S.planV2State) S.planV2State={includeW2:false};
+  const state=S.planV2State;
+
+  const subcoIdx=buildSubcoIdx();
+
+  // ── Toolbar ──
+  const tb=dv('pv2-toolbar');
+
+  // G1: Week info
+  const g1=dv('pv2-toolbar-group');
+  g1.appendChild(sp('pv2-label','Săptămâni:'));
+  g1.appendChild(sp('pv2-week-badge','0Late'));
+  g1.appendChild(sp('','+ '));
+  g1.appendChild(sp('pv2-week-badge',`W${curWk.split('-')[1]} (curentă)`));
+  const w2Badge=sp('pv2-week-badge',`+ W${nxtWk.split('-')[1]} (viitoare)`);
+  w2Badge.id='pv2-w2-badge';
+  w2Badge.style.display=state.includeW2?'inline-flex':'none';
+  g1.appendChild(w2Badge);
+  tb.appendChild(g1);
+
+  // G2: W2 checkbox
+  const g2=dv('pv2-toolbar-group');
+  const chkLabel=el('label','pv2-check');
+  const chk=el('input');chk.type='checkbox';chk.checked=state.includeW2;
+  chkLabel.appendChild(chk);
+  chkLabel.appendChild(document.createTextNode('Include W'+nxtWk.split('-')[1]));
+  chk.addEventListener('change',()=>{
+    state.includeW2=chk.checked;
+    document.getElementById('pv2-w2-badge').style.display=chk.checked?'inline-flex':'none';
+    rebuildPV2Body(tableWrap, subcoIdx);
+    document.getElementById('pv2-count').textContent=buildPV2Rows(state.includeW2).length+' produse';
+  });
+  g2.appendChild(chkLabel);tb.appendChild(g2);
+
+  // G3: Export
+  const g3=dv('pv2-toolbar-group');
+  const excelBtn=el('button','pv2-btn green');excelBtn.innerHTML='⬇ Excel';
+  excelBtn.addEventListener('click',()=>exportPV2Excel(subcoIdx));
+  const printBtn=el('button','pv2-btn');printBtn.innerHTML='🖨 PDF';
+  printBtn.addEventListener('click',()=>printPV2(subcoIdx));
+  g3.appendChild(excelBtn);g3.appendChild(printBtn);tb.appendChild(g3);
+
+  // G4: Badge
+  const g4=dv('pv2-toolbar-group');
+  const badge=dv('pv2-badge');badge.id='pv2-count';
+  badge.textContent=buildPV2Rows(state.includeW2).length+' produse';
+  g4.appendChild(badge);tb.appendChild(g4);
+
+  page.appendChild(tb);
+
+  // ── Table ──
+  const tableWrap=dv('pv2-table-wrap');tableWrap.id='pv2-table-wrap';
+  page.appendChild(tableWrap);
+  buildPV2Table(tableWrap, subcoIdx);
+  return page;
+}
+
+const PV2_COLS=[
+  {key:'itemNo',    label:'Item No',        w:150},
+  {key:'itemName',  label:'Denumire',        w:220},
+  {key:'customer',  label:'Client(i)',       w:200},
+  {key:'qty0Late',  label:'0Late',           w:80},
+  {key:'qtyW1',     label:'W Curentă',       w:90},
+  {key:'qtyW2',     label:'W Viitoare',      w:90},
+  {key:'total',     label:'Total',           w:80},
+  {key:'obs',       label:'Obs. cantități',  w:200},
+  {key:'subco',     label:'Info SUBCO',      w:180},
+  {key:'prodDays',  label:'Prod Days',       w:80},
+  {key:'supplier',  label:'Subcontractor',   w:180},
+];
+
+function buildPV2Table(wrap, subcoIdx){
+  wrap.innerHTML='';
+  const state=S.planV2State||{includeW2:false};
+  const tbl=el('table','pv2-table');tbl.id='pv2-tbl';
+  const thead=el('thead');const hr=el('tr');
+  PV2_COLS.forEach(c=>{
+    if(c.key==='qtyW2'&&!state.includeW2) return;
+    const th=el('th');th.style.width=c.w+'px';th.textContent=c.label;hr.appendChild(th);
+  });
+  thead.appendChild(hr);tbl.appendChild(thead);
+  tbl.appendChild(buildPV2Tbody(subcoIdx));
+  wrap.appendChild(tbl);
+}
+
+function buildPV2Tbody(subcoIdx){
+  const state=S.planV2State||{includeW2:false};
+  const curWk=getISOWeekKey();
+  const nxtWk=getNextWeekKey(curWk);
+  const rows=buildPV2Rows(state.includeW2);
+  const tbody=el('tbody');
+  rows.forEach(r=>{
+    const subco=subcoIdx.get(r.itemNo);
+    const total=r.qty0Late+r.qtyW1+r.qtyW2;
+    const tr=el('tr');
+
+    PV2_COLS.forEach(c=>{
+      if(c.key==='qtyW2'&&!state.includeW2) return;
+      const td=el('td');td.style.maxWidth=c.w+'px';
+      if(c.key==='itemNo'){td.textContent=r.itemNo;td.style.fontWeight='700';td.style.fontFamily='monospace';}
+      else if(c.key==='itemName'){td.textContent=r.itemName||'—';td.title=r.itemName;}
+      else if(c.key==='customer'){
+        td.textContent=[...r.customers].join(', ')||'—';
+        td.title=[...r.customers].join(', ');
+        td.style.fontSize='10px';
+      }
+      else if(c.key==='qty0Late'){
+        td.textContent=r.qty0Late>0?fmtN(r.qty0Late):'—';
+        td.style.textAlign='right';
+        if(r.qty0Late>0){td.style.color='#dc2626';td.style.fontWeight='700';}
+      }
+      else if(c.key==='qtyW1'){
+        td.textContent=r.qtyW1>0?fmtN(r.qtyW1):'—';
+        td.style.textAlign='right';
+        if(r.qtyW1>0) td.style.fontWeight='600';
+      }
+      else if(c.key==='qtyW2'){
+        td.textContent=r.qtyW2>0?fmtN(r.qtyW2):'—';
+        td.style.textAlign='right';
+        td.style.color='#6366f1';
+      }
+      else if(c.key==='total'){
+        const tot=sp('pv2-qty-total',fmtN(total));
+        td.appendChild(tot);td.style.textAlign='right';
+      }
+      else if(c.key==='obs'){
+        const parts=[];
+        if(r.qty0Late>0) parts.push(`0Late: ${fmtN(r.qty0Late)}`);
+        if(r.qtyW1>0) parts.push(`W${curWk.split('-')[1]}: ${fmtN(r.qtyW1)}`);
+        if(r.qtyW2>0&&state.includeW2) parts.push(`W${nxtWk.split('-')[1]}: ${fmtN(r.qtyW2)}`);
+        td.appendChild(sp('pv2-obs',parts.join(' · ')));
+      }
+      else if(c.key==='subco'){
+        if(subco?.texts?.size){
+          const texts=[...subco.texts].join(' / ');
+          td.appendChild(sp('pv2-subco-badge',texts));
+          td.title=texts;
+        } else {td.textContent='—';td.style.color='#9ca3af';}
+      }
+      else if(c.key==='prodDays'){
+        if(subco?.maxProdDays>0){
+          td.textContent=subco.maxProdDays+' z';
+          td.style.textAlign='right';
+          td.style.fontWeight='600';
+          td.style.color='#7c3aed';
+        } else {td.textContent='—';td.style.color='#9ca3af';}
+      }
+      else if(c.key==='supplier'){
+        if(subco?.suppliers?.size){
+          const sup=[...subco.suppliers].join(', ');
+          td.appendChild(sp('pv2-supplier',sup));td.title=sup;
+        } else {td.textContent='—';td.style.color='#9ca3af';}
+      }
+      tr.appendChild(td);
+    });
+    tbody.appendChild(tr);
+  });
+  if(!rows.length){
+    const tr=el('tr');const td=el('td');td.colSpan=PV2_COLS.length;
+    td.style.cssText='text-align:center;padding:32px;color:var(--text3);font-size:13px';
+    td.textContent='Nicio comandă cu Confirm_Week 0Late / săptămâna curentă.';
+    tr.appendChild(td);tbody.appendChild(tr);
+  }
+  return tbody;
+}
+
+function rebuildPV2Body(wrap, subcoIdx){
+  const tbl=wrap.querySelector('.pv2-table');
+  if(!tbl){buildPV2Table(wrap,subcoIdx);return;}
+  const old=tbl.querySelector('tbody');
+  const nb=buildPV2Tbody(subcoIdx);
+  if(old)tbl.replaceChild(nb,old);else tbl.appendChild(nb);
+}
+
+function exportPV2Excel(subcoIdx){
+  const state=S.planV2State||{includeW2:false};
+  const curWk=getISOWeekKey();
+  const nxtWk=getNextWeekKey(curWk);
+  const rows=buildPV2Rows(state.includeW2);
+  if(!rows.length){alert('Nu există date de exportat.');return;}
+  const hdrs=['Item No','Denumire','Client(i)','0Late',`W${curWk.split('-')[1]}`];
+  if(state.includeW2) hdrs.push(`W${nxtWk.split('-')[1]}`);
+  hdrs.push('Total','Obs. cantități','Info SUBCO','Prod Days','Subcontractor');
+  const wsData=[hdrs];
+  rows.forEach(r=>{
+    const subco=subcoIdx.get(r.itemNo);
+    const total=r.qty0Late+r.qtyW1+r.qtyW2;
+    const parts=[];
+    if(r.qty0Late>0) parts.push(`0Late: ${r.qty0Late}`);
+    if(r.qtyW1>0) parts.push(`W${curWk.split('-')[1]}: ${r.qtyW1}`);
+    if(r.qtyW2>0&&state.includeW2) parts.push(`W${nxtWk.split('-')[1]}: ${r.qtyW2}`);
+    const row=[r.itemNo,r.itemName||'',[...r.customers].join(', '),r.qty0Late,r.qtyW1];
+    if(state.includeW2) row.push(r.qtyW2);
+    row.push(total,parts.join(' · '),
+      subco?.texts?.size?[...subco.texts].join(' / '):'',
+      subco?.maxProdDays||'',
+      subco?.suppliers?.size?[...subco.suppliers].join(', '):'');
+    wsData.push(row);
+  });
+  const wb=XLSX.utils.book_new();
+  const ws=XLSX.utils.aoa_to_sheet(wsData);
+  ws['!cols']=[{wch:18},{wch:30},{wch:28},{wch:8},{wch:10},{wch:10},{wch:10},{wch:28},{wch:24},{wch:10},{wch:28}];
+  XLSX.utils.book_append_sheet(wb,ws,'Planificare V2');
+  XLSX.writeFile(wb,`Planificare_V2_${curWk}.xlsx`);
+}
+
+function printPV2(subcoIdx){
+  const state=S.planV2State||{includeW2:false};
+  const curWk=getISOWeekKey();
+  const nxtWk=getNextWeekKey(curWk);
+  const rows=buildPV2Rows(state.includeW2);
+  if(!rows.length){alert('Nu există date de exportat.');return;}
+  const w=window.open('','_blank','width=1200,height=800');
+  if(!w){alert('Permite popup-urile.');return;}
+
+  const hdrs=['Item No','Denumire','Client(i)','0Late',`W${curWk.split('-')[1]}`];
+  if(state.includeW2) hdrs.push(`W${nxtWk.split('-')[1]}`);
+  hdrs.push('Total','Obs. cantități','Info SUBCO','Prod Days','Subcontractor');
+
+  const bodyRows=rows.map((r,i)=>{
+    const subco=subcoIdx.get(r.itemNo);
+    const total=r.qty0Late+r.qtyW1+r.qtyW2;
+    const parts=[];
+    if(r.qty0Late>0) parts.push(`0Late: ${r.qty0Late}`);
+    if(r.qtyW1>0) parts.push(`W${curWk.split('-')[1]}: ${r.qtyW1}`);
+    if(r.qtyW2>0&&state.includeW2) parts.push(`W${nxtWk.split('-')[1]}: ${r.qtyW2}`);
+    const bg=i%2?'background:#f8fafc':'background:#fff';
+    let cells=`<td style="font-family:monospace;font-weight:700">${r.itemNo}</td>
+      <td>${r.itemName||'—'}</td><td style="font-size:9pt">${[...r.customers].join(', ')||'—'}</td>
+      <td style="text-align:right;color:${r.qty0Late>0?'#dc2626':'#999'};font-weight:${r.qty0Late>0?'700':'400'}">${r.qty0Late||'—'}</td>
+      <td style="text-align:right;font-weight:600">${r.qtyW1||'—'}</td>`;
+    if(state.includeW2) cells+=`<td style="text-align:right;color:#6366f1">${r.qtyW2||'—'}</td>`;
+    cells+=`<td style="text-align:right;font-weight:800;color:#1d4ed8">${total}</td>
+      <td style="font-size:8.5pt;color:#6b7280">${parts.join(' · ')}</td>
+      <td style="font-size:8.5pt">${subco?.texts?.size?[...subco.texts].join(' / '):'—'}</td>
+      <td style="text-align:right;color:#7c3aed;font-weight:600">${subco?.maxProdDays||'—'}</td>
+      <td style="font-size:8.5pt;color:#059669;font-weight:600">${subco?.suppliers?.size?[...subco.suppliers].join(', '):'—'}</td>`;
+    return `<tr style="${bg}">${cells}</tr>`;
+  }).join('');
+
+  w.document.write(`<!DOCTYPE html><html><head><meta charset="UTF-8"><title>Planificare V2 — ${curWk}</title>
+<style>*{box-sizing:border-box;margin:0;padding:0}body{font-family:Arial;font-size:8.5pt;padding:10mm}
+h2{font-size:13pt;margin-bottom:4px}p.sub{font-size:9pt;color:#555;margin-bottom:10px}
+table{width:100%;border-collapse:collapse}
+th{background:#1e293b;color:#fff;padding:4px 7px;font-size:8pt;font-weight:700;text-align:left;border:1px solid #0f172a}
+td{padding:3px 7px;border:1px solid #e2e8f0;font-size:8pt}
+@page{size:A3 landscape;margin:8mm}</style></head><body>
+<h2>Planificare V2 — ${curWk}</h2>
+<p class="sub">0Late + W${curWk.split('-')[1]}${state.includeW2?' + W'+nxtWk.split('-')[1]:''} · ${rows.length} produse · ${new Date().toLocaleDateString('ro-RO')}</p>
+<table><thead><tr>${hdrs.map(h=>`<th>${h}</th>`).join('')}</tr></thead>
+<tbody>${bodyRows}</tbody></table></body></html>`);
+  w.document.close();setTimeout(()=>w.print(),500);
 }
 function renderScanner(){
   const page=dv('scanner-page');
