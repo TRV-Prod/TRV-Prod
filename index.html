@@ -3466,6 +3466,37 @@ function renderStocuriTab(){
   });
   toolbar.appendChild(colPickBtn);
 
+  /* Excel export button */
+  const excelBtn=el('button','tbtn');
+  excelBtn.style.cssText='display:flex;align-items:center;gap:5px;border-color:#16a34a;color:#15803d;background:#f0fdf4';
+  excelBtn.innerHTML='⬇ Excel';
+  excelBtn.addEventListener('click',()=>{
+    const rows=getFilteredStock();
+    if(!rows.length){alert('Nu exista date de exportat.');return;}
+    const visCols=(S.stockFilter.colOrder||['fp','code','name','type','oh','mo','wip','wc']).filter(c=>S.stockFilter.visCols?S.stockFilter.visCols.has(c):true);
+    const headers=visCols.map(c=>COL_DEFS[c]?.label||c);
+    const wsData=[headers];
+    rows.forEach(([code,st])=>{
+      wsData.push(visCols.map(c=>{
+        if(c==='fp')   return [...(st.fps||[])].join(', ');
+        if(c==='code') return code;
+        if(c==='name') return st.name||'';
+        if(c==='type') return st.type||'';
+        if(c==='oh')   return st.onHand;
+        if(c==='mo')   return st.onMO||0;
+        if(c==='wip')  return st.totalWIP||0;
+        if(c==='wc')   return Object.entries(st.wipByWC||{}).filter(([,v])=>v!==0).map(([wc,v])=>`${wcLabel(wc)}: ${fmtN(v)}`).join('; ');
+        return '';
+      }));
+    });
+    const wb=XLSX.utils.book_new();
+    const ws=XLSX.utils.aoa_to_sheet(wsData);
+    ws['!cols']=visCols.map(c=>({wch:c==='name'?28:c==='fp'?22:c==='wc'?40:c==='code'?18:10}));
+    XLSX.utils.book_append_sheet(wb,ws,'Stocuri');
+    XLSX.writeFile(wb,`Stocuri_${new Date().toISOString().slice(0,10)}.xlsx`);
+  });
+  toolbar.appendChild(excelBtn);
+
   /* Print button */
   const printBtn=el('button','tbtn');
   printBtn.style.cssText='display:flex;align-items:center;gap:5px';
