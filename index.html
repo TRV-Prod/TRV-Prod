@@ -7368,151 +7368,170 @@ td{padding:3px 7px;border:1px solid #e2e8f0;font-size:8pt}
 
 
 
+
+
 /* ═══════════════════════════════════════════════════════════════
-   PLANIFICARE V2 — Back-scheduling from Confirm_Dt
-   Logic: mustStartDate = Confirm_Dt - transport - 7prod - maxSubco (working days)
-   Main view: per-week dispatch list + workcenter breakdown
+   PLANIFICARE V2 — Per-component back-scheduling
+   Each BOM component has its own start date:
+     compStartDate = Confirm_Dt - transport - 7prod - comp_subco_days
+   Tab "0Late+W current" = all components mustStart ≤ end of current ISO week
 ═══════════════════════════════════════════════════════════════ */
 
-// ── Working days arithmetic ──
-function isWorkingDay(d){const dow=d.getDay();return dow>0&&dow<6;}
-function addWorkingDays(date,n){
-  const d=new Date(date);let added=0;
-  while(added<n){d.setDate(d.getDate()+1);if(isWorkingDay(d))added++;}
-  return d;
-}
-function subWorkingDays(date,n){
-  const d=new Date(date);let sub=0;
-  while(sub<n){d.setDate(d.getDate()-1);if(isWorkingDay(d))sub++;}
-  return d;
-}
-function dateToWeekKey(d){return getISOWeekKey(d);}
-function parseDateVal(v){
-  if(!v) return null;
-  if(v instanceof Date) return v;
-  if(typeof v==='number'&&v>1){
-    const d=new Date(Math.round((v-25569)*86400000));
-    return new Date(d.getTime()-d.getTimezoneOffset()*60000*0); // treat as UTC local
-  }
-  const s=String(v).trim();
-  const m1=s.match(/^(\d{2})\.(\d{2})\.(\d{4})/);
-  if(m1) return new Date(+m1[3],+m1[2]-1,+m1[1]);
-  const m2=s.match(/^(\d{4})-(\d{2})-(\d{2})/);
-  if(m2) return new Date(+m2[1],+m2[2]-1,+m2[3]);
-  return null;
-}
-function fmtDate(d){
-  if(!d) return '—';
-  return `${String(d.getDate()).padStart(2,'0')}.${String(d.getMonth()+1).padStart(2,'0')}.${d.getFullYear()}`;
-}
-function wkLabel(wk){
-  if(wk==='0Late') return '🔴 0Late';
-  const [y,w]=wk.split('-');return `W${w}/${y}`;
+function initPlanV2State(){
+  if(S.planV2State) return;
+  S.planV2State={transportDays:5,prodDays:7,selectedWk:'current',selectedWC:'all'};
 }
 
-// ── Build subco days index: FP code → max Prod days ──
-function buildSubcoDaysIdx(){
+// ── Working day helpers ──
+function _isWD(d){const dw=d.getDay();return dw>0&&dw<6;}
+function _addWD(date,n){const d=new Date(date);let a=0;while(a<n){d.setDate(d.getDate()+1);if(_isWD(d))a++;}return d;}
+function _subWD(date,n){const d=new Date(date);let s=0;while(s<n){d.setDate(d.getDate()-1);if(_isWD(d))s++;}return d;}
+function _parseDt(v){
+  if(!v)return null;
+  if(v instanceof Date)return v;
+  if(typeof v==='number'&&v>1){const d=new Date(Math.round((v-25569)*86400000));return new Date(d.getUTCFullYear(),d.getUTCMonth(),d.getUTCDate());}
+  const s=String(v).trim();
+  const m1=s.match(/^(\d{1,2})\.(\d{1,2})\.(\d{4})/);if(m1)return new Date(+m1[3],+m1[2]-1,+m1[1]);
+  const m2=s.match(/^(\d{4})-(\d{1,2})-(\d{1,2})/);if(m2)return new Date(+m2[1],+m2[2]-1,+m2[3]);
+  return null;
+}
+function _fmtDt(d){if(!d)return'—';return`${String(d.getDate()).padStart(2,'0')}.${String(d.getMonth()+1).padStart(2,'0')}.${d.getFullYear()}`;}
+
+// ── Get ISO week key for a date ──
+function _wkKey(d){return getISOWeekKey(d);}
+
+// ── Current week boundaries ──
+function _currentWkKey(){return getISOWeekKey(new Date());}
+function _endOfWeek(d){
+  // Returns Sunday of the ISO week containing d
+  const dt=new Date(d);const day=dt.getDay();const diff=day===0?0:7-day;
+  dt.setDate(dt.getDate()+diff);dt.setHours(23,59,59,999);return dt;
+}
+function _startOfWeek(d){
+  const dt=new Date(d);const day=dt.getDay();const diff=day===0?-6:1-day;
+  dt.setDate(dt.getDate()+diff);dt.setHours(0,0,0,0);return dt;
+}
+function _wkKeyToMonday(wkKey){
+  if(!wkKey||wkKey==='0Late')return new Date();
+  const[y,w]=wkKey.split('-').map(Number);
+  const jan4=new Date(y,0,4);
+  const mon=new Date(jan4.getTime()+((w-1)*7-(jan4.getDay()+6)%7)*86400000);
+  return mon;
+}
+function _weekOffset(wkKey){
+  // offset in weeks from current week (0=current, 1=next, -1=last, etc.)
+  const curKey=_currentWkKey();
+  if(wkKey==='0Late')return -999;
+  const[cy,cw]=curKey.split('-').map(Number);
+  const[wy,ww]=wkKey.split('-').map(Number);
+  return(wy-cy)*52+(ww-cw);
+}
+
+// ── Build subco days index: productNo → maxSubcoDays ──
+function _buildSubcoDaysIdx(){
   const idx=new Map();
-  if(!S.bowData) return idx;
+  if(!S.bowData)return idx;
   for(const r of S.bowData){
-    const fp=str(r['Final product']);
+    const pno=str(r['Product no']);
+    if(!pno)continue;
     const opeName=str(r['Ope name']||r['Ope descr']||'').toLowerCase();
-    if(!fp||opeName!=='subcontracting') continue;
+    if(opeName!=='subcontracting')continue;
     const pd=parseFloat(String(r['Prod days']||'0').replace(',','.'))||0;
-    if(pd>(idx.get(fp)||0)) idx.set(fp,pd);
+    if(pd>(idx.get(pno)||0))idx.set(pno,pd);
   }
   return idx;
 }
 
-// ── Compute schedule for all OB lines ──
-function computePV2Schedule(transportDays,prodDays){
-  if(!S.obData) return [];
-  const subcoDaysIdx=buildSubcoDaysIdx();
-  const rows=[];
+// ── Compute per-component schedule ──
+// Returns: [{fpItemNo, fpQty, fpConfirmDt, fpConfirmWk, fpCustomer, obKey,
+//            matNo, matName, matType, matQtyPerFP, neededQty, onHandQty, toProduceQty,
+//            compSubcoDays, compStartDate, compStartWk,
+//            wcOps:[{opeName,wcName,runTime,setupTime,neededHours}]}]
+function computePV2Components(transportDays,prodDays){
+  if(!S.obData||!S.bomIdx)return[];
+  const subcoDaysIdx=_buildSubcoDaysIdx();
+  const result=[];
+  const curWkEnd=_endOfWeek(_startOfWeek(new Date()));
+
   for(const r of S.obData){
+    const fpItemNo=str(r['Item_no']);
     const openQty=parseFloat(r['Open qty'])||0;
-    if(openQty<=0) continue;
-    const itemNo=str(r['Item_no']);
+    if(!fpItemNo||openQty<=0)continue;
+    const confirmDt=_parseDt(r['Confirm dt']);
     const confirmWk=str(r['Confirm_week']||'').trim();
-    const confirmDt=parseDateVal(r['Confirm dt']);
-    if(!confirmDt&&confirmWk!=='0Late') continue;
-    const maxSubco=subcoDaysIdx.get(itemNo)||0;
-    const totalLead=transportDays+prodDays+maxSubco;
-    let mustStartDate=null;
-    let deliveryDate=confirmDt;
-    if(confirmWk==='0Late'){
-      // Overdue — should have started already
-      mustStartDate=null;
-    } else if(confirmDt){
-      mustStartDate=subWorkingDays(confirmDt,totalLead);
-    }
-    const startWk=mustStartDate?dateToWeekKey(mustStartDate):'0Late';
-    rows.push({
-      itemNo,
-      itemName:str(r['Item_name']||''),
-      customer:str(r['Customer_name']||''),
-      openQty,
-      confirmWk,
-      confirmDt,
-      startWk,
-      mustStartDate,
-      maxSubco,
-      totalLead,
-      salesPrice:parseFloat(String(r['Sales price EUR']||'0').replace(',','.'))||0,
-      obKey:r._obKey||'',
-    });
-  }
-  return rows;
-}
+    if(!confirmDt&&confirmWk!=='0Late')continue;
+    const fpCustomer=str(r['Customer_name']||'');
+    const obKey=r._obKey||'';
 
-// ── Get distinct start weeks sorted ──
-function getPV2Weeks(schedRows){
-  const wks=new Set(schedRows.map(r=>r.startWk));
-  return [...wks].sort((a,b)=>{
-    if(a==='0Late') return -1;if(b==='0Late') return 1;
-    return a.localeCompare(b);
-  });
-}
+    // Get BOM components (direct children only for now)
+    const bomRows=S.bomIdx.get(`${fpItemNo}__${fpItemNo}`)||[];
+    if(!bomRows.length)continue;
 
-// ── Get BOW operations for a product's BOM components ──
-function getPV2WCBreakdown(itemNo,qty){
-  // Returns: Map<workcenterName, [{matNo,matName,opeName,runTime,setupTime,qty,neededTime}]>
-  const wcMap=new Map();
-  if(!S.bomIdx||!S.bowData) return wcMap;
-  // Get direct+indirect MAKE components
-  function walkBom(fpCtx,compNo,compQty,vis){
-    if(vis.has(compNo)) return;
-    const vNext=new Set(vis);vNext.add(compNo);
-    const bomRows=S.bomIdx.get(`${fpCtx}__${compNo}`)||[];
     for(const br of bomRows){
       const matNo=str(br['Material no']);
       const matType=str(br['Material type']);
-      const matQty=(parseFloat(String(br['Material qty']||'1').replace(',','.'))||1)*compQty;
+      const matQtyPerFP=parseFloat(String(br['Material qty']||'1').replace(',','.'))||1;
       const matName=str(br['Mat. name']||br['Mat desc']||'');
-      if(matType==='MAKE'){
-        // Get BOW operations for this MAKE component
-        for(const bow of S.bowData){
-          if(str(bow['Product no'])!==matNo) continue;
-          const opeName=str(bow['Ope name']||bow['Ope descr']||'');
-          const wcName=str(bow['Ope name']||'').trim()||str(bow['Ope descr']||'');
-          if(!wcName) continue;
-          const runTime=parseFloat(String(bow['Run time']||'0').replace(',','.'))||0;
-          const setupTime=parseFloat(String(bow['Setup time']||'0').replace(',','.'))||0;
-          const neededTime=(runTime*matQty+setupTime)/60; // hours
-          if(!wcMap.has(wcName)) wcMap.set(wcName,[]);
-          wcMap.get(wcName).push({matNo,matName,opeName:wcName,runTime,setupTime,matQty:Math.round(matQty*100)/100,neededTime});
-        }
-        walkBom(fpCtx,matNo,matQty,vNext);
+      if(!matNo)continue;
+
+      const neededQty=openQty*matQtyPerFP;
+      const stock=S.stockIdx?.get(matNo);
+      const onHandQty=Math.max(0,stock?.onHand||0);
+      const toProduceQty=Math.max(0,neededQty-onHandQty);
+
+      // Component-specific subco days from BOW
+      const compSubcoDays=subcoDaysIdx.get(matNo)||0;
+      const leadDays=transportDays+prodDays+compSubcoDays;
+
+      let compStartDate=null,compStartWk='0Late';
+      if(confirmWk==='0Late'){
+        compStartWk='0Late';
+      } else if(confirmDt){
+        compStartDate=_subWD(confirmDt,leadDays);
+        compStartWk=_wkKey(compStartDate);
       }
+
+      // Get BOW operations for this component
+      const wcOps=[];
+      if(S.bowData){
+        for(const bow of S.bowData){
+          if(str(bow['Product no'])!==matNo)continue;
+          const opeName=str(bow['Ope name']||bow['Ope descr']||'');
+          if(!opeName)continue;
+          const rt=parseFloat(String(bow['Run time']||'0').replace(',','.'))||0;
+          const st2=parseFloat(String(bow['Setup time']||'0').replace(',','.'))||0;
+          const neededHours=(rt*neededQty+st2)/60;
+          wcOps.push({opeName,wcName:opeName,runTime:rt,setupTime:st2,neededHours});
+        }
+      }
+
+      result.push({fpItemNo,fpQty:openQty,fpConfirmDt:confirmDt,fpConfirmWk:confirmWk,fpCustomer,obKey,
+        matNo,matName,matType,matQtyPerFP,neededQty,onHandQty,toProduceQty,
+        compSubcoDays,compStartDate,compStartWk,wcOps});
     }
   }
-  walkBom(itemNo,itemNo,qty,new Set());
-  return wcMap;
+  return result;
 }
 
-function initPlanV2State(){
-  if(S.planV2State) return;
-  S.planV2State={transportDays:5,prodDays:7,selectedWk:null};
+// ── Get tab buckets ──
+function getPV2Tabs(components){
+  const curKey=_currentWkKey();
+  const wkSet=new Set();
+  components.forEach(c=>{
+    const off=_weekOffset(c.compStartWk);
+    if(off<=0)wkSet.add('current');
+    else wkSet.add(c.compStartWk);
+  });
+  const tabs=[...wkSet].sort((a,b)=>{
+    if(a==='current')return -1;if(b==='current')return 1;
+    return a.localeCompare(b);
+  });
+  return tabs;
+}
+
+function filterByTab(components,tab){
+  if(tab==='current') return components.filter(c=>_weekOffset(c.compStartWk)<=0);
+  return components.filter(c=>c.compStartWk===tab);
 }
 
 function renderPlanV2(){
@@ -7522,204 +7541,206 @@ function renderPlanV2(){
     const page=dv('');page.style.cssText='display:flex;flex-direction:column;height:100%;overflow:hidden;background:#f8f9fb;font-family:inherit';
 
     if(!S.obData){
-      page.innerHTML='<div style="padding:32px;color:var(--text3);font-size:13px;text-align:center">Încărcați Order Book din Fisiere.</div>';
+      page.innerHTML='<div style="padding:32px;color:var(--text3);text-align:center;font-size:13px">Încărcați Order Book din Fisiere.</div>';
       return page;
     }
 
-    // ─── TOOLBAR ───
-    const tb=dv('');tb.style.cssText='display:flex;align-items:center;gap:10px;padding:8px 16px;background:#fff;border-bottom:2px solid var(--border);flex-shrink:0;flex-wrap:wrap;box-shadow:0 1px 4px rgba(0,0,0,.05)';
+    // ── TOOLBAR ──
+    const tb=dv('');tb.style.cssText='display:flex;align-items:center;gap:10px;padding:8px 16px;background:#fff;border-bottom:2px solid var(--border);flex-shrink:0;flex-wrap:wrap';
 
-    const mkLbl=t=>{const s=sp('');s.style.cssText='font-size:10px;font-weight:600;color:var(--text3);text-transform:uppercase;letter-spacing:.05em;white-space:nowrap';s.textContent=t;return s;};
-    const mkInp=(val,min,max,onChange)=>{const i=el('input');i.type='number';i.min=min;i.max=max;i.value=val;i.style.cssText='width:60px;height:28px;padding:0 6px;border:1px solid var(--border);border-radius:4px;font-size:12px;font-weight:700;color:var(--accent);text-align:center';i.addEventListener('change',()=>{onChange(parseInt(i.value)||val);});return i;};
+    const mkLbl=t=>{const s=dv('');s.style.cssText='font-size:10px;font-weight:600;color:var(--text3);text-transform:uppercase;letter-spacing:.05em;white-space:nowrap';s.textContent=t;return s;};
+    const mkNumInp=(val,onChange)=>{const i=el('input');i.type='number';i.min=0;i.max=30;i.value=val;
+      i.style.cssText='width:55px;height:28px;padding:0 6px;border:1px solid var(--border);border-radius:4px;font-size:12px;font-weight:700;color:var(--accent);text-align:center';
+      i.addEventListener('change',()=>onChange(Math.max(0,parseInt(i.value)||0)));return i;};
 
-    // Transport days
-    const g1=dv('');g1.style.cssText='display:flex;align-items:center;gap:6px;padding-right:12px;border-right:1px solid #e2e8f0';
-    g1.appendChild(mkLbl('Zile transport:'));
-    g1.appendChild(mkInp(st.transportDays,0,30,v=>{st.transportDays=v;rebuild();}));
+    const g1=dv('');g1.style.cssText='display:flex;align-items:center;gap:5px;padding-right:12px;border-right:1px solid #e2e8f0';
+    g1.appendChild(mkLbl('Transport (z):'));g1.appendChild(mkNumInp(st.transportDays,v=>{st.transportDays=v;rebuild();}));
     tb.appendChild(g1);
-
-    // Production days
-    const g2=dv('');g2.style.cssText='display:flex;align-items:center;gap:6px;padding-right:12px;border-right:1px solid #e2e8f0';
-    g2.appendChild(mkLbl('Zile producție:'));
-    g2.appendChild(mkInp(st.prodDays,1,30,v=>{st.prodDays=v;rebuild();}));
+    const g2=dv('');g2.style.cssText='display:flex;align-items:center;gap:5px;padding-right:12px;border-right:1px solid #e2e8f0';
+    g2.appendChild(mkLbl('Producție (z):'));g2.appendChild(mkNumInp(st.prodDays,v=>{st.prodDays=v;rebuild();}));
     tb.appendChild(g2);
 
-    // Info formula
-    const formulaEl=sp('');formulaEl.id='pv2-formula';formulaEl.style.cssText='font-size:10px;color:var(--text3);font-style:italic';
-    tb.appendChild(formulaEl);
+    // WC selector
+    const g3=dv('');g3.style.cssText='display:flex;align-items:center;gap:5px;padding-right:12px;border-right:1px solid #e2e8f0';
+    g3.appendChild(mkLbl('Workcenter:'));
+    const wcSel=el('select');wcSel.id='pv2-wc-sel';
+    wcSel.style.cssText='height:28px;padding:0 8px;border:1px solid var(--border);border-radius:4px;font-size:11px;max-width:220px';
+    wcSel.addEventListener('change',()=>{st.selectedWC=wcSel.value;rebuildContent();});
+    g3.appendChild(wcSel);tb.appendChild(g3);
 
-    // Export
-    const g3=dv('');g3.style.cssText='display:flex;align-items:center;gap:6px;margin-left:auto';
+    const g4=dv('');g4.style.cssText='display:flex;align-items:center;gap:5px;margin-left:auto';
     const excelBtn=el('button','tbtn');excelBtn.style.cssText='border-color:#16a34a;color:#15803d;background:#f0fdf4';
     excelBtn.innerHTML='⬇ Excel';excelBtn.addEventListener('click',()=>exportPV2Excel(st));
-    const printBtn=el('button','tbtn');printBtn.innerHTML='🖨 PDF';printBtn.addEventListener('click',()=>printPV2(st));
-    g3.appendChild(excelBtn);g3.appendChild(printBtn);tb.appendChild(g3);
+    const pdfBtn=el('button','tbtn');pdfBtn.innerHTML='🖨 PDF';pdfBtn.addEventListener('click',()=>printPV2(st));
+    g4.appendChild(excelBtn);g4.appendChild(pdfBtn);tb.appendChild(g4);
     page.appendChild(tb);
 
-    // ─── BODY ───
-    const body=dv('');body.id='pv2-body';body.style.cssText='flex:1;overflow:hidden;display:flex;flex-direction:column';
-    page.appendChild(body);
+    // ── TABS + CONTENT ──
+    const tabsBar=dv('');tabsBar.id='pv2-tabs-bar';
+    tabsBar.style.cssText='display:flex;gap:3px;padding:8px 16px 0;background:#fff;border-bottom:2px solid var(--border);flex-shrink:0;overflow-x:auto;flex-shrink:0';
+    page.appendChild(tabsBar);
+
+    const contentArea=dv('');contentArea.id='pv2-content';
+    contentArea.style.cssText='flex:1;overflow:auto;padding:14px 16px';
+    page.appendChild(contentArea);
+
+    let allComponents=[];
+
+    function rebuildContent(){
+      contentArea.innerHTML='';
+      const tabComps=filterByTab(allComponents,st.selectedWk);
+
+      // Get all WCs for this tab
+      const allWCs=new Set();
+      tabComps.forEach(c=>c.wcOps.forEach(op=>allWCs.add(op.wcName)));
+      const wcList=['all',...[...allWCs].sort()];
+      // Update WC selector
+      wcSel.innerHTML='';
+      wcList.forEach(wc=>{const o=el('option');o.value=wc;o.textContent=wc==='all'?'Toate Workcenters':wc;if(st.selectedWC===wc)o.selected=true;wcSel.appendChild(o);});
+      if(!wcList.includes(st.selectedWC))st.selectedWC='all';
+
+      // Filter by WC
+      const visComps=st.selectedWC==='all'?tabComps:tabComps.filter(c=>c.wcOps.some(op=>op.wcName===st.selectedWC));
+
+      if(!visComps.length){
+        contentArea.innerHTML='<div style="padding:24px;color:var(--text3);font-size:12px;text-align:center">Nicio componentă pentru această combinație.</div>';return;
+      }
+
+      // ── Summary KPIs ──
+      const kpis=dv('');kpis.style.cssText='display:flex;gap:8px;margin-bottom:12px;flex-wrap:wrap';
+      const fpSet=new Set(visComps.map(c=>c.fpItemNo+c.obKey));
+      const compSet=new Set(visComps.map(c=>c.matNo));
+      const totalToProd=visComps.reduce((s,c)=>s+c.toProduceQty,0);
+      [
+        {l:'Produse finale',v:fpSet.size},
+        {l:'Componente',v:compSet.size},
+        {l:'Total de produs',v:fmtN(Math.round(totalToProd))},
+        {l:'Workcenters',v:allWCs.size},
+      ].forEach(({l,v})=>{
+        const k=dv('');k.style.cssText='background:#fff;border:1px solid var(--border);border-radius:6px;padding:8px 14px;text-align:center;min-width:80px';
+        k.innerHTML=`<div style="font-size:18px;font-weight:800;color:var(--accent)">${v}</div><div style="font-size:9px;font-weight:600;color:var(--text3);text-transform:uppercase;letter-spacing:.06em">${l}</div>`;
+        kpis.appendChild(k);
+      });
+      contentArea.appendChild(kpis);
+
+      // ── Table: group by WC then by FP ──
+      // Build groups: wcName → [{fpItemNo, fpQty, fpCustomer, fpConfirmDt, matNo, matName, neededQty, onHandQty, toProduceQty, compSubcoDays, compStartDate}]
+      const wcGroups=new Map();
+      visComps.forEach(c=>{
+        c.wcOps.forEach(op=>{
+          if(st.selectedWC!=='all'&&op.wcName!==st.selectedWC)return;
+          if(!wcGroups.has(op.wcName))wcGroups.set(op.wcName,[]);
+          // Check if this exact (fpItemNo+obKey+matNo) already in group
+          const g=wcGroups.get(op.wcName);
+          const existing=g.find(e=>e.fpItemNo===c.fpItemNo&&e.obKey===c.obKey&&e.matNo===c.matNo);
+          if(!existing)g.push({...c,wcName:op.wcName,neededHours:op.neededHours});
+          else existing.neededHours=(existing.neededHours||0)+op.neededHours;
+        });
+      });
+
+      [...wcGroups.entries()].sort((a,b)=>a[0].localeCompare(b[0])).forEach(([wc,rows])=>{
+        const totalH=rows.reduce((s,r)=>s+(r.neededHours||0),0);
+        const totalProd=rows.reduce((s,r)=>s+r.toProduceQty,0);
+        const wcCard=dv('');wcCard.style.cssText='background:#fff;border:1px solid var(--border);border-radius:8px;margin-bottom:12px;overflow:hidden;box-shadow:0 1px 4px rgba(0,0,0,.06)';
+        const wcHdr=dv('');wcHdr.style.cssText='background:#1e3a5f;color:#fff;padding:8px 14px;display:flex;justify-content:space-between;align-items:center';
+        wcHdr.innerHTML=`<span style="font-size:13px;font-weight:800">⚙ ${wc}</span><span style="font-size:10px;opacity:.8">${rows.length} componente · ${totalProd.toFixed(0)} buc total · ${totalH.toFixed(1)}h</span>`;
+        wcCard.appendChild(wcHdr);
+        const tbl=el('table');tbl.style.cssText='width:100%;border-collapse:collapse;font-size:11.5px';
+        tbl.innerHTML=`<thead><tr style="background:#f0f4fa">
+          <th style="padding:5px 8px;text-align:left;font-size:9px;font-weight:700;color:var(--text2);text-transform:uppercase;letter-spacing:.06em;white-space:nowrap">Produs Final</th>
+          <th style="padding:5px 8px;text-align:left;font-size:9px;font-weight:700;color:var(--text2);text-transform:uppercase;letter-spacing:.06em">Componentă</th>
+          <th style="padding:5px 8px;text-align:left;font-size:9px;font-weight:700;color:var(--text2);text-transform:uppercase;letter-spacing:.06em">Client</th>
+          <th style="padding:5px 8px;text-align:right;font-size:9px;font-weight:700;color:var(--text2);text-transform:uppercase">Necesar</th>
+          <th style="padding:5px 8px;text-align:right;font-size:9px;font-weight:700;color:var(--text2);text-transform:uppercase">Stoc</th>
+          <th style="padding:5px 8px;text-align:right;font-size:9px;font-weight:700;color:#dc2626;text-transform:uppercase">De produs</th>
+          <th style="padding:5px 8px;text-align:center;font-size:9px;font-weight:700;color:#7c3aed;text-transform:uppercase">Subco (z)</th>
+          <th style="padding:5px 8px;text-align:center;font-size:9px;font-weight:700;color:var(--text2);text-transform:uppercase">Start</th>
+          <th style="padding:5px 8px;text-align:center;font-size:9px;font-weight:700;color:var(--text2);text-transform:uppercase">Livrare</th>
+        </tr></thead>`;
+        const tbody=el('tbody');
+        rows.sort((a,b)=>a.fpItemNo.localeCompare(b.fpItemNo)).forEach((r,i)=>{
+          const urgCls=r.compStartWk==='0Late'||_weekOffset(r.compStartWk)<0?'color:#dc2626;font-weight:700':_weekOffset(r.compStartWk)===0?'color:#ca8a04;font-weight:700':'color:#15803d;font-weight:700';
+          const toProdCls=r.toProduceQty>0?'color:#dc2626;font-weight:800':'color:#15803d;font-weight:700';
+          const tr=el('tr');tr.style.background=i%2?'#f8fafc':'#fff';
+          tr.innerHTML=`
+            <td style="padding:4px 8px;font-family:monospace;font-weight:700;font-size:11px" title="${r.fpItemNo}">${r.fpItemNo}</td>
+            <td style="padding:4px 8px;font-size:11px"><b>${r.matNo}</b>${r.matName?' <span style="color:#6b7280;font-size:10px">— '+r.matName.slice(0,25)+'</span>':''}</td>
+            <td style="padding:4px 8px;font-size:10px;max-width:130px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${r.fpCustomer}">${r.fpCustomer}</td>
+            <td style="padding:4px 8px;text-align:right;font-weight:600">${fmtN(Math.round(r.neededQty*10)/10)}</td>
+            <td style="padding:4px 8px;text-align:right;color:${r.onHandQty>0?'#15803d':'#9ca3af'};font-weight:600">${fmtN(r.onHandQty)}</td>
+            <td style="padding:4px 8px;text-align:right;${toProdCls}">${r.toProduceQty>0?fmtN(Math.round(r.toProduceQty*10)/10):'✓ OK'}</td>
+            <td style="padding:4px 8px;text-align:center;color:#7c3aed;font-weight:600">${r.compSubcoDays>0?r.compSubcoDays+'z':'—'}</td>
+            <td style="padding:4px 8px;text-align:center;font-size:10px;${urgCls}">${_fmtDt(r.compStartDate)||'URGENT'}</td>
+            <td style="padding:4px 8px;text-align:center;font-size:10px;color:var(--text2)">${_fmtDt(r.fpConfirmDt)||r.fpConfirmWk}</td>`;
+          tbody.appendChild(tr);
+        });
+        tbl.appendChild(tbody);wcCard.appendChild(tbl);contentArea.appendChild(wcCard);
+      });
+    }
 
     function rebuild(){
-      formulaEl.textContent=`Lead time = ${st.transportDays}z transport + ${st.prodDays}z producție + subco`;
-      body.innerHTML='';
-      const schedRows=computePV2Schedule(st.transportDays,st.prodDays);
-      const weeks=getPV2Weeks(schedRows);
-      if(!st.selectedWk||!weeks.includes(st.selectedWk)) st.selectedWk=weeks[0]||null;
-
-      // ── Week tabs ──
-      const wkTabBar=dv('');wkTabBar.style.cssText='display:flex;gap:4px;padding:8px 16px 0;background:#fff;border-bottom:2px solid var(--border);flex-shrink:0;overflow-x:auto';
-      weeks.forEach(wk=>{
-        const wkRows=schedRows.filter(r=>r.startWk===wk);
-        const totalQty=wkRows.reduce((s,r)=>s+r.openQty,0);
-        const tab=dv('');
-        const isActive=wk===st.selectedWk;
-        tab.style.cssText=`padding:6px 14px;border-radius:6px 6px 0 0;cursor:pointer;font-size:11px;font-weight:700;white-space:nowrap;border:2px solid transparent;border-bottom:none;user-select:none;`+
-          (isActive?'background:#1e3a5f;color:#fff;':'background:#f1f5f9;color:var(--text2);border-color:#e2e8f0;');
-        tab.innerHTML=`${wkLabel(wk)}<br><span style="font-size:9px;font-weight:400;opacity:.8">${wkRows.length} prod · ${Math.round(totalQty).toLocaleString()} buc</span>`;
-        tab.addEventListener('click',()=>{st.selectedWk=wk;rebuild();});
-        wkTabBar.appendChild(tab);
+      allComponents=computePV2Components(st.transportDays,st.prodDays);
+      const tabs=getPV2Tabs(allComponents);
+      if(!st.selectedWk||!tabs.includes(st.selectedWk))st.selectedWk=tabs[0]||'current';
+      const curKey=_currentWkKey();
+      // Rebuild tabs bar
+      tabsBar.innerHTML='';
+      tabs.forEach(tab=>{
+        const tabComps=filterByTab(allComponents,tab);
+        const urgent=tabComps.filter(c=>_weekOffset(c.compStartWk)<0).length;
+        const isActive=tab===st.selectedWk;
+        const btn=dv('');
+        const label=tab==='current'?`🔵 0Late + W${curKey.split('-')[1]} (curentă)`:`W${tab.split('-')[1]}/${tab.split('-')[0]}`;
+        btn.style.cssText=`padding:6px 14px;border-radius:6px 6px 0 0;cursor:pointer;font-size:11px;font-weight:700;white-space:nowrap;border:2px solid transparent;border-bottom:none;user-select:none;min-width:120px;text-align:center;`+
+          (isActive?'background:#1e3a5f;color:#fff;border-color:#1e3a5f;':'background:#f1f5f9;color:var(--text2);border-color:#e2e8f0;');
+        btn.innerHTML=`${label}<br><span style="font-size:9px;font-weight:400;opacity:.8">${tabComps.length} comp${urgent>0?` · <span style="color:#fca5a5">${urgent} urgente</span>`:''}`;
+        btn.addEventListener('click',()=>{st.selectedWk=tab;rebuild();});
+        tabsBar.appendChild(btn);
       });
-      body.appendChild(wkTabBar);
-
-      if(!st.selectedWk){body.innerHTML+='<div style="padding:24px;color:var(--text3)">Nicio dată disponibilă.</div>';return;}
-
-      // ── Content for selected week ──
-      const wkRows=schedRows.filter(r=>r.startWk===st.selectedWk);
-      const content2=dv('');content2.style.cssText='flex:1;overflow:auto;padding:12px 16px;display:flex;gap:12px;flex-wrap:wrap;align-items:flex-start';
-
-      // Left panel: product list
-      const leftPanel=dv('');leftPanel.style.cssText='flex:1;min-width:320px;max-width:520px';
-      const lhdr=dv('');lhdr.style.cssText='font-size:12px;font-weight:800;color:#1e3a5f;margin-bottom:8px;display:flex;align-items:center;gap:8px';
-      lhdr.innerHTML=`📋 Produse de lansat — <b>${wkLabel(st.selectedWk)}</b> <span style="font-size:10px;font-weight:400;color:var(--text3)">(${wkRows.length} linii)</span>`;
-      leftPanel.appendChild(lhdr);
-
-      const tbl=el('table');tbl.style.cssText='width:100%;border-collapse:collapse;font-size:11px;background:#fff;border-radius:6px;overflow:hidden;box-shadow:0 1px 4px rgba(0,0,0,.07)';
-      tbl.innerHTML=`<thead><tr style="background:#1e3a5f;color:#e2e8f0">
-        <th style="padding:5px 8px;font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;text-align:left">Item No</th>
-        <th style="padding:5px 8px;font-size:9px;font-weight:700;text-align:right">Qty</th>
-        <th style="padding:5px 8px;font-size:9px;font-weight:700;text-align:left">Client</th>
-        <th style="padding:5px 8px;font-size:9px;font-weight:700;text-align:center">Livrare</th>
-        <th style="padding:5px 8px;font-size:9px;font-weight:700;text-align:center">Subco</th>
-        <th style="padding:5px 8px;font-size:9px;font-weight:700;text-align:center">Start</th>
-      </tr></thead>`;
-      const tbody=el('tbody');
-      wkRows.forEach((r,i)=>{
-        const tr=el('tr');tr.style.background=i%2?'#f8fafc':'#fff';
-        const startColor=r.startWk==='0Late'?'#dc2626':'#15803d';
-        tr.innerHTML=`
-          <td style="padding:4px 8px;font-family:monospace;font-weight:700" title="${r.itemName}">${r.itemNo}</td>
-          <td style="padding:4px 8px;text-align:right;font-weight:700;color:var(--accent)">${fmtN(r.openQty)}</td>
-          <td style="padding:4px 8px;font-size:10px;max-width:120px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${r.customer}">${r.customer}</td>
-          <td style="padding:4px 8px;text-align:center;font-size:10px">${fmtDate(r.confirmDt)||r.confirmWk}</td>
-          <td style="padding:4px 8px;text-align:center;font-size:10px;color:#7c3aed;font-weight:700">${r.maxSubco>0?r.maxSubco+'z':'—'}</td>
-          <td style="padding:4px 8px;text-align:center;font-size:10px;font-weight:700;color:${startColor}">${fmtDate(r.mustStartDate)||'URGENT'}</td>`;
-        tbody.appendChild(tr);
-      });
-      tbl.appendChild(tbody);leftPanel.appendChild(tbl);
-      content2.appendChild(leftPanel);
-
-      // Right panel: workcenter breakdown
-      const rightPanel=dv('');rightPanel.style.cssText='flex:2;min-width:320px';
-      const rhdr=dv('');rhdr.style.cssText='font-size:12px;font-weight:800;color:#1e3a5f;margin-bottom:8px';
-      rhdr.innerHTML='🏭 Componente de prelucrat — per Workcenter';
-      rightPanel.appendChild(rhdr);
-
-      // Aggregate WC breakdown for all products in this week
-      const wcAgg=new Map(); // wcName → [{itemNo,matNo,matName,totalQty,totalHours}]
-      wkRows.forEach(r=>{
-        const wcMap=getPV2WCBreakdown(r.itemNo,r.openQty);
-        for(const [wc,ops] of wcMap){
-          if(!wcAgg.has(wc)) wcAgg.set(wc,[]);
-          ops.forEach(op=>{
-            const existing=wcAgg.get(wc).find(e=>e.itemNo===r.itemNo&&e.matNo===op.matNo);
-            if(existing){existing.totalQty+=op.matQty;existing.totalHours+=op.neededTime;}
-            else wcAgg.get(wc).push({itemNo:r.itemNo,matNo:op.matNo,matName:op.matName,totalQty:op.matQty,totalHours:op.neededTime,runTime:op.runTime,setupTime:op.setupTime});
-          });
-        }
-      });
-
-      if(!wcAgg.size){
-        rightPanel.innerHTML+='<div style="color:var(--text3);font-size:11px;padding:12px">Nu există date BOW/BOM pentru produsele din această săptămână.</div>';
-      } else {
-        [...wcAgg.entries()].sort((a,b)=>a[0].localeCompare(b[0])).forEach(([wc,ops])=>{
-          const wcCard=dv('');wcCard.style.cssText='background:#fff;border:1px solid var(--border);border-radius:7px;margin-bottom:10px;overflow:hidden;box-shadow:0 1px 3px rgba(0,0,0,.06)';
-          const wcHdr=dv('');wcHdr.style.cssText='background:#334155;color:#fff;padding:6px 12px;display:flex;justify-content:space-between;align-items:center';
-          const totalH=ops.reduce((s,o)=>s+o.totalHours,0);
-          wcHdr.innerHTML=`<b style="font-size:12px">⚙ ${wc}</b><span style="font-size:10px;opacity:.8">${ops.length} comp · ${totalH.toFixed(1)}h total</span>`;
-          wcCard.appendChild(wcHdr);
-          const wcTbl=el('table');wcTbl.style.cssText='width:100%;border-collapse:collapse;font-size:11px';
-          wcTbl.innerHTML='<thead><tr style="background:#f8fafc"><th style="padding:4px 8px;text-align:left;font-size:9px;font-weight:700;text-transform:uppercase;color:var(--text3)">Produs Final</th><th style="padding:4px 8px;text-align:left;font-size:9px;font-weight:700;text-transform:uppercase;color:var(--text3)">Componentă</th><th style="padding:4px 8px;text-align:right;font-size:9px;font-weight:700;text-transform:uppercase;color:var(--text3)">Cant.</th><th style="padding:4px 8px;text-align:right;font-size:9px;font-weight:700;text-transform:uppercase;color:var(--text3)">Ore</th></tr></thead>';
-          const wcTbody=el('tbody');
-          ops.sort((a,b)=>a.itemNo.localeCompare(b.itemNo)).forEach((op,i)=>{
-            wcTbody.innerHTML+=`<tr style="background:${i%2?'#f9fafb':'#fff'}">
-              <td style="padding:3px 8px;font-family:monospace;font-size:10px;font-weight:600">${op.itemNo}</td>
-              <td style="padding:3px 8px;font-size:10px" title="${op.matName}">${op.matNo}${op.matName?' — '+op.matName.slice(0,30):''}</td>
-              <td style="padding:3px 8px;text-align:right;font-weight:700">${fmtN(Math.round(op.totalQty*10)/10)}</td>
-              <td style="padding:3px 8px;text-align:right;color:#7c3aed;font-weight:600">${op.totalHours.toFixed(1)}h</td>
-            </tr>`;
-          });
-          wcTbl.appendChild(wcTbody);wcCard.appendChild(wcTbl);
-          rightPanel.appendChild(wcCard);
-        });
-      }
-      content2.appendChild(rightPanel);
-      body.appendChild(content2);
+      rebuildContent();
     }
 
     rebuild();
     return page;
   }catch(err){
     const p=dv('');p.style.cssText='padding:20px;color:#dc2626;font-family:monospace;white-space:pre-wrap;background:#fff1f1';
-    p.textContent='Eroare Planificare V2:\n'+err.message+'\n'+err.stack;return p;
+    p.textContent='Eroare PV2:\n'+err.message+'\n'+err.stack;return p;
   }
 }
 
 function exportPV2Excel(st){
-  const sched=computePV2Schedule(st.transportDays,st.prodDays);
+  const comps=computePV2Components(st.transportDays,st.prodDays);
+  const tabComps=filterByTab(comps,st.selectedWk);
   const wb=XLSX.utils.book_new();
-  // Sheet 1: Schedule
-  const ws1Data=[['Item No','Denumire','Client','Qty','Confirm Week','Confirm Dt','Subco Days','Lead Time','Must Start Week','Must Start Date']];
-  sched.forEach(r=>ws1Data.push([r.itemNo,r.itemName,r.customer,r.openQty,r.confirmWk,fmtDate(r.confirmDt),r.maxSubco,r.totalLead,r.startWk,fmtDate(r.mustStartDate)]));
-  const ws1=XLSX.utils.aoa_to_sheet(ws1Data);
-  ws1['!cols']=[{wch:18},{wch:26},{wch:22},{wch:8},{wch:10},{wch:12},{wch:10},{wch:10},{wch:10},{wch:12}];
-  XLSX.utils.book_append_sheet(wb,ws1,'Planificare Back-Schedule');
-  // Sheet 2: Workcenter for selected week
-  if(st.selectedWk){
-    const wkRows=sched.filter(r=>r.startWk===st.selectedWk);
-    const ws2Data=[['Workcenter','Produs Final','Componentă','Denumire','Cantitate','Ore estimate']];
-    wkRows.forEach(r=>{
-      const wcMap=getPV2WCBreakdown(r.itemNo,r.openQty);
-      for(const [wc,ops] of wcMap) ops.forEach(op=>ws2Data.push([wc,r.itemNo,op.matNo,op.matName,Math.round(op.matQty*10)/10,+op.neededTime.toFixed(2)]));
-    });
-    const ws2=XLSX.utils.aoa_to_sheet(ws2Data);
-    ws2['!cols']=[{wch:26},{wch:18},{wch:18},{wch:28},{wch:10},{wch:10}];
-    XLSX.utils.book_append_sheet(wb,ws2,`WC_${st.selectedWk||'all'}`);
-  }
+  const ws1=XLSX.utils.aoa_to_sheet([
+    ['Workcenter','Produs Final','Client','Componentă','Denumire','Qty/buc','Necesar','Stoc','De produs','Subco (z)','Start componentă','Livrare FP'],
+    ...tabComps.flatMap(c=>c.wcOps.length
+      ? c.wcOps.map((op,i)=>[op.wcName,...(i===0?[c.fpItemNo,c.fpCustomer,c.matNo,c.matName,c.matQtyPerFP,c.neededQty,c.onHandQty,c.toProduceQty,c.compSubcoDays,_fmtDt(c.compStartDate),_fmtDt(c.fpConfirmDt)]:['',...Array(10).fill('')])])
+      : [['',...[c.fpItemNo,c.fpCustomer,c.matNo,c.matName,c.matQtyPerFP,c.neededQty,c.onHandQty,c.toProduceQty,c.compSubcoDays,_fmtDt(c.compStartDate),_fmtDt(c.fpConfirmDt)]]])
+  ]);
+  ws1['!cols']=[{wch:26},{wch:18},{wch:22},{wch:18},{wch:26},{wch:8},{wch:9},{wch:9},{wch:10},{wch:9},{wch:14},{wch:14}];
+  XLSX.utils.book_append_sheet(wb,ws1,'Plan componente');
   XLSX.writeFile(wb,`PlanificareV2_${new Date().toISOString().slice(0,10)}.xlsx`);
 }
 
 function printPV2(st){
-  const sched=computePV2Schedule(st.transportDays,st.prodDays);
-  const wkRows=sched.filter(r=>r.startWk===st.selectedWk);
+  const comps=computePV2Components(st.transportDays,st.prodDays);
+  const tabComps=filterByTab(comps,st.selectedWk).filter(c=>st.selectedWC==='all'||c.wcOps.some(op=>op.wcName===st.selectedWC));
   const w=window.open('','_blank','width=1200,height=800');if(!w){alert('Permite popup-urile.');return;}
-  let prodRows=wkRows.map((r,i)=>`<tr style="${i%2?'background:#f8fafc':''}"><td style="font-family:monospace;font-weight:700">${r.itemNo}</td><td>${r.itemName||''}</td><td>${r.customer}</td><td style="text-align:right;font-weight:700">${fmtN(r.openQty)}</td><td>${fmtDate(r.confirmDt)||r.confirmWk}</td><td style="color:#7c3aed;font-weight:700;text-align:center">${r.maxSubco||'—'}</td><td style="font-weight:700;color:#15803d;text-align:center">${fmtDate(r.mustStartDate)||'URGENT'}</td></tr>`).join('');
+  const curKey=_currentWkKey();
+  const rows=tabComps.sort((a,b)=>(a.wcOps[0]?.wcName||'').localeCompare(b.wcOps[0]?.wcName||'')).map((c,i)=>
+    `<tr style="${i%2?'background:#f8fafc':''}"><td>${c.wcOps.map(o=>o.wcName).join(', ')||'—'}</td><td style="font-family:monospace;font-weight:700">${c.fpItemNo}</td><td>${c.fpCustomer}</td><td><b>${c.matNo}</b>${c.matName?' — '+c.matName:''}</td><td style="text-align:right">${fmtN(c.neededQty)}</td><td style="text-align:right;color:#15803d">${fmtN(c.onHandQty)}</td><td style="text-align:right;font-weight:700;color:#dc2626">${c.toProduceQty>0?fmtN(c.toProduceQty):'OK'}</td><td style="text-align:center;color:#7c3aed">${c.compSubcoDays||'—'}</td><td style="text-align:center;font-weight:700">${_fmtDt(c.compStartDate)||'URGENT'}</td><td style="text-align:center">${_fmtDt(c.fpConfirmDt)||c.fpConfirmWk}</td></tr>`).join('');
   w.document.write(`<!DOCTYPE html><html><head><meta charset="UTF-8"><title>Planificare V2</title>
-<style>*{box-sizing:border-box;margin:0;padding:0}body{font-family:Arial;font-size:8.5pt;padding:10mm}
-h2{font-size:12pt;margin-bottom:4px}p.sub{font-size:9pt;color:#555;margin-bottom:10px}
-table{width:100%;border-collapse:collapse;margin-bottom:14px}
-th{background:#1e293b;color:#fff;padding:4px 7px;font-size:8pt;font-weight:700;text-align:left;border:1px solid #0f172a}
-td{padding:3px 7px;border:1px solid #e2e8f0;font-size:8pt;vertical-align:top}
-h3{font-size:10pt;margin:10px 0 4px;color:#1e3a5f}
-@page{size:A3 landscape;margin:8mm}</style></head><body>
-<h2>Planificare V2 — ${wkLabel(st.selectedWk||'?')}</h2>
-<p class="sub">Transport: ${st.transportDays}z · Producție: ${st.prodDays}z · ${wkRows.length} produse · ${new Date().toLocaleDateString('ro-RO')}</p>
-<h3>Produse de lansat</h3>
-<table><thead><tr><th>Item No</th><th>Denumire</th><th>Client</th><th>Qty</th><th>Livrare</th><th>Subco (z)</th><th>Start producție</th></tr></thead><tbody>${prodRows}</tbody></table>
+<style>*{box-sizing:border-box;margin:0;padding:0}body{font-family:Arial;font-size:8pt;padding:8mm}
+h2{font-size:12pt;margin-bottom:3px}p.sub{font-size:8pt;color:#555;margin-bottom:8px}
+table{width:100%;border-collapse:collapse}th{background:#1e293b;color:#fff;padding:3px 6px;font-size:7.5pt;font-weight:700;text-align:left;border:1px solid #0f172a}td{padding:3px 6px;border:1px solid #e2e8f0;font-size:7.5pt;vertical-align:top}
+@page{size:A3 landscape;margin:7mm}</style></head><body>
+<h2>Planificare V2 — ${st.selectedWk==='current'?'0Late + W'+curKey.split('-')[1]:st.selectedWk}</h2>
+<p class="sub">Transport: ${st.transportDays}z · Producție: ${st.prodDays}z · WC: ${st.selectedWC==='all'?'Toate':st.selectedWC} · ${tabComps.length} componente · ${new Date().toLocaleDateString('ro-RO')}</p>
+<table><thead><tr><th>Workcenter</th><th>Produs Final</th><th>Client</th><th>Componentă</th><th>Necesar</th><th>Stoc</th><th>De produs</th><th>Subco(z)</th><th>Start</th><th>Livrare</th></tr></thead><tbody>${rows}</tbody></table>
 </body></html>`);
   w.document.close();setTimeout(()=>w.print(),500);
 }
-
 
 function renderScanner(){
   const page=dv('scanner-page');
