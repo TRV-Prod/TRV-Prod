@@ -7377,9 +7377,53 @@ td{padding:3px 7px;border:1px solid #e2e8f0;font-size:8pt}
    Tab "0Late+W current" = all components mustStart ≤ end of current ISO week
 ═══════════════════════════════════════════════════════════════ */
 
+
+function fmtBowTime(minutes){
+  if(!minutes||minutes<=0)return'—';
+  const h=Math.floor(minutes/60);const m=Math.round(minutes%60);
+  if(h>0)return`${h}h ${m>0?m+'min':''}`.trim();
+  return m+'min';
+}
+
+// Right-click context menu for PV2 table
+document.addEventListener('contextmenu',ev=>{
+  const td=ev.target.closest('td[data-pv2-col]');
+  if(!td)return;
+  const colKey=td.getAttribute('data-pv2-col');
+  const cellVal=td.getAttribute('data-pv2-val')||td.textContent.trim();
+  if(!colKey||!cellVal||cellVal==='—')return;
+  ev.preventDefault();
+  const st=S.planV2State;if(!st)return;
+  if(!st.colFilters)st.colFilters={};
+  document.getElementById('pv2-ctx')?.remove();
+  const menu=dv('u-ctx-menu');menu.id='pv2-ctx';
+  menu.style.cssText=`position:fixed;top:${Math.min(ev.clientY,window.innerHeight-160)}px;left:${Math.min(ev.clientX,window.innerWidth-240)}px;z-index:9999`;
+  const colLabels={fpItemNo:'Produs Final',matNo:'Componentă',fpCustomer:'Client'};
+  const label=colLabels[colKey]||colKey;
+  const disp=cellVal.length>30?cellVal.slice(0,30)+'…':cellVal;
+  const i1=dv('u-ctx-item');i1.innerHTML=`<span class="u-ctx-icon">🔍</span><span>Filtrează <b>${label}</b> = "<b>${disp}</b>"</span>`;
+  i1.addEventListener('click',()=>{st.colFilters[colKey]=cellVal;if(S.tab==='planv2')render();menu.remove();});
+  menu.appendChild(i1);
+  if(st.colFilters[colKey]){
+    const s=dv('');s.style.cssText='height:1px;background:var(--border);margin:2px 0';menu.appendChild(s);
+    const i2=dv('u-ctx-item');i2.innerHTML=`<span class="u-ctx-icon">✕</span><span>Șterge filtrul pe <b>${label}</b></span>`;
+    i2.addEventListener('click',()=>{delete st.colFilters[colKey];if(S.tab==='planv2')render();menu.remove();});
+    menu.appendChild(i2);
+  }
+  const hasAny=Object.values(st.colFilters||{}).some(v=>v);
+  if(hasAny){
+    const s=dv('');s.style.cssText='height:1px;background:var(--border);margin:2px 0';menu.appendChild(s);
+    const i3=dv('u-ctx-item');i3.innerHTML=`<span class="u-ctx-icon">🧹</span><span>Șterge toate filtrele</span>`;
+    i3.addEventListener('click',()=>{st.colFilters={};if(S.tab==='planv2')render();menu.remove();});
+    menu.appendChild(i3);
+  }
+  document.body.appendChild(menu);
+  const close=e=>{if(!menu.contains(e.target)){menu.remove();document.removeEventListener('mousedown',close);}};
+  setTimeout(()=>document.addEventListener('mousedown',close),10);
+});
 function initPlanV2State(){
   if(S.planV2State) return;
-  S.planV2State={transportDays:5,prodDays:7,selectedWk:'current',selectedWC:'all'};
+  S.planV2State={transportDays:5,prodDays:7,selectedWk:'current',selectedWC:'all',colFilters:{}};
 }
 
 // ── Working day helpers ──
@@ -7488,20 +7532,22 @@ function computePV2Components(transportDays,prodDays){
       const onHandQty=Math.max(0,stock?.onHand||0);
       const toProduceQty=Math.max(0,neededQty-onHandQty);
 
+      // Skip components fully covered by stock
+      if(onHandQty>=neededQty)continue;
+
       // Component-specific subco days from BOW
       const compSubcoDays=subcoDaysIdx.get(matNo)||0;
       const leadDays=transportDays+prodDays+compSubcoDays;
 
-      let compStartDate=null,compStartWk='0Late';
-      if(confirmWk==='0Late'){
-        compStartWk='0Late';
-      } else if(confirmDt){
-        compStartDate=_subWD(confirmDt,leadDays);
-        compStartWk=_wkKey(compStartDate);
-      }
+      // Calculate start date for ALL rows (including overdue)
+      // For 0Late: use today as reference delivery date
+      const refDate=confirmDt||new Date();
+      const compStartDate=_subWD(refDate,leadDays);
+      const compStartWk=_wkKey(compStartDate);
 
-      // Get BOW operations for this component
+      // Get BOW operations + total production time
       const wcOps=[];
+      let totalBowMinutes=0;
       if(S.bowData){
         for(const bow of S.bowData){
           if(str(bow['Product no'])!==matNo)continue;
@@ -7509,14 +7555,15 @@ function computePV2Components(transportDays,prodDays){
           if(!opeName)continue;
           const rt=parseFloat(String(bow['Run time']||'0').replace(',','.'))||0;
           const st2=parseFloat(String(bow['Setup time']||'0').replace(',','.'))||0;
-          const neededHours=(rt*neededQty+st2)/60;
+          const neededHours=(rt*toProduceQty+st2)/60;
+          totalBowMinutes+=rt*toProduceQty+st2;
           wcOps.push({opeName,wcName:opeName,runTime:rt,setupTime:st2,neededHours});
         }
       }
 
       result.push({fpItemNo,fpQty:openQty,fpConfirmDt:confirmDt,fpConfirmWk:confirmWk,fpCustomer,obKey,
         matNo,matName,matType,matQtyPerFP,neededQty,onHandQty,toProduceQty,
-        compSubcoDays,compStartDate,compStartWk,wcOps});
+        compSubcoDays,compStartDate,compStartWk,wcOps,totalBowMinutes});
     }
   }
   return result;
@@ -7648,8 +7695,17 @@ function renderPlanV2(){
       });
 
       [...wcGroups.entries()].sort((a,b)=>a[0].localeCompare(b[0])).forEach(([wc,rows])=>{
-        const totalH=rows.reduce((s,r)=>s+(r.neededHours||0),0);
-        const totalProd=rows.reduce((s,r)=>s+r.toProduceQty,0);
+        const totalH=filteredRows.reduce((s,r)=>s+(r.neededHours||0),0);
+        const totalProd=filteredRows.reduce((s,r)=>s+r.toProduceQty,0);
+        // Apply column filters
+        const cf=st.colFilters||{};
+        const filteredRows=rows.filter(r=>{
+          if(cf.fpItemNo&&!r.fpItemNo.toLowerCase().includes(cf.fpItemNo.toLowerCase()))return false;
+          if(cf.matNo&&!r.matNo.toLowerCase().includes(cf.matNo.toLowerCase()))return false;
+          if(cf.fpCustomer&&!r.fpCustomer.toLowerCase().includes(cf.fpCustomer.toLowerCase()))return false;
+          return true;
+        });
+        if(!filteredRows.length)return;
         const wcCard=dv('');wcCard.style.cssText='background:#fff;border:1px solid var(--border);border-radius:8px;margin-bottom:12px;overflow:hidden;box-shadow:0 1px 4px rgba(0,0,0,.06)';
         const wcHdr=dv('');wcHdr.style.cssText='background:#1e3a5f;color:#fff;padding:8px 14px;display:flex;justify-content:space-between;align-items:center';
         wcHdr.innerHTML=`<span style="font-size:13px;font-weight:800">⚙ ${wc}</span><span style="font-size:10px;opacity:.8">${rows.length} componente · ${totalProd.toFixed(0)} buc total · ${totalH.toFixed(1)}h</span>`;
@@ -7664,6 +7720,7 @@ function renderPlanV2(){
           <th style="padding:5px 8px;text-align:right;font-size:9px;font-weight:700;color:#dc2626;text-transform:uppercase">De produs</th>
           <th style="padding:5px 8px;text-align:center;font-size:9px;font-weight:700;color:#7c3aed;text-transform:uppercase">Subco (z)</th>
           <th style="padding:5px 8px;text-align:center;font-size:9px;font-weight:700;color:var(--text2);text-transform:uppercase">Start</th>
+          <th style="padding:5px 8px;text-align:right;font-size:9px;font-weight:700;color:#0369a1;text-transform:uppercase">Timp BOW</th>
           <th style="padding:5px 8px;text-align:center;font-size:9px;font-weight:700;color:var(--text2);text-transform:uppercase">Livrare</th>
         </tr></thead>`;
         const tbody=el('tbody');
@@ -7672,15 +7729,16 @@ function renderPlanV2(){
           const toProdCls=r.toProduceQty>0?'color:#dc2626;font-weight:800':'color:#15803d;font-weight:700';
           const tr=el('tr');tr.style.background=i%2?'#f8fafc':'#fff';
           tr.innerHTML=`
-            <td style="padding:4px 8px;font-family:monospace;font-weight:700;font-size:11px" title="${r.fpItemNo}">${r.fpItemNo}</td>
-            <td style="padding:4px 8px;font-size:11px"><b>${r.matNo}</b>${r.matName?' <span style="color:#6b7280;font-size:10px">— '+r.matName.slice(0,25)+'</span>':''}</td>
-            <td style="padding:4px 8px;font-size:10px;max-width:130px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${r.fpCustomer}">${r.fpCustomer}</td>
-            <td style="padding:4px 8px;text-align:right;font-weight:600">${fmtN(Math.round(r.neededQty*10)/10)}</td>
-            <td style="padding:4px 8px;text-align:right;color:${r.onHandQty>0?'#15803d':'#9ca3af'};font-weight:600">${fmtN(r.onHandQty)}</td>
-            <td style="padding:4px 8px;text-align:right;${toProdCls}">${r.toProduceQty>0?fmtN(Math.round(r.toProduceQty*10)/10):'✓ OK'}</td>
-            <td style="padding:4px 8px;text-align:center;color:#7c3aed;font-weight:600">${r.compSubcoDays>0?r.compSubcoDays+'z':'—'}</td>
-            <td style="padding:4px 8px;text-align:center;font-size:10px;${urgCls}">${_fmtDt(r.compStartDate)||'URGENT'}</td>
-            <td style="padding:4px 8px;text-align:center;font-size:10px;color:var(--text2)">${_fmtDt(r.fpConfirmDt)||r.fpConfirmWk}</td>`;
+            <td style="padding:4px 8px;font-family:monospace;font-weight:700;font-size:11px" title="${r.fpItemNo}" data-pv2-col="fpItemNo" data-pv2-val="${r.fpItemNo}">${r.fpItemNo}</td>
+            <td style="padding:4px 8px;font-size:11px" data-pv2-col="matNo" data-pv2-val="${r.matNo}"><b>${r.matNo}</b>${r.matName?' <span style="color:#6b7280;font-size:10px">— '+r.matName.slice(0,25)+'</span>':''}</td>
+            <td style="padding:4px 8px;font-size:10px;max-width:130px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${r.fpCustomer}" data-pv2-col="fpCustomer" data-pv2-val="${r.fpCustomer}">${r.fpCustomer}</td>
+            <td style="padding:4px 8px;text-align:right;font-weight:600" data-pv2-col="neededQty">${fmtN(Math.round(r.neededQty*10)/10)}</td>
+            <td style="padding:4px 8px;text-align:right;color:${r.onHandQty>0?'#15803d':'#9ca3af'};font-weight:600" data-pv2-col="onHandQty">${fmtN(r.onHandQty)}</td>
+            <td style="padding:4px 8px;text-align:right;${toProdCls}" data-pv2-col="toProduceQty">${r.toProduceQty>0?fmtN(Math.round(r.toProduceQty*10)/10):'✓ OK'}</td>
+            <td style="padding:4px 8px;text-align:center;color:#7c3aed;font-weight:600" data-pv2-col="compSubcoDays">${r.compSubcoDays>0?r.compSubcoDays+'z':'—'}</td>
+            <td style="padding:4px 8px;text-align:center;font-size:10px;${urgCls}" data-pv2-val="start">${_fmtDt(r.compStartDate)||'URGENT'}</td>
+            <td style="padding:4px 8px;text-align:right;font-size:10px;font-weight:600;color:#0369a1" data-pv2-val="bow">${r.totalBowMinutes>0?fmtBowTime(r.totalBowMinutes):'—'}</td>
+            <td style="padding:4px 8px;text-align:center;font-size:10px;color:var(--text2)" data-pv2-val="livrare">${_fmtDt(r.fpConfirmDt)||r.fpConfirmWk}</td>`;
           tbody.appendChild(tr);
         });
         tbl.appendChild(tbody);wcCard.appendChild(tbl);contentArea.appendChild(wcCard);
