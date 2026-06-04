@@ -7559,21 +7559,24 @@ function computePV2Components(transportDays,prodDays){
     const toProduceQty=Math.max(0,e.neededQty-onHandQty-wipQty);
     if(toProduceQty<=0)continue; // fully covered by stock+WIP
 
-    // Get BOW ops grouped by WC: setup counted ONCE per WC, run × toProduceQty
+    // Get BOW ops: group all operations per WC name
+    // For each WC: setup = first op's setup time (once), run = sum of ALL ops' runTime × qty
     const wcOps=[];
     if(S.bowData){
-      const wcSetupDone=new Set();
+      const wcAgg=new Map(); // wcName → {totalRun, firstSetup, opes:[]}
       for(const bow of S.bowData){
         if(str(bow['Product no'])!==e.matNo)continue;
-        const opeName=str(bow['Ope name']||bow['Ope descr']||'');if(!opeName)continue;
+        const wcName=str(bow['Ope name']||bow['Ope descr']||'');if(!wcName)continue;
         const rt=parseFloat(String(bow['Run time']||'0').replace(',','.'))||0;
         const st2=parseFloat(String(bow['Setup time']||'0').replace(',','.'))||0;
-        // Setup once per WC, run × qty
-        const setupContrib=wcSetupDone.has(opeName)?0:st2;
-        wcSetupDone.add(opeName);
-        const wcMinutes=rt*toProduceQty+setupContrib;
-        wcOps.push({opeName,wcName:opeName,runTime:rt,setupTime:st2,wcMinutes});
+        if(!wcAgg.has(wcName)) wcAgg.set(wcName,{totalRun:0,firstSetup:st2});
+        wcAgg.get(wcName).totalRun+=rt;
       }
+      wcAgg.forEach(({totalRun,firstSetup},wcName)=>{
+        // setup once per WC, run = sum of all op run times × toProduceQty
+        const wcMinutes=totalRun*toProduceQty+firstSetup;
+        wcOps.push({wcName,runTime:totalRun,setupTime:firstSetup,wcMinutes});
+      });
     }
     result.push({...e,onHandQty,wipQty,toProduceQty,wcOps});
   }
@@ -7711,10 +7714,9 @@ function renderPlanV2(){
         const wcTimeMap=new Map();
         c.wcOps.forEach(op=>{
           if(st.selectedWC!=='all'&&op.wcName!==st.selectedWC)return;
+          // Use pre-computed wcMinutes (setup once per WC, run×qty already correct)
           const existing=wcTimeMap.get(op.wcName)||0;
-          // Time for this op on qty toProduceQty: run*qty + setup (minutes)
-          const opMinutes=op.runTime*c.toProduceQty+op.setupTime;
-          wcTimeMap.set(op.wcName,existing+opMinutes);
+          wcTimeMap.set(op.wcName,existing+op.wcMinutes);
         });
         wcTimeMap.forEach((wcMinutes,wcName)=>{
           if(!wcGroups.has(wcName))wcGroups.set(wcName,[]);
