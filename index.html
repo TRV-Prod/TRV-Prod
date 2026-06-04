@@ -7664,9 +7664,9 @@ function renderPlanV2(){
 
       // ── Summary KPIs ──
       const kpis=dv('');kpis.style.cssText='display:flex;gap:8px;margin-bottom:12px;flex-wrap:wrap';
-      const fpSet=new Set(visComps.map(c=>c.fpItemNo+c.obKey));
-      const compSet=new Set(visComps.map(c=>c.matNo));
-      const totalToProd=visComps.reduce((s,c)=>s+c.toProduceQty,0);
+      const fpSet=new Set(filteredComps.map(c=>c.fpItemNo+c.obKey));
+      const compSet=new Set(filteredComps.map(c=>c.matNo));
+      const totalToProd=filteredComps.reduce((s,c)=>s+c.toProduceQty,0);
       [
         {l:'Produse finale',v:fpSet.size},
         {l:'Componente',v:compSet.size},
@@ -7679,33 +7679,46 @@ function renderPlanV2(){
       });
       contentArea.appendChild(kpis);
 
-      // ── Table: group by WC then by FP ──
-      // Build groups: wcName → [{fpItemNo, fpQty, fpCustomer, fpConfirmDt, matNo, matName, neededQty, onHandQty, toProduceQty, compSubcoDays, compStartDate}]
+      // Apply column filters BEFORE grouping
+      const cf=st.colFilters||{};
+      const hasFilter=Object.values(cf).some(v=>v);
+      const filteredComps=hasFilter?visComps.filter(c=>{
+        if(cf.fpItemNo&&!c.fpItemNo.toLowerCase().includes(cf.fpItemNo.toLowerCase()))return false;
+        if(cf.matNo&&!c.matNo.toLowerCase().includes(cf.matNo.toLowerCase()))return false;
+        if(cf.fpCustomer&&!c.fpCustomer.toLowerCase().includes(cf.fpCustomer.toLowerCase()))return false;
+        return true;
+      }):visComps;
+
+      if(!filteredComps.length){
+        contentArea.innerHTML='<div style="padding:24px;color:var(--text3);font-size:12px;text-align:center">Nicio componentă pentru filtrele aplicate.</div>';return;
+      }
+
+      // ── Group by WC: sum neededHours per WC for this component (consecutive ops on same WC) ──
       const wcGroups=new Map();
-      visComps.forEach(c=>{
+      filteredComps.forEach(c=>{
+        // Group ops by WC name, summing times
+        const wcTimeMap=new Map();
         c.wcOps.forEach(op=>{
           if(st.selectedWC!=='all'&&op.wcName!==st.selectedWC)return;
-          if(!wcGroups.has(op.wcName))wcGroups.set(op.wcName,[]);
-          // Check if this exact (fpItemNo+obKey+matNo) already in group
-          const g=wcGroups.get(op.wcName);
-          const existing=g.find(e=>e.fpItemNo===c.fpItemNo&&e.obKey===c.obKey&&e.matNo===c.matNo);
-          if(!existing)g.push({...c,wcName:op.wcName,neededHours:op.neededHours});
-          else existing.neededHours=(existing.neededHours||0)+op.neededHours;
+          const existing=wcTimeMap.get(op.wcName)||0;
+          // Time for this op on qty toProduceQty: run*qty + setup (minutes)
+          const opMinutes=op.runTime*c.toProduceQty+op.setupTime;
+          wcTimeMap.set(op.wcName,existing+opMinutes);
+        });
+        wcTimeMap.forEach((wcMinutes,wcName)=>{
+          if(!wcGroups.has(wcName))wcGroups.set(wcName,[]);
+          const g=wcGroups.get(wcName);
+          const key=c.fpItemNo+'__'+c.obKey+'__'+c.matNo;
+          const existIdx=g.findIndex(e=>e._key===key);
+          if(existIdx<0) g.push({...c,_key:key,wcName,wcMinutes});
+          else g[existIdx].wcMinutes+=wcMinutes;
         });
       });
 
       [...wcGroups.entries()].sort((a,b)=>a[0].localeCompare(b[0])).forEach(([wc,rows])=>{
-        // Apply column filters first
-        const cf=st.colFilters||{};
-        const filteredRows=rows.filter(r=>{
-          if(cf.fpItemNo&&!r.fpItemNo.toLowerCase().includes(cf.fpItemNo.toLowerCase()))return false;
-          if(cf.matNo&&!r.matNo.toLowerCase().includes(cf.matNo.toLowerCase()))return false;
-          if(cf.fpCustomer&&!r.fpCustomer.toLowerCase().includes(cf.fpCustomer.toLowerCase()))return false;
-          return true;
-        });
-        if(!filteredRows.length)return;
-        const totalH=filteredRows.reduce((s,r)=>s+(r.neededHours||0),0);
-        const totalProd=filteredRows.reduce((s,r)=>s+r.toProduceQty,0);
+        if(!rows.length)return;
+        const totalH=rows.reduce((s,r)=>s+(r.wcMinutes||0),0)/60;
+        const totalProd=rows.reduce((s,r)=>s+r.toProduceQty,0);
         const wcCard=dv('');wcCard.style.cssText='background:#fff;border:1px solid var(--border);border-radius:8px;margin-bottom:12px;overflow:hidden;box-shadow:0 1px 4px rgba(0,0,0,.06)';
         const wcHdr=dv('');wcHdr.style.cssText='background:#1e3a5f;color:#fff;padding:8px 14px;display:flex;justify-content:space-between;align-items:center';
         wcHdr.innerHTML=`<span style="font-size:13px;font-weight:800">⚙ ${wc}</span><span style="font-size:10px;opacity:.8">${rows.length} componente · ${totalProd.toFixed(0)} buc total · ${totalH.toFixed(1)}h</span>`;
@@ -7737,7 +7750,7 @@ function renderPlanV2(){
             <td style="padding:4px 8px;text-align:right;${toProdCls}" data-pv2-col="toProduceQty">${r.toProduceQty>0?fmtN(Math.round(r.toProduceQty*10)/10):'✓ OK'}</td>
             <td style="padding:4px 8px;text-align:center;color:#7c3aed;font-weight:600" data-pv2-col="compSubcoDays">${r.compSubcoDays>0?r.compSubcoDays+'z':'—'}</td>
             <td style="padding:4px 8px;text-align:center;font-size:10px;${urgCls}" data-pv2-val="start">${_fmtDt(r.compStartDate)||'URGENT'}</td>
-            <td style="padding:4px 8px;text-align:right;font-size:10px;font-weight:600;color:#0369a1" data-pv2-val="bow">${r.totalBowMinutes>0?fmtBowTime(r.totalBowMinutes):'—'}</td>
+            <td style="padding:4px 8px;text-align:right;font-size:10px;font-weight:600;color:#0369a1" data-pv2-val="bow">${r.wcMinutes>0?fmtBowTime(r.wcMinutes):'—'}</td>
             <td style="padding:4px 8px;text-align:center;font-size:10px;color:var(--text2)" data-pv2-val="livrare">${_fmtDt(r.fpConfirmDt)||r.fpConfirmWk}</td>`;
           tbody.appendChild(tr);
         });
