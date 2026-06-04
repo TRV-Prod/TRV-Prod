@@ -7494,77 +7494,88 @@ function _buildSubcoDaysIdx(){
 function computePV2Components(transportDays,prodDays){
   if(!S.obData||!S.bomIdx)return[];
   const subcoDaysIdx=_buildSubcoDaysIdx();
-  const result=[];
-  const curWkEnd=_endOfWeek(_startOfWeek(new Date()));
+  const curWkEnd=_endOfWeek(new Date());
 
-  // Only process 0Late + W1..W4 for performance
+  // ── Step 1: Aggregate OB demand per (fpItemNo, matNo) across all OB rows ──
+  // Key: fpItemNo+'__'+matNo → {fpItemNo,matNo,totalFPQty,fpOrders:[],matQtyPerFP,...}
+  const fpMatAgg=new Map();
+
+  function walkBOM(fpItemNo,fpOpenQty,fpConfirmDt,fpConfirmWk,fpCustomer,obKey,
+                   parentCode,parentQtyMult,visited){
+    if(visited.has(parentCode))return;
+    const vis2=new Set(visited);vis2.add(parentCode);
+    const bomRows=S.bomIdx.get(`${fpItemNo}__${parentCode}`)||[];
+    for(const br of bomRows){
+      const matNo=str(br['Material no']);
+      const matType=str(br['Material type']);
+      if(!matNo)continue;
+      const mqp=parseFloat(String(br['Material qty']||'1').replace(',','.'))||1;
+      const matQtyMult=parentQtyMult*mqp;
+      const matName=str(br['Mat. name']||br['Mat desc']||'');
+      // Compute this component's subco days and start date
+      const compSubcoDays=subcoDaysIdx.get(matNo)||0;
+      const leadDays=transportDays+prodDays+compSubcoDays;
+      const refDate=fpConfirmDt||new Date();
+      const compStartDate=_subWD(refDate,leadDays);
+      const compStartWk=_wkKey(compStartDate);
+      const aggKey=`${fpItemNo}__${obKey}__${matNo}`;
+      if(!fpMatAgg.has(aggKey)){
+        fpMatAgg.set(aggKey,{
+          fpItemNo,fpCustomer,fpConfirmDt,fpConfirmWk,obKey,
+          matNo,matName,matType,matQtyMult,
+          neededQty:0,compSubcoDays,compStartDate,compStartWk,
+          wcOps:[],
+        });
+      }
+      const entry=fpMatAgg.get(aggKey);
+      entry.neededQty+=fpOpenQty*matQtyMult;
+      // Recurse into MAKE components
+      if(matType==='MAKE') walkBOM(fpItemNo,fpOpenQty,fpConfirmDt,fpConfirmWk,fpCustomer,obKey,matNo,matQtyMult,vis2);
+    }
+  }
+
+  // ── Filter OB to allowed weeks ──
   const _curKey=_currentWkKey();
   const _allowedWks=new Set(['0Late',_curKey,
-    getNextWeekKey(_curKey),
-    getNextWeekKey(getNextWeekKey(_curKey)),
+    getNextWeekKey(_curKey),getNextWeekKey(getNextWeekKey(_curKey)),
     getNextWeekKey(getNextWeekKey(getNextWeekKey(_curKey))),
   ]);
 
   for(const r of S.obData){
-    const fpItemNo=str(r['Item_no']);
-    const openQty=parseFloat(r['Open qty'])||0;
+    const fpItemNo=str(r['Item_no']);const openQty=parseFloat(r['Open qty'])||0;
     if(!fpItemNo||openQty<=0)continue;
-    const confirmDt=_parseDt(r['Confirm dt']);
-    const confirmWk=str(r['Confirm_week']||'').trim();
-    if(!_allowedWks.has(confirmWk))continue;  // skip beyond W4
+    const confirmDt=_parseDt(r['Confirm dt']);const confirmWk=str(r['Confirm_week']||'').trim();
+    if(!_allowedWks.has(confirmWk))continue;
     if(!confirmDt&&confirmWk!=='0Late')continue;
-    const fpCustomer=str(r['Customer_name']||'');
-    const obKey=r._obKey||'';
+    walkBOM(fpItemNo,openQty,confirmDt,confirmWk,str(r['Customer_name']||''),r._obKey||'',fpItemNo,1,new Set());
+  }
 
-    // Get BOM components (direct children only for now)
-    const bomRows=S.bomIdx.get(`${fpItemNo}__${fpItemNo}`)||[];
-    if(!bomRows.length)continue;
+  // ── Step 2: For each aggregated component get stock and BOW ops ──
+  const result=[];
+  for(const [,e] of fpMatAgg){
+    const stock=S.stockIdx?.get(e.matNo);
+    const onHandQty=Math.max(0,stock?.onHand||0);
+    const wipQty=Math.max(0,stock?.totalWIP||0);
+    const toProduceQty=Math.max(0,e.neededQty-onHandQty-wipQty);
+    if(toProduceQty<=0)continue; // fully covered by stock+WIP
 
-    for(const br of bomRows){
-      const matNo=str(br['Material no']);
-      const matType=str(br['Material type']);
-      const matQtyPerFP=parseFloat(String(br['Material qty']||'1').replace(',','.'))||1;
-      const matName=str(br['Mat. name']||br['Mat desc']||'');
-      if(!matNo)continue;
-
-      const neededQty=openQty*matQtyPerFP;
-      const stock=S.stockIdx?.get(matNo);
-      const onHandQty=Math.max(0,stock?.onHand||0);
-      const toProduceQty=Math.max(0,neededQty-onHandQty);
-
-      // Skip components fully covered by stock
-      if(onHandQty>=neededQty)continue;
-
-      // Component-specific subco days from BOW
-      const compSubcoDays=subcoDaysIdx.get(matNo)||0;
-      const leadDays=transportDays+prodDays+compSubcoDays;
-
-      // Calculate start date for ALL rows (including overdue)
-      // For 0Late: use today as reference delivery date
-      const refDate=confirmDt||new Date();
-      const compStartDate=_subWD(refDate,leadDays);
-      const compStartWk=_wkKey(compStartDate);
-
-      // Get BOW operations + total production time
-      const wcOps=[];
-      let totalBowMinutes=0;
-      if(S.bowData){
-        for(const bow of S.bowData){
-          if(str(bow['Product no'])!==matNo)continue;
-          const opeName=str(bow['Ope name']||bow['Ope descr']||'');
-          if(!opeName)continue;
-          const rt=parseFloat(String(bow['Run time']||'0').replace(',','.'))||0;
-          const st2=parseFloat(String(bow['Setup time']||'0').replace(',','.'))||0;
-          const neededHours=(rt*toProduceQty+st2)/60;
-          totalBowMinutes+=rt*toProduceQty+st2;
-          wcOps.push({opeName,wcName:opeName,runTime:rt,setupTime:st2,neededHours});
-        }
+    // Get BOW ops grouped by WC: setup counted ONCE per WC, run × toProduceQty
+    const wcOps=[];
+    if(S.bowData){
+      const wcSetupDone=new Set();
+      for(const bow of S.bowData){
+        if(str(bow['Product no'])!==e.matNo)continue;
+        const opeName=str(bow['Ope name']||bow['Ope descr']||'');if(!opeName)continue;
+        const rt=parseFloat(String(bow['Run time']||'0').replace(',','.'))||0;
+        const st2=parseFloat(String(bow['Setup time']||'0').replace(',','.'))||0;
+        // Setup once per WC, run × qty
+        const setupContrib=wcSetupDone.has(opeName)?0:st2;
+        wcSetupDone.add(opeName);
+        const wcMinutes=rt*toProduceQty+setupContrib;
+        wcOps.push({opeName,wcName:opeName,runTime:rt,setupTime:st2,wcMinutes});
       }
-
-      result.push({fpItemNo,fpQty:openQty,fpConfirmDt:confirmDt,fpConfirmWk:confirmWk,fpCustomer,obKey,
-        matNo,matName,matType,matQtyPerFP,neededQty,onHandQty,toProduceQty,
-        compSubcoDays,compStartDate,compStartWk,wcOps,totalBowMinutes});
     }
+    result.push({...e,onHandQty,wipQty,toProduceQty,wcOps});
   }
   return result;
 }
@@ -7729,7 +7740,8 @@ function renderPlanV2(){
           <th style="padding:5px 8px;text-align:left;font-size:9px;font-weight:700;color:var(--text2);text-transform:uppercase;letter-spacing:.06em">Componentă</th>
           <th style="padding:5px 8px;text-align:left;font-size:9px;font-weight:700;color:var(--text2);text-transform:uppercase;letter-spacing:.06em">Client</th>
           <th style="padding:5px 8px;text-align:right;font-size:9px;font-weight:700;color:var(--text2);text-transform:uppercase">Necesar</th>
-          <th style="padding:5px 8px;text-align:right;font-size:9px;font-weight:700;color:var(--text2);text-transform:uppercase">Stoc</th>
+          <th style="padding:5px 8px;text-align:right;font-size:9px;font-weight:700;color:var(--text2);text-transform:uppercase">On Hand</th>
+          <th style="padding:5px 8px;text-align:right;font-size:9px;font-weight:700;color:#7c3aed;text-transform:uppercase">WIP</th>
           <th style="padding:5px 8px;text-align:right;font-size:9px;font-weight:700;color:#dc2626;text-transform:uppercase">De produs</th>
           <th style="padding:5px 8px;text-align:center;font-size:9px;font-weight:700;color:#7c3aed;text-transform:uppercase">Subco (z)</th>
           <th style="padding:5px 8px;text-align:center;font-size:9px;font-weight:700;color:var(--text2);text-transform:uppercase">Start</th>
@@ -7747,6 +7759,7 @@ function renderPlanV2(){
             <td style="padding:4px 8px;font-size:10px;max-width:130px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${r.fpCustomer}" data-pv2-col="fpCustomer" data-pv2-val="${r.fpCustomer}">${r.fpCustomer}</td>
             <td style="padding:4px 8px;text-align:right;font-weight:600" data-pv2-col="neededQty">${fmtN(Math.round(r.neededQty*10)/10)}</td>
             <td style="padding:4px 8px;text-align:right;color:${r.onHandQty>0?'#15803d':'#9ca3af'};font-weight:600" data-pv2-col="onHandQty">${fmtN(r.onHandQty)}</td>
+            <td style="padding:4px 8px;text-align:right;color:${r.wipQty>0?'#7c3aed':'#9ca3af'};font-weight:600" data-pv2-col="wipQty">${r.wipQty>0?fmtN(r.wipQty):'—'}</td>
             <td style="padding:4px 8px;text-align:right;${toProdCls}" data-pv2-col="toProduceQty">${r.toProduceQty>0?fmtN(Math.round(r.toProduceQty*10)/10):'✓ OK'}</td>
             <td style="padding:4px 8px;text-align:center;color:#7c3aed;font-weight:600" data-pv2-col="compSubcoDays">${r.compSubcoDays>0?r.compSubcoDays+'z':'—'}</td>
             <td style="padding:4px 8px;text-align:center;font-size:10px;${urgCls}" data-pv2-val="start">${_fmtDt(r.compStartDate)||'URGENT'}</td>
