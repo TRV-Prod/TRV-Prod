@@ -7695,9 +7695,7 @@ function renderPlanV2(){
       });
 
       [...wcGroups.entries()].sort((a,b)=>a[0].localeCompare(b[0])).forEach(([wc,rows])=>{
-        const totalH=filteredRows.reduce((s,r)=>s+(r.neededHours||0),0);
-        const totalProd=filteredRows.reduce((s,r)=>s+r.toProduceQty,0);
-        // Apply column filters
+        // Apply column filters first
         const cf=st.colFilters||{};
         const filteredRows=rows.filter(r=>{
           if(cf.fpItemNo&&!r.fpItemNo.toLowerCase().includes(cf.fpItemNo.toLowerCase()))return false;
@@ -7706,6 +7704,8 @@ function renderPlanV2(){
           return true;
         });
         if(!filteredRows.length)return;
+        const totalH=filteredRows.reduce((s,r)=>s+(r.neededHours||0),0);
+        const totalProd=filteredRows.reduce((s,r)=>s+r.toProduceQty,0);
         const wcCard=dv('');wcCard.style.cssText='background:#fff;border:1px solid var(--border);border-radius:8px;margin-bottom:12px;overflow:hidden;box-shadow:0 1px 4px rgba(0,0,0,.06)';
         const wcHdr=dv('');wcHdr.style.cssText='background:#1e3a5f;color:#fff;padding:8px 14px;display:flex;justify-content:space-between;align-items:center';
         wcHdr.innerHTML=`<span style="font-size:13px;font-weight:800">⚙ ${wc}</span><span style="font-size:10px;opacity:.8">${rows.length} componente · ${totalProd.toFixed(0)} buc total · ${totalH.toFixed(1)}h</span>`;
