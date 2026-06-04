@@ -7662,6 +7662,20 @@ function renderPlanV2(){
         contentArea.innerHTML='<div style="padding:24px;color:var(--text3);font-size:12px;text-align:center">Nicio componentă pentru această combinație.</div>';return;
       }
 
+      // Apply column filters BEFORE everything else
+      const cf=st.colFilters||{};
+      const hasFilter=Object.values(cf).some(v=>v);
+      const filteredComps=hasFilter?visComps.filter(c=>{
+        if(cf.fpItemNo&&!c.fpItemNo.toLowerCase().includes(cf.fpItemNo.toLowerCase()))return false;
+        if(cf.matNo&&!c.matNo.toLowerCase().includes(cf.matNo.toLowerCase()))return false;
+        if(cf.fpCustomer&&!c.fpCustomer.toLowerCase().includes(cf.fpCustomer.toLowerCase()))return false;
+        return true;
+      }):visComps;
+
+      if(!filteredComps.length){
+        contentArea.innerHTML='<div style="padding:24px;color:var(--text3);font-size:12px;text-align:center">Nicio componentă pentru filtrele aplicate.</div>';return;
+      }
+
       // ── Summary KPIs ──
       const kpis=dv('');kpis.style.cssText='display:flex;gap:8px;margin-bottom:12px;flex-wrap:wrap';
       const fpSet=new Set(filteredComps.map(c=>c.fpItemNo+c.obKey));
@@ -7678,20 +7692,6 @@ function renderPlanV2(){
         kpis.appendChild(k);
       });
       contentArea.appendChild(kpis);
-
-      // Apply column filters BEFORE grouping
-      const cf=st.colFilters||{};
-      const hasFilter=Object.values(cf).some(v=>v);
-      const filteredComps=hasFilter?visComps.filter(c=>{
-        if(cf.fpItemNo&&!c.fpItemNo.toLowerCase().includes(cf.fpItemNo.toLowerCase()))return false;
-        if(cf.matNo&&!c.matNo.toLowerCase().includes(cf.matNo.toLowerCase()))return false;
-        if(cf.fpCustomer&&!c.fpCustomer.toLowerCase().includes(cf.fpCustomer.toLowerCase()))return false;
-        return true;
-      }):visComps;
-
-      if(!filteredComps.length){
-        contentArea.innerHTML='<div style="padding:24px;color:var(--text3);font-size:12px;text-align:center">Nicio componentă pentru filtrele aplicate.</div>';return;
-      }
 
       // ── Group by WC: sum neededHours per WC for this component (consecutive ops on same WC) ──
       const wcGroups=new Map();
