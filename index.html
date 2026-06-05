@@ -7637,33 +7637,63 @@ function computePV2Components(transportDays,prodDays){
     // For each WC: setup = first op's setup time (once), run = sum of ALL ops' runTime × qty
     const wcOps=[];
     if(S.bowData){
-      // Deduplicate BOW by (Product no, Ope seq) — same component appears once per FP in BOW
+      // Deduplicate BOW by (Product no, Ope seq) — collect ops in sequence order
       const seenOpeSeq=new Set();
-      const wcAgg=new Map();
+      const opsSeq=[]; // ordered list: [{opeSeq, wcName, rt, st2, isSubco, ...}]
+      const bowRows4mat=[];
       for(const bow of S.bowData){
         if(str(bow['Product no'])!==e.matNo)continue;
-        const opeSeq=str(bow['Ope seq']||bow['Operation no']||'');
+        const opeSeq=parseFloat(String(bow['Ope seq']||bow['Operation no']||'0').replace(',','.'))||0;
         const dedupeKey=e.matNo+'__'+opeSeq;
-        if(opeSeq&&seenOpeSeq.has(dedupeKey))continue;  // skip duplicate op rows
+        if(opeSeq&&seenOpeSeq.has(dedupeKey))continue;
         if(opeSeq)seenOpeSeq.add(dedupeKey);
         const wcName=str(bow['Ope name']||bow['Ope descr']||'');if(!wcName)continue;
-        const rt=parseFloat(String(bow['Run time']||'0').replace(',','.'))||0;
-        const st2=parseFloat(String(bow['Setup time']||'0').replace(',','.'))||0;
-        const isSubco=wcName.toLowerCase()==='subcontracting';
-        if(!wcAgg.has(wcName)) wcAgg.set(wcName,{totalRun:0,firstSetup:st2,isSubco,subcoTexts:new Set(),suppliers:new Set()});
-        const agg=wcAgg.get(wcName);
-        agg.totalRun+=rt;
-        if(isSubco){
-          const t1=str(bow['Text_line1']||'').trim();const sup=str(bow['Supplier']||'').trim();
-          if(t1)agg.subcoTexts.add(t1);if(sup)agg.suppliers.add(sup);
-        }
+        bowRows4mat.push({opeSeq,wcName,
+          rt:parseFloat(String(bow['Run time']||'0').replace(',','.'))||0,
+          st2:parseFloat(String(bow['Setup time']||'0').replace(',','.'))||0,
+          isSubco:wcName.toLowerCase()==='subcontracting',
+          t1:str(bow['Text_line1']||'').trim(),sup:str(bow['Supplier']||'').trim()});
       }
+      bowRows4mat.sort((a,b)=>a.opeSeq-b.opeSeq);
+
+      // Build ordered WC list (deduplicated by name, preserving first occurrence order)
+      const wcOrder=[]; // ordered unique WC names
+      const wcAgg=new Map();
+      for(const op of bowRows4mat){
+        if(!wcAgg.has(op.wcName)){
+          wcAgg.set(op.wcName,{totalRun:0,firstSetup:op.st2,isSubco:op.isSubco,
+            subcoTexts:new Set(),suppliers:new Set(),seqPos:wcOrder.length});
+          wcOrder.push(op.wcName);
+        }
+        const agg=wcAgg.get(op.wcName);
+        agg.totalRun+=op.rt;
+        if(op.isSubco){if(op.t1)agg.subcoTexts.add(op.t1);if(op.sup)agg.suppliers.add(op.sup);}
+      }
+
+      // Build a map: WC_COL_key → wcName for WIP lookup
+      // WIP_COLS format: '710908-Milling' → wcLabel gives 'Milling'
+      // Match by wcLabel(wipCol).toLowerCase() === wcName.toLowerCase()
+      const wipByWC_raw=S.stockIdx?.get(e.matNo)?.wipByWC||{};
+      // Map each wipCol to its label for comparison
+      const wipByWCName={}; // wcName (lowercase) → wipQty
+      for(const [wipCol,qty] of Object.entries(wipByWC_raw)){
+        const lbl=wcLabel(wipCol).toLowerCase();
+        wipByWCName[lbl]=(wipByWCName[lbl]||0)+qty;
+      }
+
       const eff=S.planV2State?.efficiency||100;
-      wcAgg.forEach(({totalRun,firstSetup,isSubco,subcoTexts,suppliers},wcName)=>{
-        // Apply efficiency: time = (run×qty + setup) / (eff/100)
-        const rawMinutes=totalRun*toProduceQty+firstSetup;
+      wcAgg.forEach(({totalRun,firstSetup,isSubco,subcoTexts,suppliers,seqPos},wcName)=>{
+        // WIP at WCs AFTER this position reduces the qty needed HERE
+        // (those pieces have already passed through this WC)
+        let wipAfter=0;
+        for(let i=seqPos+1;i<wcOrder.length;i++){
+          wipAfter+=(wipByWCName[wcOrder[i].toLowerCase()]||0);
+        }
+        const wcToProduce=Math.max(0,e.neededQty-Math.max(0,onHandQty)-wipAfter);
+        const rawMinutes=totalRun*wcToProduce+firstSetup;
         const wcMinutes=rawMinutes/(eff/100);
-        wcOps.push({wcName,runTime:totalRun,setupTime:firstSetup,wcMinutes,isSubco,
+        wcOps.push({wcName,runTime:totalRun,setupTime:firstSetup,wcMinutes,
+          wcToProduceQty:wcToProduce,isSubco,
           subcoText:[...subcoTexts].join(' / ')||'',supplier:[...suppliers].join(', ')||''});
       });
     }
@@ -8092,7 +8122,7 @@ function renderPlanV2(){
             else if(c.key==='fpQty'){td.textContent=val;td.style.fontWeight='600';td.style.color='var(--accent)';}
             else if(c.key==='toProduceQty'){
               td.style.overflow='visible';td.style.padding='2px 4px';
-              const baseQty=Math.round(r.toProduceQty*10)/10;
+              const baseQty=Math.round((r.wcToProduceQty!=null?r.wcToProduceQty:r.toProduceQty)*10)/10;
               const editKey=r.obKey+'__'+r.matNo;
               const curQty=(st.qtyEdits&&st.qtyEdits[editKey]!=null)?st.qtyEdits[editKey]:baseQty;
               const qInp=el('input');qInp.type='number';qInp.min=0;qInp.step='any';
