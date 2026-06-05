@@ -7555,10 +7555,11 @@ function computePV2Components(transportDays,prodDays){
       const compStartWk=_wkKey(compStartDate);
       const aggKey=`${fpItemNo}__${obKey}__${matNo}`;
       if(!fpMatAgg.has(aggKey)){
+        const matDraw=str(br['Mat. drawing']||'').trim();
         fpMatAgg.set(aggKey,{
           fpItemNo,fpCustomer,fpConfirmDt,fpConfirmWk,obKey,
           fpQty:fpOpenQty,
-          matNo,matName,matType,matQtyMult,
+          matNo,matName,matDrawing:matDraw,matType,matQtyMult,
           neededQty:0,compSubcoDays,compStartDate,compStartWk,
           wcOps:[],
         });
@@ -8006,7 +8007,8 @@ function renderPlanV2(){
             td.setAttribute('data-pv2-col',c.key);td.setAttribute('data-pv2-val',String(r[c.key]||''));
             const val=cellVals[c.key]||'—';
             if(c.key==='fpItemNo'){td.style.fontFamily='monospace';td.style.fontWeight='700';td.textContent=val;}
-            else if(c.key==='matNo'){td.innerHTML=`<b>${r.matNo}</b>${r.matName?' <span style="color:#6b7280;font-size:9px"> '+r.matName.slice(0,20)+'</span>':''}`;td.title=r.matName||'';}
+            else if(c.key==='matNo'){td.innerHTML=`<b>${r.matNo}</b>`;td.title=r.matName||r.matNo;td.style.fontFamily='monospace';}
+            else if(c.key==='matDrawing'){td.textContent=r.matDrawing||'—';td.title=r.matDrawing||'';td.style.fontSize=(st.zoom/100*10)+'px';td.style.color=r.matDrawing?'var(--text1)':'#9ca3af';}
             else if(c.key==='fpQty'){td.textContent=val;td.style.fontWeight='600';td.style.color='var(--accent)';}
             else if(c.key==='toProduceQty'){
               td.style.overflow='visible';td.style.padding='2px 4px';
