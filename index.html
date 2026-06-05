@@ -7417,13 +7417,18 @@ document.addEventListener('contextmenu',ev=>{
     i3.addEventListener('click',()=>{st.colFilters={};if(S.tab==='planv2')render();menu.remove();});
     menu.appendChild(i3);
   }
+  // Copy option
+  const _sep99=dv('');_sep99.style.cssText='height:1px;background:var(--border);margin:2px 0';menu.appendChild(_sep99);
+  const _iCopy=dv('u-ctx-item');_iCopy.innerHTML='<span class="u-ctx-icon">📋</span><span>Copiază valoarea</span>';
+  _iCopy.addEventListener('click',()=>{navigator.clipboard?.writeText(cellVal).catch(()=>{});menu.remove();});
+  menu.appendChild(_iCopy);
   document.body.appendChild(menu);
-  const close=e=>{if(!menu.contains(e.target)){menu.remove();document.removeEventListener('mousedown',close);}};
-  setTimeout(()=>document.addEventListener('mousedown',close),10);
+  const close99=e=>{if(!menu.contains(e.target)){menu.remove();document.removeEventListener('mousedown',close99);}};
+  setTimeout(()=>document.addEventListener('mousedown',close99),10);
 });
 function initPlanV2State(){
   if(S.planV2State) return;
-  S.planV2State={transportDays:5,prodDays:7,selectedWk:'current',selectedWC:'all',colFilters:{}};
+  S.planV2State={transportDays:5,prodDays:7,selectedWk:'current',selectedWC:'all',colFilters:{},sortCol:'fpItemNo',sortDir:1,zoom:100};
 }
 
 // ── Working day helpers ──
@@ -7563,19 +7568,25 @@ function computePV2Components(transportDays,prodDays){
     // For each WC: setup = first op's setup time (once), run = sum of ALL ops' runTime × qty
     const wcOps=[];
     if(S.bowData){
-      const wcAgg=new Map(); // wcName → {totalRun, firstSetup, opes:[]}
+      const wcAgg=new Map(); // wcName → {totalRun, firstSetup, isSubco, subcoTexts, suppliers}
       for(const bow of S.bowData){
         if(str(bow['Product no'])!==e.matNo)continue;
         const wcName=str(bow['Ope name']||bow['Ope descr']||'');if(!wcName)continue;
         const rt=parseFloat(String(bow['Run time']||'0').replace(',','.'))||0;
         const st2=parseFloat(String(bow['Setup time']||'0').replace(',','.'))||0;
-        if(!wcAgg.has(wcName)) wcAgg.set(wcName,{totalRun:0,firstSetup:st2});
-        wcAgg.get(wcName).totalRun+=rt;
+        const isSubco=wcName.toLowerCase()==='subcontracting';
+        if(!wcAgg.has(wcName)) wcAgg.set(wcName,{totalRun:0,firstSetup:st2,isSubco,subcoTexts:new Set(),suppliers:new Set()});
+        const agg=wcAgg.get(wcName);
+        agg.totalRun+=rt;
+        if(isSubco){
+          const t1=str(bow['Text_line1']||'').trim();const sup=str(bow['Supplier']||'').trim();
+          if(t1)agg.subcoTexts.add(t1);if(sup)agg.suppliers.add(sup);
+        }
       }
-      wcAgg.forEach(({totalRun,firstSetup},wcName)=>{
-        // setup once per WC, run = sum of all op run times × toProduceQty
+      wcAgg.forEach(({totalRun,firstSetup,isSubco,subcoTexts,suppliers},wcName)=>{
         const wcMinutes=totalRun*toProduceQty+firstSetup;
-        wcOps.push({wcName,runTime:totalRun,setupTime:firstSetup,wcMinutes});
+        wcOps.push({wcName,runTime:totalRun,setupTime:firstSetup,wcMinutes,isSubco,
+          subcoText:[...subcoTexts].join(' / ')||'',supplier:[...suppliers].join(', ')||''});
       });
     }
     result.push({...e,onHandQty,wipQty,toProduceQty,wcOps});
@@ -7637,6 +7648,19 @@ function renderPlanV2(){
     wcSel.style.cssText='height:28px;padding:0 8px;border:1px solid var(--border);border-radius:4px;font-size:11px;max-width:220px';
     wcSel.addEventListener('change',()=>{st.selectedWC=wcSel.value;rebuildContent();});
     g3.appendChild(wcSel);tb.appendChild(g3);
+
+    // Zoom controls
+    const gZoom=dv('');gZoom.style.cssText='display:flex;align-items:center;gap:4px;padding-right:12px;border-right:1px solid #e2e8f0';
+    gZoom.appendChild(mkLbl('Zoom:'));
+    const zoomOut=el('button','tbtn');zoomOut.textContent='−';zoomOut.style.cssText='width:26px;height:26px;padding:0;font-size:14px';
+    zoomOut.addEventListener('click',()=>{st.zoom=Math.max(60,st.zoom-10);rebuildContent();});
+    const zoomLbl=sp('');zoomLbl.id='pv2-zoom-lbl';zoomLbl.style.cssText='font-size:11px;font-weight:700;color:var(--accent);min-width:36px;text-align:center';zoomLbl.textContent=st.zoom+'%';
+    const zoomIn=el('button','tbtn');zoomIn.textContent='+';zoomIn.style.cssText='width:26px;height:26px;padding:0;font-size:14px';
+    zoomIn.addEventListener('click',()=>{st.zoom=Math.min(150,st.zoom+10);rebuildContent();});
+    const zoom100=el('button','tbtn');zoom100.textContent='100%';zoom100.style.cssText='height:26px;padding:0 6px;font-size:10px';
+    zoom100.addEventListener('click',()=>{st.zoom=100;rebuildContent();});
+    gZoom.appendChild(zoomOut);gZoom.appendChild(zoomLbl);gZoom.appendChild(zoomIn);gZoom.appendChild(zoom100);
+    tb.appendChild(gZoom);
 
     const g4=dv('');g4.style.cssText='display:flex;align-items:center;gap:5px;margin-left:auto';
     const excelBtn=el('button','tbtn');excelBtn.style.cssText='border-color:#16a34a;color:#15803d;background:#f0fdf4';
@@ -7708,6 +7732,7 @@ function renderPlanV2(){
       contentArea.appendChild(kpis);
 
       // ── Group by WC: sum neededHours per WC for this component (consecutive ops on same WC) ──
+      const _zoomLbl=document.getElementById('pv2-zoom-lbl');if(_zoomLbl)_zoomLbl.textContent=st.zoom+'%';
       const wcGroups=new Map();
       filteredComps.forEach(c=>{
         // Group ops by WC name, summing times
@@ -7728,45 +7753,115 @@ function renderPlanV2(){
         });
       });
 
-      [...wcGroups.entries()].sort((a,b)=>a[0].localeCompare(b[0])).forEach(([wc,rows])=>{
+      // ── WC ordering by Workcenter Type from wcSetupData ──
+      const wcTypeOrder={Initial:0,Intermediary:1,Final:2};
+      const wcTypeMap=new Map();
+      (S.wcSetupData||[]).forEach(r=>{
+        const wn=str(r['Workcenter name']||r['Workcenter']||'');
+        const wt=str(r['Workcenter Type']||'');
+        if(wn&&wt) wcTypeMap.set(wn,wt);
+      });
+      const wcSortFn=(a,b)=>{
+        const ta=wcTypeOrder[wcTypeMap.get(a)]??99;const tb=wcTypeOrder[wcTypeMap.get(b)]??99;
+        if(ta!==tb)return ta-tb;return a.localeCompare(b);
+      };
+
+      // Sort rows function
+      const sortFn=(rows)=>{
+        const {sortCol,sortDir}=st;
+        return [...rows].sort((a,b)=>{
+          const va=a[sortCol],vb=b[sortCol];
+          if(va==null&&vb==null)return 0;if(va==null)return sortDir;if(vb==null)return-sortDir;
+          if(typeof va==='number'&&typeof vb==='number')return sortDir*(va-vb);
+          return sortDir*String(va).localeCompare(String(vb));
+        });
+      };
+
+      const colDefs=[
+        {key:'fpItemNo',   label:'Produs Final',  w:145,align:'left'},
+        {key:'fpQty',      label:'Qty FP',         w:60,align:'right'},
+        {key:'matNo',      label:'Componentă',     w:145,align:'left'},
+        {key:'fpCustomer', label:'Client',          w:120,align:'left'},
+        {key:'neededQty',  label:'Necesar',         w:70,align:'right'},
+        {key:'onHandQty',  label:'On Hand',         w:70,align:'right'},
+        {key:'wipQty',     label:'WIP',             w:60,align:'right'},
+        {key:'toProduceQty',label:'De produs',      w:75,align:'right'},
+        {key:'compSubcoDays',label:'Subco(z)',      w:65,align:'center'},
+        {key:'subcoInfo',  label:'Info Subco',      w:160,align:'left'},
+        {key:'compStartDate',label:'Start',         w:90,align:'center'},
+        {key:'wcMinutes',  label:'Timp BOW',        w:80,align:'right'},
+        {key:'fpConfirmDt',label:'Livrare',         w:90,align:'center'},
+      ];
+
+      [...wcGroups.entries()].sort((a,b)=>wcSortFn(a[0],b[0])).forEach(([wc,rows])=>{
         if(!rows.length)return;
+        // Find subco info for this WC (if it's subcontracting)
+        const sampleOp=filteredComps.find(c=>c.wcOps.some(op=>op.wcName===wc))?.wcOps.find(op=>op.wcName===wc);
+        const isSubcoWC=sampleOp?.isSubco||false;
+        const wcType=wcTypeMap.get(wc)||'';
         const totalH=rows.reduce((s,r)=>s+(r.wcMinutes||0),0)/60;
         const totalProd=rows.reduce((s,r)=>s+r.toProduceQty,0);
         const wcCard=dv('');wcCard.style.cssText='background:#fff;border:1px solid var(--border);border-radius:8px;margin-bottom:12px;overflow:hidden;box-shadow:0 1px 4px rgba(0,0,0,.06)';
-        const wcHdr=dv('');wcHdr.style.cssText='background:#1e3a5f;color:#fff;padding:8px 14px;display:flex;justify-content:space-between;align-items:center';
-        wcHdr.innerHTML=`<span style="font-size:13px;font-weight:800">⚙ ${wc}</span><span style="font-size:10px;opacity:.8">${rows.length} componente · ${totalProd.toFixed(0)} buc total · ${totalH.toFixed(1)}h</span>`;
-        wcCard.appendChild(wcHdr);
-        const tbl=el('table');tbl.style.cssText='width:100%;border-collapse:collapse;font-size:11.5px';
-        tbl.innerHTML=`<thead><tr style="background:#f0f4fa">
-          <th style="padding:5px 8px;text-align:left;font-size:9px;font-weight:700;color:var(--text2);text-transform:uppercase;letter-spacing:.06em;white-space:nowrap">Produs Final</th>
-          <th style="padding:5px 8px;text-align:left;font-size:9px;font-weight:700;color:var(--text2);text-transform:uppercase;letter-spacing:.06em">Componentă</th>
-          <th style="padding:5px 8px;text-align:left;font-size:9px;font-weight:700;color:var(--text2);text-transform:uppercase;letter-spacing:.06em">Client</th>
-          <th style="padding:5px 8px;text-align:right;font-size:9px;font-weight:700;color:var(--text2);text-transform:uppercase">Necesar</th>
-          <th style="padding:5px 8px;text-align:right;font-size:9px;font-weight:700;color:var(--text2);text-transform:uppercase">On Hand</th>
-          <th style="padding:5px 8px;text-align:right;font-size:9px;font-weight:700;color:#7c3aed;text-transform:uppercase">WIP</th>
-          <th style="padding:5px 8px;text-align:right;font-size:9px;font-weight:700;color:#dc2626;text-transform:uppercase">De produs</th>
-          <th style="padding:5px 8px;text-align:center;font-size:9px;font-weight:700;color:#7c3aed;text-transform:uppercase">Subco (z)</th>
-          <th style="padding:5px 8px;text-align:center;font-size:9px;font-weight:700;color:var(--text2);text-transform:uppercase">Start</th>
-          <th style="padding:5px 8px;text-align:right;font-size:9px;font-weight:700;color:#0369a1;text-transform:uppercase">Timp BOW</th>
-          <th style="padding:5px 8px;text-align:center;font-size:9px;font-weight:700;color:var(--text2);text-transform:uppercase">Livrare</th>
-        </tr></thead>`;
+        const wcHdrDiv=dv('');wcHdrDiv.style.cssText='background:#1e3a5f;color:#fff;padding:8px 14px;display:flex;justify-content:space-between;align-items:center';
+        wcHdrDiv.innerHTML=`<span style="font-size:13px;font-weight:800">⚙ ${wc}${wcType?' <span style="font-size:9px;opacity:.7;margin-left:6px">['+wcType+']</span>':''}${isSubcoWC?' <span style="background:#f59e0b;color:#fff;font-size:9px;border-radius:3px;padding:1px 5px;margin-left:6px">SUBCO</span>':''}</span><span style="font-size:10px;opacity:.8">${rows.length} comp · ${fmtN(totalProd)} buc · ${totalH.toFixed(1)}h</span>`;
+        wcCard.appendChild(wcHdrDiv);
+
+        const tbl=el('table');tbl.id='pv2-tbl-'+wc.replace(/\s+/g,'_');
+        tbl.style.cssText=`width:100%;border-collapse:collapse;font-size:${st.zoom/100*11.5}px`;
+
+        // Sortable header
+        const thead=el('thead');const hr=el('tr');hr.style.background='#f0f4fa';
+        colDefs.forEach(c=>{
+          const th=el('th');th.style.cssText=`padding:5px 8px;text-align:${c.align};font-size:${st.zoom/100*9}px;font-weight:700;color:var(--text2);text-transform:uppercase;letter-spacing:.06em;white-space:nowrap;cursor:pointer;user-select:none`;
+          const isSort=st.sortCol===c.key;
+          th.textContent=c.label+(isSort?(st.sortDir===1?' ↑':' ↓'):'');
+          th.title='Click pentru sortare';
+          th.addEventListener('click',()=>{
+            st.sortCol===c.key?st.sortDir*=-1:(st.sortCol=c.key,st.sortDir=1);
+            rebuildContent();
+          });
+          hr.appendChild(th);
+        });
+        thead.appendChild(hr);tbl.appendChild(thead);
+
         const tbody=el('tbody');
-        rows.sort((a,b)=>a.fpItemNo.localeCompare(b.fpItemNo)).forEach((r,i)=>{
-          const urgCls=r.compStartWk==='0Late'||_weekOffset(r.compStartWk)<0?'color:#dc2626;font-weight:700':_weekOffset(r.compStartWk)===0?'color:#ca8a04;font-weight:700':'color:#15803d;font-weight:700';
+        sortFn(rows).forEach((r,i)=>{
+          const urgCls=_weekOffset(r.compStartWk)<0?'color:#dc2626;font-weight:700':_weekOffset(r.compStartWk)===0?'color:#ca8a04;font-weight:700':'color:#15803d;font-weight:700';
           const toProdCls=r.toProduceQty>0?'color:#dc2626;font-weight:800':'color:#15803d;font-weight:700';
+          // Get subco info from this component's wcOps for this WC
+          const wcOpInfo=r.wcOps?.find(op=>op.wcName===wc);
+          const subcoInfo=wcOpInfo?.isSubco?(wcOpInfo.subcoText+(wcOpInfo.supplier?' | '+wcOpInfo.supplier:'')):'-';
           const tr=el('tr');tr.style.background=i%2?'#f8fafc':'#fff';
-          tr.innerHTML=`
-            <td style="padding:4px 8px;font-family:monospace;font-weight:700;font-size:11px" title="${r.fpItemNo}" data-pv2-col="fpItemNo" data-pv2-val="${r.fpItemNo}">${r.fpItemNo}</td>
-            <td style="padding:4px 8px;font-size:11px" data-pv2-col="matNo" data-pv2-val="${r.matNo}"><b>${r.matNo}</b>${r.matName?' <span style="color:#6b7280;font-size:10px">— '+r.matName.slice(0,25)+'</span>':''}</td>
-            <td style="padding:4px 8px;font-size:10px;max-width:130px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${r.fpCustomer}" data-pv2-col="fpCustomer" data-pv2-val="${r.fpCustomer}">${r.fpCustomer}</td>
-            <td style="padding:4px 8px;text-align:right;font-weight:600" data-pv2-col="neededQty">${fmtN(Math.round(r.neededQty*10)/10)}</td>
-            <td style="padding:4px 8px;text-align:right;color:${r.onHandQty>0?'#15803d':'#9ca3af'};font-weight:600" data-pv2-col="onHandQty">${fmtN(r.onHandQty)}</td>
-            <td style="padding:4px 8px;text-align:right;color:${r.wipQty>0?'#7c3aed':'#9ca3af'};font-weight:600" data-pv2-col="wipQty">${r.wipQty>0?fmtN(r.wipQty):'—'}</td>
-            <td style="padding:4px 8px;text-align:right;${toProdCls}" data-pv2-col="toProduceQty">${r.toProduceQty>0?fmtN(Math.round(r.toProduceQty*10)/10):'✓ OK'}</td>
-            <td style="padding:4px 8px;text-align:center;color:#7c3aed;font-weight:600" data-pv2-col="compSubcoDays">${r.compSubcoDays>0?r.compSubcoDays+'z':'—'}</td>
-            <td style="padding:4px 8px;text-align:center;font-size:10px;${urgCls}" data-pv2-val="start">${_fmtDt(r.compStartDate)||'URGENT'}</td>
-            <td style="padding:4px 8px;text-align:right;font-size:10px;font-weight:600;color:#0369a1" data-pv2-val="bow">${r.wcMinutes>0?fmtBowTime(r.wcMinutes):'—'}</td>
-            <td style="padding:4px 8px;text-align:center;font-size:10px;color:var(--text2)" data-pv2-val="livrare">${_fmtDt(r.fpConfirmDt)||r.fpConfirmWk}</td>`;
+          const cellVals={
+            fpItemNo:r.fpItemNo, fpQty:fmtN(r.fpQty), matNo:r.matNo,
+            fpCustomer:r.fpCustomer, neededQty:fmtN(Math.round(r.neededQty*10)/10),
+            onHandQty:fmtN(r.onHandQty), wipQty:r.wipQty>0?fmtN(r.wipQty):'—',
+            toProduceQty:fmtN(Math.round(r.toProduceQty*10)/10),
+            compSubcoDays:r.compSubcoDays>0?r.compSubcoDays+'z':'—',
+            subcoInfo:wcOpInfo?.isSubco?subcoInfo:'—',
+            compStartDate:_fmtDt(r.compStartDate)||'URGENT',
+            wcMinutes:r.wcMinutes>0?fmtBowTime(r.wcMinutes):'—',
+            fpConfirmDt:_fmtDt(r.fpConfirmDt)||r.fpConfirmWk,
+          };
+          colDefs.forEach(c=>{
+            const td=el('td');
+            td.style.cssText=`padding:4px 8px;text-align:${c.align};overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:${c.w+20}px;font-size:${st.zoom/100*11.5}px`;
+            td.setAttribute('data-pv2-col',c.key);td.setAttribute('data-pv2-val',String(r[c.key]||''));
+            const val=cellVals[c.key]||'—';
+            if(c.key==='fpItemNo'){td.style.fontFamily='monospace';td.style.fontWeight='700';td.textContent=val;}
+            else if(c.key==='matNo'){td.innerHTML=`<b>${r.matNo}</b>${r.matName?' <span style="color:#6b7280;font-size:9px"> '+r.matName.slice(0,20)+'</span>':''}`;td.title=r.matName||'';}
+            else if(c.key==='fpQty'){td.textContent=val;td.style.fontWeight='600';td.style.color='var(--accent)';}
+            else if(c.key==='toProduceQty'){td.textContent=val;td.style.cssText+=';'+toProdCls;}
+            else if(c.key==='onHandQty'){td.textContent=val;td.style.color=r.onHandQty>0?'#15803d':'#9ca3af';td.style.fontWeight='600';}
+            else if(c.key==='wipQty'){td.textContent=val;td.style.color=r.wipQty>0?'#7c3aed':'#9ca3af';td.style.fontWeight='600';}
+            else if(c.key==='compSubcoDays'){td.textContent=val;td.style.color='#7c3aed';td.style.fontWeight='600';}
+            else if(c.key==='subcoInfo'){td.textContent=val;td.title=val;td.style.fontSize=(st.zoom/100*9.5)+'px';td.style.color=wcOpInfo?.isSubco?'#92400e':'#9ca3af';if(wcOpInfo?.isSubco)td.style.background='#fffbeb';}
+            else if(c.key==='compStartDate'){td.textContent=val;td.style.cssText+=';'+urgCls;}
+            else if(c.key==='wcMinutes'){td.textContent=val;td.style.color='#0369a1';td.style.fontWeight='600';}
+            else if(c.key==='fpConfirmDt'){td.textContent=val;td.style.color='var(--text2)';}
+            else td.textContent=val;
+            tr.appendChild(td);
+          });
           tbody.appendChild(tr);
         });
         tbl.appendChild(tbody);wcCard.appendChild(tbl);contentArea.appendChild(wcCard);
