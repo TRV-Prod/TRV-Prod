@@ -7426,10 +7426,6 @@ document.addEventListener('contextmenu',ev=>{
     menu.appendChild(i3);
   }
   // Copy option
-  const _sep99=dv('');_sep99.style.cssText='height:1px;background:var(--border);margin:2px 0';menu.appendChild(_sep99);
-  const _iCopy=dv('u-ctx-item');_iCopy.innerHTML='<span class="u-ctx-icon">📋</span><span>Copiază valoarea</span>';
-  _iCopy.addEventListener('click',()=>{navigator.clipboard?.writeText(cellVal).catch(()=>{});menu.remove();});
-  menu.appendChild(_iCopy);
   // Copy option
   const _sepCopy=dv('u-ctx-sep');menu.appendChild(_sepCopy);
   const _iCopyU=dv('u-ctx-item');_iCopyU.innerHTML='<span class="u-ctx-icon">📋</span><span>Copiază valoarea</span>';
