@@ -5019,6 +5019,7 @@ function renderPlanificare(){
   const wkLbl=sp('','');wkLbl.style.cssText='font-size:10px;font-weight:600;color:var(--text3);margin-right:4px';wkLbl.textContent='Săptămâna:';
   tb.appendChild(wkLbl);
   if(!S.planCurrentWeek) S.planCurrentWeek=getCurrentWeekLabel();
+  if(S.sbCfg&&!S.planV2Meta?.loaded){loadPlanV2Meta().then(()=>{S.planV2Meta=S.planV2Meta||{priorities:{},observations:{}};S.planV2Meta.loaded=true;});}
   const wkInp=el('input');wkInp.type='text';wkInp.value=S.planCurrentWeek;
   wkInp.style.cssText='height:28px;width:70px;padding:0 8px;border:1px solid var(--border);border-radius:4px;font-size:12px;font-weight:700;color:var(--accent);text-align:center';
   wkInp.addEventListener('input',e=>{S.planCurrentWeek=e.target.value.trim()||getCurrentWeekLabel();});
@@ -7426,9 +7427,25 @@ document.addEventListener('contextmenu',ev=>{
   const close99=e=>{if(!menu.contains(e.target)){menu.remove();document.removeEventListener('mousedown',close99);}};
   setTimeout(()=>document.addEventListener('mousedown',close99),10);
 });
+
+async function savePlanV2Meta(){
+  if(!S.sbCfg||!S.planV2Meta)return;
+  try{await sbUpload(S.sbCfg,'data-planv2-meta.json',{...S.planV2Meta,updatedAt:new Date().toISOString()});}
+  catch(e){console.warn('planV2Meta save:',e);}
+}
+async function loadPlanV2Meta(){
+  if(!S.sbCfg)return;
+  try{
+    const d=await sbDownload(S.sbCfg,'data-planv2-meta.json');
+    if(d&&(d.priorities||d.observations)){
+      S.planV2Meta={priorities:d.priorities||{},observations:d.observations||{}};
+    }
+  }catch(e){}
+}
 function initPlanV2State(){
   if(S.planV2State) return;
-  S.planV2State={transportDays:5,prodDays:7,selectedWk:'current',selectedWC:'all',colFilters:{},sortCol:'fpItemNo',sortDir:1,zoom:100,hiddenCols:new Set(),colWidths:{}};
+  S.planV2State={transportDays:5,prodDays:7,selectedWk:'current',selectedWC:'all',colFilters:{},sortCol:'fpItemNo',sortDir:1,zoom:100,hiddenCols:new Set(),colWidths:{},efficiency:100};
+  if(!S.planV2Meta) S.planV2Meta={priorities:{},observations:{}};
 }
 
 // ── Working day helpers ──
@@ -7570,9 +7587,15 @@ function computePV2Components(transportDays,prodDays){
     // For each WC: setup = first op's setup time (once), run = sum of ALL ops' runTime × qty
     const wcOps=[];
     if(S.bowData){
-      const wcAgg=new Map(); // wcName → {totalRun, firstSetup, isSubco, subcoTexts, suppliers}
+      // Deduplicate BOW by (Product no, Ope seq) — same component appears once per FP in BOW
+      const seenOpeSeq=new Set();
+      const wcAgg=new Map();
       for(const bow of S.bowData){
         if(str(bow['Product no'])!==e.matNo)continue;
+        const opeSeq=str(bow['Ope seq']||bow['Operation no']||'');
+        const dedupeKey=e.matNo+'__'+opeSeq;
+        if(opeSeq&&seenOpeSeq.has(dedupeKey))continue;  // skip duplicate op rows
+        if(opeSeq)seenOpeSeq.add(dedupeKey);
         const wcName=str(bow['Ope name']||bow['Ope descr']||'');if(!wcName)continue;
         const rt=parseFloat(String(bow['Run time']||'0').replace(',','.'))||0;
         const st2=parseFloat(String(bow['Setup time']||'0').replace(',','.'))||0;
@@ -7585,8 +7608,11 @@ function computePV2Components(transportDays,prodDays){
           if(t1)agg.subcoTexts.add(t1);if(sup)agg.suppliers.add(sup);
         }
       }
+      const eff=S.planV2State?.efficiency||100;
       wcAgg.forEach(({totalRun,firstSetup,isSubco,subcoTexts,suppliers},wcName)=>{
-        const wcMinutes=totalRun*toProduceQty+firstSetup;
+        // Apply efficiency: time = (run×qty + setup) / (eff/100)
+        const rawMinutes=totalRun*toProduceQty+firstSetup;
+        const wcMinutes=rawMinutes/(eff/100);
         wcOps.push({wcName,runTime:totalRun,setupTime:firstSetup,wcMinutes,isSubco,
           subcoText:[...subcoTexts].join(' / ')||'',supplier:[...suppliers].join(', ')||''});
       });
@@ -7639,6 +7665,13 @@ function renderPlanV2(){
     const g1=dv('');g1.style.cssText='display:flex;align-items:center;gap:5px;padding-right:12px;border-right:1px solid #e2e8f0';
     g1.appendChild(mkLbl('Transport (z):'));g1.appendChild(mkNumInp(st.transportDays,v=>{st.transportDays=v;rebuild();}));
     tb.appendChild(g1);
+
+    // Efficiency input
+    const gEff=dv('');gEff.style.cssText='display:flex;align-items:center;gap:5px;padding-right:12px;border-right:1px solid #e2e8f0';
+    gEff.appendChild(mkLbl('Eficiență (%):'));
+    const effInp=mkNumInp(st.efficiency,v=>{st.efficiency=Math.max(1,Math.min(200,v));rebuildContent();});
+    effInp.style.width='60px';
+    gEff.appendChild(effInp);tb.appendChild(gEff);
     const g2=dv('');g2.style.cssText='display:flex;align-items:center;gap:5px;padding-right:12px;border-right:1px solid #e2e8f0';
     g2.appendChild(mkLbl('Producție (z):'));g2.appendChild(mkNumInp(st.prodDays,v=>{st.prodDays=v;rebuild();}));
     tb.appendChild(g2);
@@ -7805,12 +7838,18 @@ function renderPlanV2(){
       };
 
       // Sort rows function
+      // Sort by priority first (if not explicitly sorting another col), then by selected col
       const sortFn=(rows)=>{
         const {sortCol,sortDir}=st;
         return [...rows].sort((a,b)=>{
           const va=a[sortCol],vb=b[sortCol];
           if(va==null&&vb==null)return 0;if(va==null)return sortDir;if(vb==null)return-sortDir;
           if(typeof va==='number'&&typeof vb==='number')return sortDir*(va-vb);
+          // Priority: lower number = higher priority
+          if(sortCol==='priority'){
+            const pa=parseInt(va)||9999,pb=parseInt(vb)||9999;
+            return sortDir*(pa-pb);
+          }
           return sortDir*String(va).localeCompare(String(vb));
         });
       };
@@ -7830,6 +7869,8 @@ function renderPlanV2(){
         {key:'compStartDate',label:'Start',         w:90,align:'center'},
         {key:'wcMinutes',  label:'Timp BOW',        w:80,align:'right'},
         {key:'fpConfirmDt',label:'Livrare',         w:90,align:'center'},
+        {key:'priority',   label:'Prioritate',      w:75,align:'center'},
+        {key:'obs',        label:'Observații',      w:170,align:'left'},
       ];
 
       [...wcGroups.entries()].sort((a,b)=>wcSortFn(a[0],b[0])).forEach(([wc,rows])=>{
@@ -7884,7 +7925,13 @@ function renderPlanV2(){
         thead.appendChild(hr);tbl.appendChild(thead);
 
         const tbody=el('tbody');
-        sortFn(rows).forEach((r,i)=>{
+        // Pre-sort by priority (lower = first), then apply selected sort
+        const preSorted=[...rows].sort((a,b)=>{
+          const pa=parseInt(S.planV2Meta?.priorities?.[a.obKey]||'9999');
+          const pb=parseInt(S.planV2Meta?.priorities?.[b.obKey]||'9999');
+          return pa-pb;
+        });
+        sortFn(preSorted).forEach((r,i)=>{
           const urgCls=_weekOffset(r.compStartWk)<0?'color:#dc2626;font-weight:700':_weekOffset(r.compStartWk)===0?'color:#ca8a04;font-weight:700':'color:#15803d;font-weight:700';
           const toProdCls=r.toProduceQty>0?'color:#dc2626;font-weight:800':'color:#15803d;font-weight:700';
           // Get subco info from this component's wcOps for this WC
@@ -7902,6 +7949,8 @@ function renderPlanV2(){
             compStartDate:_fmtDt(r.compStartDate)||'URGENT',
             wcMinutes:r.wcMinutes>0?fmtBowTime(r.wcMinutes):'—',
             fpConfirmDt:_fmtDt(r.fpConfirmDt)||r.fpConfirmWk,
+            priority:S.planV2Meta?.priorities?.[r.obKey]||'',
+            obs:S.planV2Meta?.observations?.[r.obKey]||'',
           };
           visCols.forEach(c=>{
             const td=el('td');
@@ -7921,6 +7970,31 @@ function renderPlanV2(){
             else if(c.key==='compStartDate'){td.textContent=val;td.style.cssText+=';'+urgCls;}
             else if(c.key==='wcMinutes'){td.textContent=val;td.style.color='#0369a1';td.style.fontWeight='600';}
             else if(c.key==='fpConfirmDt'){td.textContent=val;td.style.color='var(--text2)';}
+            else if(c.key==='priority'){
+              td.style.overflow='visible';td.style.padding='2px 4px';
+              const inp=el('input');inp.type='number';inp.min=1;inp.max=999;
+              inp.value=S.planV2Meta?.priorities?.[r.obKey]||'';
+              inp.placeholder='—';inp.style.cssText='width:60px;height:24px;padding:0 4px;border:1px solid var(--border);border-radius:3px;font-size:11px;text-align:center;font-weight:700;color:var(--accent)';
+              inp.addEventListener('change',async()=>{
+                if(!S.planV2Meta)S.planV2Meta={priorities:{},observations:{}};
+                const v=parseInt(inp.value)||0;
+                if(v>0)S.planV2Meta.priorities[r.obKey]=v;else delete S.planV2Meta.priorities[r.obKey];
+                await savePlanV2Meta();rebuildContent();
+              });
+              td.appendChild(inp);
+            }
+            else if(c.key==='obs'){
+              td.style.overflow='visible';td.style.padding='2px 4px';
+              const inp=el('input');inp.type='text';
+              inp.value=S.planV2Meta?.observations?.[r.obKey]||'';
+              inp.placeholder='Observații...';inp.style.cssText='width:100%;min-width:150px;height:24px;padding:0 6px;border:1px solid var(--border);border-radius:3px;font-size:11px';
+              inp.addEventListener('change',async()=>{
+                if(!S.planV2Meta)S.planV2Meta={priorities:{},observations:{}};
+                if(inp.value.trim())S.planV2Meta.observations[r.obKey]=inp.value.trim();else delete S.planV2Meta.observations[r.obKey];
+                await savePlanV2Meta();
+              });
+              td.appendChild(inp);
+            }
             else td.textContent=val;
             tr.appendChild(td);
           });
