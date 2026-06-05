@@ -1148,6 +1148,31 @@ button { font-family: var(--sans); }
 .scan-mo-val{font-size:16px;font-weight:800;color:#312e81}
 .scan-mo-hint{font-size:9.5px;color:#6366f1;margin-top:1px}
 .pv2-qty-total{font-weight:800;font-size:13px;color:var(--accent)}
+
+/* ─── PV2 MO POPUP ─── */
+.pv2-mo-overlay{position:fixed;inset:0;background:rgba(0,0,0,.5);z-index:9000;display:flex;align-items:center;justify-content:center;padding:16px}
+.pv2-mo-modal{background:#fff;border-radius:10px;box-shadow:0 20px 60px rgba(0,0,0,.3);width:min(780px,96vw);max-height:82vh;display:flex;flex-direction:column;overflow:hidden}
+.pv2-mo-hdr{background:#1e3a5f;color:#fff;padding:12px 18px;display:flex;align-items:flex-start;justify-content:space-between;flex-shrink:0}
+.pv2-mo-hdr-left{display:flex;flex-direction:column;gap:3px}
+.pv2-mo-hdr-title{font-size:13px;font-weight:800}
+.pv2-mo-hdr-sub{font-size:10px;color:rgba(255,255,255,.7)}
+.pv2-mo-hdr-btns{display:flex;gap:6px;align-items:center}
+.pv2-mo-hdr-btn{height:26px;padding:0 10px;border:1px solid rgba(255,255,255,.3);border-radius:4px;font-size:10px;font-weight:600;background:rgba(255,255,255,.1);color:#fff;cursor:pointer}
+.pv2-mo-hdr-btn:hover{background:rgba(255,255,255,.25)}
+.pv2-mo-hdr-btn.green{border-color:#4ade80;color:#4ade80}
+.pv2-mo-close{width:26px;height:26px;border:none;background:rgba(255,255,255,.15);color:#fff;border-radius:4px;cursor:pointer;font-size:15px;display:flex;align-items:center;justify-content:center;flex-shrink:0}
+.pv2-mo-close:hover{background:rgba(220,38,38,.5)}
+.pv2-mo-body{flex:1;overflow:auto;padding:12px}
+.pv2-mo-table{width:100%;border-collapse:separate;border-spacing:0;font-size:11.5px}
+.pv2-mo-table th{position:sticky;top:0;background:#1e3a5f;color:#e2e8f0;padding:5px 9px;font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;text-align:left;border-right:1px solid #2d4e7a;white-space:nowrap;box-shadow:0 2px 0 0 #2d4e7a;z-index:1}
+.pv2-mo-table td{border-bottom:1px solid #f1f5f9;border-right:1px solid #f8fafc;padding:5px 9px;vertical-align:middle;white-space:nowrap}
+.pv2-mo-table tbody tr:nth-child(even) td{background:#f8fafc}
+.pv2-mo-table tbody tr:hover td{background:#eff6ff}
+.pv2-mo-open{font-weight:800;color:#dc2626}
+.pv2-mo-done{color:#15803d;font-weight:700}
+.pv2-mo-st-badge{display:inline-block;padding:1px 6px;border-radius:3px;font-size:9.5px;font-weight:700}
+.pv2-mo-clickable{cursor:pointer;text-decoration:underline;text-underline-offset:2px;color:var(--accent)}
+.pv2-mo-clickable:hover{color:#1d4ed8}
 </style>
 </head>
 <body>
@@ -7751,6 +7776,161 @@ function filterByTab(components,tab){
   return components.filter(c=>c.compStartWk===tab);
 }
 
+
+function openPV2MoPopup(matNo,matName,wcName){
+  document.querySelector('.pv2-mo-overlay')?.remove();
+  if(!S.moListData){
+    alert('Fisierul MO List nu este incarcat. Incarcati-l din Fisiere.');return;
+  }
+
+  // Build WC code set for the clicked WC name
+  // Match: wcName (from BOW Ope name) vs WIP_COLS label or wcSetupData Workcenter name
+  const wcCodes=new Set();
+  (S.wcSetupData||[]).forEach(r=>{
+    const wn=str(r['Workcenter name']||'').trim().toLowerCase();
+    const wc=str(r['Workcenter']||'').trim();
+    if(wn===wcName.toLowerCase()&&wc) wcCodes.add(wc);
+  });
+  // Also try matching via WIP_COLS label
+  if(!wcCodes.size){
+    WIP_COLS.forEach(col=>{
+      if(wcLabel(col).toLowerCase()===wcName.toLowerCase()){
+        const code=col.split('-')[0];if(code)wcCodes.add(code);
+      }
+    });
+  }
+
+  // Filter MO rows: Product = matNo, W/C-Comp starts with digit (operation rows)
+  const allOpRows=S.moListData.filter(r=>{
+    if(str(r['Product']||'')!==matNo)return false;
+    const wcc=str(r['W/C-Comp']||'');
+    return /^\d/.test(wcc);
+  });
+
+  // Group by MO, find rows matching the clicked WC
+  const moMap=new Map();
+  allOpRows.forEach(r=>{
+    const mo=str(r['MO']||'');if(!mo)return;
+    const wcc=str(r['W/C-Comp']||'');
+    // Check if this operation row matches the clicked WC
+    const matchesWC=wcCodes.size>0?wcCodes.has(wcc):(wcLabel(wcc).toLowerCase()===wcName.toLowerCase());
+    if(!moMap.has(mo)){
+      moMap.set(mo,{mo,moSt:str(r['MO st']||''),moStart:str(r['MO start']||''),
+        moFinish:str(r['MO finish']||''),orderQty:parseFloat(r['Order qty'])||0,
+        reportQty:0,hasWCMatch:false,wcOrderQty:0,wcReportQty:0});
+    }
+    const entry=moMap.get(mo);
+    if(matchesWC){
+      entry.hasWCMatch=true;
+      entry.wcOrderQty+=(parseFloat(r['Order qty'])||0);
+      entry.wcReportQty+=(parseFloat(r['Report qty'])||0);
+    }
+  });
+
+  // Only show MOs where the specific WC has unreported qty > 0
+  const filteredMOs=[...moMap.values()]
+    .filter(m=>m.hasWCMatch&&(m.wcOrderQty-m.wcReportQty)>0)
+    .sort((a,b)=>{
+      const sa=String(a.moStart),sb=String(b.moStart);
+      return sa.localeCompare(sb);
+    });
+
+  const fmtMoDate=v=>{if(!v||v==='0')return'—';const s=String(v).replace(/\D/g,'');return s.length>=8?`${s.slice(6,8)}.${s.slice(4,6)}.${s.slice(0,4)}`:v;};
+  const stCls=st=>st==='20'?'mo-st-20':st==='40'?'mo-st-40':st==='60'?'mo-st-60':'mo-st-other';
+
+  const overlay=dv('pv2-mo-overlay');
+  const modal=dv('pv2-mo-modal');
+
+  // Header
+  const hdr=dv('pv2-mo-hdr');
+  const hdrL=dv('pv2-mo-hdr-left');
+  hdrL.appendChild(sp('pv2-mo-hdr-title',`MO-uri deschise — ${matNo}`));
+  hdrL.appendChild(sp('pv2-mo-hdr-sub',`${matName||''} · WC: ${wcName} · ${filteredMOs.length} MO-uri cu cantități neraportate`));
+  hdr.appendChild(hdrL);
+  const hdrBtns=dv('pv2-mo-hdr-btns');
+  const excelBtn=el('button','pv2-mo-hdr-btn green');excelBtn.textContent='⬇ Excel';
+  excelBtn.addEventListener('click',()=>exportMoPopupExcel(matNo,wcName,filteredMOs));
+  const pdfBtn=el('button','pv2-mo-hdr-btn');pdfBtn.textContent='🖨 PDF';
+  pdfBtn.addEventListener('click',()=>printMoPopup(matNo,matName,wcName,filteredMOs,fmtMoDate));
+  const closeBtn=el('button','pv2-mo-close');closeBtn.innerHTML='✕';
+  closeBtn.addEventListener('click',()=>overlay.remove());
+  hdrBtns.appendChild(excelBtn);hdrBtns.appendChild(pdfBtn);hdrBtns.appendChild(closeBtn);
+  hdr.appendChild(hdrBtns);modal.appendChild(hdr);
+
+  // Body
+  const body=dv('pv2-mo-body');
+  if(!filteredMOs.length){
+    body.innerHTML=`<div style="padding:24px;text-align:center;color:var(--text3);font-size:12px">Nu există MO-uri cu operații neraportate pe ${wcName} pentru ${matNo}.</div>`;
+  } else {
+    const tbl=el('table','pv2-mo-table');
+    tbl.innerHTML=`<thead><tr>
+      <th>MO</th><th>MO St</th><th>MO Start</th><th>MO Finish</th>
+      <th style="text-align:right">Order Qty</th><th style="text-align:right">Report Qty</th>
+      <th style="text-align:right">Deschise</th>
+    </tr></thead>`;
+    const tbody=el('tbody');
+    filteredMOs.forEach((m,i)=>{
+      const deschise=m.wcOrderQty-m.wcReportQty;
+      const tr=el('tr');
+      const stBadge=`<span class="pv2-mo-st-badge ${stCls(m.moSt)}">${m.moSt}</span>`;
+      tr.innerHTML=`
+        <td style="font-family:monospace;font-weight:700">${m.mo}</td>
+        <td>${stBadge}</td>
+        <td>${fmtMoDate(m.moStart)}</td>
+        <td style="color:var(--text3)">${fmtMoDate(m.moFinish)}</td>
+        <td style="text-align:right;font-weight:600">${fmtN(m.wcOrderQty)}</td>
+        <td style="text-align:right;color:#15803d;font-weight:600">${fmtN(m.wcReportQty)}</td>
+        <td style="text-align:right"><span class="pv2-mo-open">${fmtN(deschise)}</span></td>`;
+      tbody.appendChild(tr);
+    });
+    tbl.appendChild(tbody);body.appendChild(tbl);
+    // Summary
+    const totalDeschise=filteredMOs.reduce((s,m)=>s+(m.wcOrderQty-m.wcReportQty),0);
+    const sum=dv('');sum.style.cssText='margin-top:8px;padding:6px 10px;background:#fef2f2;border-radius:4px;font-size:11px;font-weight:700;color:#dc2626;text-align:right';
+    sum.textContent=`Total deschise: ${fmtN(totalDeschise)}`;
+    body.appendChild(sum);
+  }
+  modal.appendChild(body);
+  overlay.appendChild(modal);
+  overlay.addEventListener('click',e=>{if(e.target===overlay)overlay.remove();});
+  document.addEventListener('keydown',function esc(e){if(e.key==='Escape'){overlay.remove();document.removeEventListener('keydown',esc);}});
+  document.body.appendChild(overlay);
+}
+
+function exportMoPopupExcel(matNo,wcName,rows){
+  const wb=XLSX.utils.book_new();
+  const ws=XLSX.utils.aoa_to_sheet([
+    ['MO','MO St','MO Start','MO Finish','Order Qty','Report Qty','Deschise'],
+    ...rows.map(m=>[m.mo,m.moSt,m.moStart,m.moFinish,m.wcOrderQty,m.wcReportQty,m.wcOrderQty-m.wcReportQty])
+  ]);
+  ws['!cols']=[{wch:14},{wch:6},{wch:12},{wch:12},{wch:11},{wch:11},{wch:10}];
+  XLSX.utils.book_append_sheet(wb,ws,'MO Deschise');
+  XLSX.writeFile(wb,`MO_${matNo}_${wcName.replace(/\s+/g,'_')}_${new Date().toISOString().slice(0,10)}.xlsx`);
+}
+
+function printMoPopup(matNo,matName,wcName,rows,fmtMoDate){
+  const w=window.open('','_blank','width=900,height=600');if(!w)return;
+  const stCls=st=>st==='20'?'color:#15803d':st==='40'?'color:#854d0e':st==='60'?'color:#1d4ed8':'color:#475569';
+  const bodyRows=rows.map((m,i)=>`<tr style="${i%2?'background:#f8fafc':''}">
+    <td style="font-family:monospace;font-weight:700">${m.mo}</td>
+    <td style="${stCls(m.moSt)};font-weight:700">${m.moSt}</td>
+    <td>${fmtMoDate(m.moStart)}</td><td>${fmtMoDate(m.moFinish)}</td>
+    <td style="text-align:right">${fmtN(m.wcOrderQty)}</td>
+    <td style="text-align:right;color:#15803d">${fmtN(m.wcReportQty)}</td>
+    <td style="text-align:right;font-weight:800;color:#dc2626">${fmtN(m.wcOrderQty-m.wcReportQty)}</td>
+  </tr>`).join('');
+  w.document.write(`<!DOCTYPE html><html><head><meta charset="UTF-8"><title>MO Deschise</title>
+<style>*{box-sizing:border-box;margin:0;padding:0}body{font-family:Arial;font-size:9pt;padding:10mm}
+h2{font-size:12pt;margin-bottom:4px}p.sub{font-size:9pt;color:#555;margin-bottom:10px}
+table{width:100%;border-collapse:collapse}th{background:#1e293b;color:#fff;padding:4px 8px;font-size:8pt;font-weight:700;text-align:left;border:1px solid #0f172a}
+td{padding:3px 8px;border:1px solid #e2e8f0;font-size:9pt}
+@page{size:A4 landscape;margin:8mm}</style></head><body>
+<h2>MO Deschise — ${matNo}</h2>
+<p class="sub">${matName||''} · WC: ${wcName} · ${rows.length} MO-uri · ${new Date().toLocaleDateString('ro-RO')}</p>
+<table><thead><tr><th>MO</th><th>MO St</th><th>MO Start</th><th>MO Finish</th><th>Order Qty</th><th>Report Qty</th><th>Deschise</th></tr></thead>
+<tbody>${bodyRows}</tbody></table></body></html>`);
+  w.document.close();setTimeout(()=>w.print(),400);
+}
 function renderPlanV2(){
   try{
     initPlanV2State();
@@ -8117,7 +8297,11 @@ function renderPlanV2(){
             td.setAttribute('data-pv2-col',c.key);td.setAttribute('data-pv2-val',String(r[c.key]||''));
             const val=cellVals[c.key]||'—';
             if(c.key==='fpItemNo'){td.style.fontFamily='monospace';td.style.fontWeight='700';td.textContent=val;}
-            else if(c.key==='matNo'){td.innerHTML=`<b>${r.matNo}</b>`;td.title=r.matName||r.matNo;td.style.fontFamily='monospace';}
+            else if(c.key==='matNo'){
+              const span=dv('pv2-mo-clickable');span.style.fontFamily='monospace';span.style.fontWeight='700';span.textContent=r.matNo;span.title=r.matName||r.matNo;
+              span.addEventListener('click',ev=>{ev.stopPropagation();openPV2MoPopup(r.matNo,r.matName,wc);});
+              td.appendChild(span);
+            }
             else if(c.key==='matDrawing'){td.textContent=r.matDrawing||'—';td.title=r.matDrawing||'';td.style.fontSize=(st.zoom/100*10)+'px';td.style.color=r.matDrawing?'var(--text1)':'#9ca3af';}
             else if(c.key==='fpQty'){td.textContent=val;td.style.fontWeight='600';td.style.color='var(--accent)';}
             else if(c.key==='toProduceQty'){
