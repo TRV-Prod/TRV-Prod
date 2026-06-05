@@ -7430,15 +7430,27 @@ document.addEventListener('contextmenu',ev=>{
 
 async function savePlanV2Meta(){
   if(!S.sbCfg||!S.planV2Meta)return;
-  try{await sbUpload(S.sbCfg,'data-planv2-meta.json',{...S.planV2Meta,updatedAt:new Date().toISOString()});}
+  const st=S.planV2State||{};
+  try{await sbUpload(S.sbCfg,'data-planv2-meta.json',{
+    ...S.planV2Meta,
+    transportDays:st.transportDays,
+    prodDays:st.prodDays,
+    efficiency:st.efficiency,
+    updatedAt:new Date().toISOString()
+  });}
   catch(e){console.warn('planV2Meta save:',e);}
 }
 async function loadPlanV2Meta(){
   if(!S.sbCfg)return;
   try{
     const d=await sbDownload(S.sbCfg,'data-planv2-meta.json');
-    if(d&&(d.priorities||d.observations)){
+    if(d){
       S.planV2Meta={priorities:d.priorities||{},observations:d.observations||{}};
+      // Restore transport/prod/eff settings
+      if(!S.planV2State)initPlanV2State();
+      if(d.transportDays!=null)S.planV2State.transportDays=d.transportDays;
+      if(d.prodDays!=null)S.planV2State.prodDays=d.prodDays;
+      if(d.efficiency!=null)S.planV2State.efficiency=d.efficiency;
     }
   }catch(e){}
 }
@@ -7664,13 +7676,13 @@ function renderPlanV2(){
       i.addEventListener('change',()=>onChange(Math.max(0,parseInt(i.value)||0)));return i;};
 
     const g1=dv('');g1.style.cssText='display:flex;align-items:center;gap:5px;padding-right:12px;border-right:1px solid #e2e8f0';
-    g1.appendChild(mkLbl('Transport (z):'));g1.appendChild(mkNumInp(st.transportDays,v=>{st.transportDays=v;rebuild();}));
+    g1.appendChild(mkLbl('Transport (z):'));g1.appendChild(mkNumInp(st.transportDays,v=>{st.transportDays=v;savePlanV2Meta();rebuild();}));
     tb.appendChild(g1);
 
     // Efficiency input
     const gEff=dv('');gEff.style.cssText='display:flex;align-items:center;gap:5px;padding-right:12px;border-right:1px solid #e2e8f0';
     gEff.appendChild(mkLbl('Eficiență (%):'));
-    const effInp=mkNumInp(st.efficiency,v=>{st.efficiency=Math.max(1,Math.min(200,v));rebuildContent();});
+    const effInp=mkNumInp(st.efficiency,v=>{st.efficiency=Math.max(1,Math.min(200,v));savePlanV2Meta();rebuildContent();});
     effInp.style.width='60px';
     gEff.appendChild(effInp);tb.appendChild(gEff);
     const g2=dv('');g2.style.cssText='display:flex;align-items:center;gap:5px;padding-right:12px;border-right:1px solid #e2e8f0';
@@ -7698,32 +7710,50 @@ function renderPlanV2(){
     const gCols=dv('');gCols.style.cssText='display:flex;align-items:center;gap:5px;padding-right:12px;border-right:1px solid #e2e8f0';
     const colPickBtn=el('button','tbtn');colPickBtn.innerHTML='⚙ Coloane';
     colPickBtn.addEventListener('click',e=>{
-      e.stopPropagation();document.getElementById('pv2-col-drop')?.remove();
-      const drop=dv('');drop.id='pv2-col-drop';drop.style.cssText='position:fixed;z-index:9999;background:#fff;border:1px solid var(--border);border-radius:8px;box-shadow:0 8px 32px rgba(0,0,0,.18);padding:6px 0;min-width:210px;max-height:420px;overflow-y:auto';
+      e.stopPropagation();
+      const existing=document.getElementById('pv2-col-drop');
+      if(existing){existing.remove();return;}
+      const drop=dv('');drop.id='pv2-col-drop';
+      drop.style.cssText='position:fixed;z-index:9999;background:#fff;border:1px solid var(--border);border-radius:8px;box-shadow:0 8px 32px rgba(0,0,0,.18);min-width:210px;max-height:440px;overflow-y:auto';
       const btn2Rect=colPickBtn.getBoundingClientRect();
       drop.style.top=(btn2Rect.bottom+2)+'px';drop.style.left=btn2Rect.left+'px';
-      const pv2ColDefs=[
-        {key:'fpItemNo',label:'Produs Final'},{key:'fpQty',label:'Qty FP'},
-        {key:'matNo',label:'Componentă'},{key:'fpCustomer',label:'Client'},
-        {key:'neededQty',label:'Necesar'},{key:'onHandQty',label:'On Hand'},
-        {key:'wipQty',label:'WIP'},{key:'toProduceQty',label:'De produs'},
-        {key:'compSubcoDays',label:'Subco (z)'},{key:'subcoText',label:'Tip Subco'},
-        {key:'subcoSupplier',label:'Furnizor Subco'},{key:'compStartDate',label:'Start'},
-        {key:'wcMinutes',label:'Timp BOW'},{key:'fpConfirmDt',label:'Livrare'},
-      ];
-      pv2ColDefs.forEach(({key,label})=>{
-        const item=dv('');item.style.cssText='display:flex;align-items:center;gap:9px;padding:6px 14px;font-size:11px;color:var(--text1);cursor:pointer';
-        item.addEventListener('mouseover',()=>item.style.background='#f1f5f9');
-        item.addEventListener('mouseout',()=>item.style.background='');
-        const cb=el('input');cb.type='checkbox';cb.checked=!st.hiddenCols.has(key);
-        cb.style.cssText='width:14px;height:14px;cursor:pointer;accent-color:var(--accent)';
-        cb.addEventListener('change',()=>{
-          if(cb.checked)st.hiddenCols.delete(key);else st.hiddenCols.add(key);
-          rebuildContent();
+
+      let _dragKey=null;
+      const renderPicker=()=>{
+        drop.innerHTML='<div style="padding:5px 14px 4px;font-size:9px;font-weight:700;color:var(--text3);text-transform:uppercase;letter-spacing:.06em">Drag pentru reordonare</div>';
+        st.colOrder.forEach(key=>{
+          const def=ALL_PV2_COLS.find(c=>c.key===key);if(!def)return;
+          const item=dv('');item.setAttribute('data-pv2-dk',key);
+          item.draggable=true;
+          item.style.cssText='display:flex;align-items:center;gap:8px;padding:5px 14px;font-size:11.5px;color:var(--text1);cursor:grab;border-bottom:1px solid #f8fafc;transition:background .1s';
+          item.addEventListener('dragstart',ev=>{
+            _dragKey=key;ev.dataTransfer.setData('text/plain',key);
+            ev.dataTransfer.effectAllowed='move';
+            requestAnimationFrame(()=>item.style.opacity='.3');
+          });
+          item.addEventListener('dragend',()=>{item.style.opacity='1';item.style.background='';_dragKey=null;});
+          item.addEventListener('dragover',ev=>{ev.preventDefault();if(_dragKey&&_dragKey!==key)item.style.background='#dbeafe';});
+          item.addEventListener('dragleave',()=>item.style.background='');
+          item.addEventListener('drop',ev=>{
+            ev.preventDefault();item.style.background='';
+            const fromKey=ev.dataTransfer.getData('text/plain');
+            if(!fromKey||fromKey===key)return;
+            const fi=st.colOrder.indexOf(fromKey),ti=st.colOrder.indexOf(key);
+            if(fi<0||ti<0)return;
+            st.colOrder.splice(fi,1);st.colOrder.splice(ti,0,fromKey);
+            renderPicker();rebuildContent();
+          });
+          const grip=sp('');grip.textContent='⠿';grip.style.cssText='color:#9ca3af;font-size:16px;line-height:1;cursor:grab';
+          const cb=el('input');cb.type='checkbox';cb.checked=!st.hiddenCols.has(key);
+          cb.style.cssText='width:14px;height:14px;cursor:pointer;accent-color:var(--accent);flex-shrink:0';
+          cb.addEventListener('change',()=>{if(cb.checked)st.hiddenCols.delete(key);else st.hiddenCols.add(key);rebuildContent();});
+          cb.addEventListener('click',ev=>ev.stopPropagation());
+          item.appendChild(grip);item.appendChild(cb);
+          const lbl=sp('');lbl.textContent=def.label;item.appendChild(lbl);
+          drop.appendChild(item);
         });
-        item.appendChild(cb);item.appendChild(document.createTextNode(label));
-        drop.appendChild(item);
-      });
+      };
+      renderPicker();
       document.body.appendChild(drop);
       const closeCol=ev=>{if(!drop.contains(ev.target)&&ev.target!==colPickBtn){drop.remove();document.removeEventListener('mousedown',closeCol);}};
       setTimeout(()=>document.addEventListener('mousedown',closeCol),50);
