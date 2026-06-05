@@ -5882,6 +5882,13 @@ function showScanCtxMenu(ev, colKey, cellText){
   }
 
   document.body.appendChild(menu);
+  const _dSep=dv('');_dSep.style.cssText='height:1px;background:var(--border);margin:2px 0';menu.appendChild(_dSep);
+  const _dCopy=dv('scan-col-item');_dCopy.innerHTML='<span style="font-size:13px">📋</span><span>Copiază valoarea</span>';
+  _dCopy.addEventListener('click',()=>{
+    try{navigator.clipboard.writeText(cellText);}catch(_){}
+    menu.remove();
+  });
+  menu.appendChild(_dCopy);
   const close=ev2=>{if(!menu.contains(ev2.target)){menu.remove();document.removeEventListener('mousedown',close);}};
   setTimeout(()=>document.addEventListener('mousedown',close),10);
 }
@@ -7423,6 +7430,14 @@ document.addEventListener('contextmenu',ev=>{
   const _iCopy=dv('u-ctx-item');_iCopy.innerHTML='<span class="u-ctx-icon">📋</span><span>Copiază valoarea</span>';
   _iCopy.addEventListener('click',()=>{navigator.clipboard?.writeText(cellVal).catch(()=>{});menu.remove();});
   menu.appendChild(_iCopy);
+  // Copy option
+  const _sepCopy=dv('u-ctx-sep');menu.appendChild(_sepCopy);
+  const _iCopyU=dv('u-ctx-item');_iCopyU.innerHTML='<span class="u-ctx-icon">📋</span><span>Copiază valoarea</span>';
+  _iCopyU.addEventListener('click',()=>{
+    try{navigator.clipboard.writeText(cellText);}catch(_){const ta=document.createElement('textarea');ta.value=cellText;document.body.appendChild(ta);ta.select();document.execCommand('copy');ta.remove();}
+    menu.remove();
+  });
+  menu.appendChild(_iCopyU);
   document.body.appendChild(menu);
   const close99=e=>{if(!menu.contains(e.target)){menu.remove();document.removeEventListener('mousedown',close99);}};
   setTimeout(()=>document.addEventListener('mousedown',close99),10);
@@ -7585,7 +7600,32 @@ function computePV2Components(transportDays,prodDays){
     const confirmDt=_parseDt(r['Confirm dt']);const confirmWk=str(r['Confirm_week']||'').trim();
     if(!_allowedWks.has(confirmWk))continue;
     if(!confirmDt&&confirmWk!=='0Late')continue;
-    walkBOM(fpItemNo,openQty,confirmDt,confirmWk,str(r['Customer_name']||''),r._obKey||'',fpItemNo,1,new Set());
+    const obKey_fp=r._obKey||'';
+    const fpCustomer_fp=str(r['Customer_name']||'');
+    // Add FP itself as a "component" if it has BOW operations (e.g. product processed before subco)
+    if(S.bowData){
+      const fpSubcoDays=subcoDaysIdx.get(fpItemNo)||0;
+      const fpLeadDays=transportDays+prodDays+fpSubcoDays;
+      const fpStartDate=_subWD(confirmDt||new Date(),fpLeadDays);
+      const fpStartWk=_wkKey(fpStartDate);
+      const fpStock=S.stockIdx?.get(fpItemNo);
+      const fpOnHand=Math.max(0,fpStock?.onHand||0);
+      const fpWip=Math.max(0,fpStock?.totalWIP||0);
+      const fpToProduce=Math.max(0,openQty-fpOnHand-fpWip);
+      if(fpToProduce>0){
+        const fpAggKey=fpItemNo+'__'+obKey_fp+'__'+fpItemNo+'_self';
+        if(!fpMatAgg.has(fpAggKey)){
+          fpMatAgg.set(fpAggKey,{
+            fpItemNo,fpCustomer:fpCustomer_fp,fpConfirmDt:confirmDt,fpConfirmWk:confirmWk,obKey:obKey_fp,
+            fpQty:openQty,matNo:fpItemNo,matName:str(r['Item_name']||''),matDrawing:'',
+            matType:'MAKE',matQtyMult:1,neededQty:openQty,
+            compSubcoDays:fpSubcoDays,compStartDate:fpStartDate,compStartWk:fpStartWk,wcOps:[],
+          });
+        }
+        const fpEntry=fpMatAgg.get(fpAggKey);fpEntry.neededQty=openQty;
+      }
+    }
+    walkBOM(fpItemNo,openQty,confirmDt,confirmWk,fpCustomer_fp,obKey_fp,fpItemNo,1,new Set());
   }
 
   // ── Step 2: For each aggregated component get stock and BOW ops ──
@@ -7627,6 +7667,34 @@ function computePV2Components(transportDays,prodDays){
         // Apply efficiency: time = (run×qty + setup) / (eff/100)
         const rawMinutes=totalRun*toProduceQty+firstSetup;
         const wcMinutes=rawMinutes/(eff/100);
+        wcOps.push({wcName,runTime:totalRun,setupTime:firstSetup,wcMinutes,isSubco,
+          subcoText:[...subcoTexts].join(' / ')||'',supplier:[...suppliers].join(', ')||''});
+      });
+    }
+    // For FP-self entries: get BOW ops from the FP's own BOW (using FP context)
+    if(e.matNo===e.fpItemNo){
+      const seenOpeSeq2=new Set();
+      const wcAgg2=new Map();
+      for(const bow of S.bowData||[]){
+        // For FP self, match by either Product no = fpItemNo OR Final product = fpItemNo with Product no = fpItemNo
+        if(str(bow['Product no'])!==e.fpItemNo&&str(bow['Final product'])!==e.fpItemNo)continue;
+        if(str(bow['Product no'])!==e.fpItemNo)continue;
+        const opeSeq=str(bow['Ope seq']||bow['Operation no']||'');
+        const dedupeKey=e.fpItemNo+'__'+opeSeq;
+        if(opeSeq&&seenOpeSeq2.has(dedupeKey))continue;
+        if(opeSeq)seenOpeSeq2.add(dedupeKey);
+        const wcName=str(bow['Ope name']||bow['Ope descr']||'');if(!wcName)continue;
+        const rt=parseFloat(String(bow['Run time']||'0').replace(',','.'))||0;
+        const st3=parseFloat(String(bow['Setup time']||'0').replace(',','.'))||0;
+        const isSubco=wcName.toLowerCase()==='subcontracting';
+        if(!wcAgg2.has(wcName))wcAgg2.set(wcName,{totalRun:0,firstSetup:st3,isSubco,subcoTexts:new Set(),suppliers:new Set()});
+        const agg2=wcAgg2.get(wcName);agg2.totalRun+=rt;
+        if(isSubco){const t1=str(bow['Text_line1']||'').trim();const sup=str(bow['Supplier']||'').trim();if(t1)agg2.subcoTexts.add(t1);if(sup)agg2.suppliers.add(sup);}
+      }
+      const eff2=S.planV2State?.efficiency||100;
+      wcAgg2.forEach(({totalRun,firstSetup,isSubco,subcoTexts,suppliers},wcName)=>{
+        const rawMin=totalRun*toProduceQty+firstSetup;
+        const wcMinutes=rawMin/(eff2/100);
         wcOps.push({wcName,runTime:totalRun,setupTime:firstSetup,wcMinutes,isSubco,
           subcoText:[...subcoTexts].join(' / ')||'',supplier:[...suppliers].join(', ')||''});
       });
@@ -7708,6 +7776,22 @@ function renderPlanV2(){
     g3.appendChild(wcSel);tb.appendChild(g3);
 
     // Column picker button
+    const ALL_PV2_COLS=[
+      {key:'priority',label:'Prioritate'},{key:'fpItemNo',label:'Produs Final'},
+      {key:'fpQty',label:'Qty FP'},{key:'matNo',label:'MOVEX Code'},
+      {key:'matDrawing',label:'Cod extern'},{key:'fpCustomer',label:'Client'},
+      {key:'neededQty',label:'Necesar'},{key:'onHandQty',label:'On Hand'},
+      {key:'wipQty',label:'WIP'},{key:'toProduceQty',label:'De produs'},
+      {key:'compSubcoDays',label:'Subco (z)'},{key:'subcoText',label:'Tip Subco'},
+      {key:'subcoSupplier',label:'Furnizor Subco'},{key:'compStartDate',label:'Start'},
+      {key:'wcMinutes',label:'Timp BOW'},{key:'fpConfirmDt',label:'Livrare'},
+      {key:'obs',label:'Observații'},
+    ];
+    // Enforce colOrder: priority first, matDrawing present
+    if(!st.colOrder)st.colOrder=ALL_PV2_COLS.map(c=>c.key);
+    if(st.colOrder[0]!=='priority'){st.colOrder=st.colOrder.filter(k=>k!=='priority');st.colOrder.unshift('priority');}
+    if(!st.colOrder.includes('matDrawing')){const mi=st.colOrder.indexOf('matNo');st.colOrder.splice(mi<0?1:mi+1,0,'matDrawing');}
+
     const gCols=dv('');gCols.style.cssText='display:flex;align-items:center;gap:5px;padding-right:12px;border-right:1px solid #e2e8f0';
     const colPickBtn=el('button','tbtn');colPickBtn.innerHTML='⚙ Coloane';
     colPickBtn.addEventListener('click',e=>{
