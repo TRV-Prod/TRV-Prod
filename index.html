@@ -8064,7 +8064,12 @@ function renderPlanV2(){
     gZoom.appendChild(zoomOut);gZoom.appendChild(zoomLbl);gZoom.appendChild(zoomIn);gZoom.appendChild(zoom100);
     tb.appendChild(gZoom);
 
-    const g4=dv('');g4.style.cssText='display:flex;align-items:center;gap:5px;margin-left:auto';
+    // Summary bar inline in toolbar
+    const sumBarWrap=dv('');sumBarWrap.style.cssText='display:flex;align-items:center;gap:5px;flex:1;justify-content:center;flex-wrap:wrap';
+    const sumBarLbl=dv('');sumBarLbl.id='pv2-summary-bar';sumBarLbl.style.cssText='display:flex;gap:4px;flex-wrap:wrap;align-items:center';
+    sumBarWrap.appendChild(sumBarLbl);tb.appendChild(sumBarWrap);
+
+    const g4=dv('');g4.style.cssText='display:flex;align-items:center;gap:5px;margin-left:0';
     const excelBtn=el('button','tbtn');excelBtn.style.cssText='border-color:#16a34a;color:#15803d;background:#f0fdf4';
     excelBtn.innerHTML='⬇ Excel';excelBtn.addEventListener('click',()=>exportPV2Excel(st));
     const pdfBtn=el('button','tbtn');pdfBtn.innerHTML='🖨 PDF';pdfBtn.addEventListener('click',()=>printPV2(st));
@@ -8106,9 +8111,21 @@ function renderPlanV2(){
       const cf=st.colFilters||{};
       const hasFilter=Object.values(cf).some(v=>v);
       const filteredComps=hasFilter?visComps.filter(c=>{
-        if(cf.fpItemNo&&!c.fpItemNo.toLowerCase().includes(cf.fpItemNo.toLowerCase()))return false;
-        if(cf.matNo&&!c.matNo.toLowerCase().includes(cf.matNo.toLowerCase()))return false;
-        if(cf.fpCustomer&&!c.fpCustomer.toLowerCase().includes(cf.fpCustomer.toLowerCase()))return false;
+        const chk=(v,fv)=>!fv||String(v||'').toLowerCase().includes(fv.toLowerCase());
+        if(!chk(c.fpItemNo,cf.fpItemNo))return false;
+        if(!chk(c.matNo,cf.matNo))return false;
+        if(!chk(c.matDrawing,cf.matDrawing))return false;
+        if(!chk(c.fpCustomer,cf.fpCustomer))return false;
+        if(!chk(c.neededQty,cf.neededQty))return false;
+        if(!chk(c.onHandQty,cf.onHandQty))return false;
+        if(!chk(c.wipQty,cf.wipQty))return false;
+        if(!chk(c.toProduceQty,cf.toProduceQty))return false;
+        if(!chk(c.compSubcoDays,cf.compSubcoDays))return false;
+        // subco fields: check against any op
+        if(cf.subcoText&&!c.wcOps?.some(op=>op.subcoText?.toLowerCase().includes(cf.subcoText.toLowerCase())))return false;
+        if(cf.subcoSupplier&&!c.wcOps?.some(op=>op.supplier?.toLowerCase().includes(cf.subcoSupplier.toLowerCase())))return false;
+        if(!chk(_fmtDt(c.compStartDate),cf.compStartDate))return false;
+        if(!chk(_fmtDt(c.fpConfirmDt)||c.fpConfirmWk,cf.fpConfirmDt))return false;
         return true;
       }):visComps;
 
@@ -8116,22 +8133,16 @@ function renderPlanV2(){
         contentArea.innerHTML='<div style="padding:24px;color:var(--text3);font-size:12px;text-align:center">Nicio componentă pentru filtrele aplicate.</div>';return;
       }
 
-      // ── Summary KPIs ──
-      const kpis=dv('');kpis.style.cssText='display:flex;gap:8px;margin-bottom:12px;flex-wrap:wrap';
+      // ── Compact summary bar ──
       const fpSet=new Set(filteredComps.map(c=>c.fpItemNo+c.obKey));
       const compSet=new Set(filteredComps.map(c=>c.matNo));
       const totalToProd=filteredComps.reduce((s,c)=>s+c.toProduceQty,0);
-      [
-        {l:'Produse finale',v:fpSet.size},
-        {l:'Componente',v:compSet.size},
-        {l:'Total de produs',v:fmtN(Math.round(totalToProd))},
-        {l:'Workcenters',v:allWCs.size},
-      ].forEach(({l,v})=>{
-        const k=dv('');k.style.cssText='background:#fff;border:1px solid var(--border);border-radius:6px;padding:8px 14px;text-align:center;min-width:80px';
-        k.innerHTML=`<div style="font-size:18px;font-weight:800;color:var(--accent)">${v}</div><div style="font-size:9px;font-weight:600;color:var(--text3);text-transform:uppercase;letter-spacing:.06em">${l}</div>`;
-        kpis.appendChild(k);
-      });
-      contentArea.appendChild(kpis);
+      const summaryBar=document.getElementById('pv2-summary-bar');
+      if(summaryBar){summaryBar.textContent='';
+        [{l:'FP',v:fpSet.size},{l:'Comp',v:compSet.size},{l:'De prod',v:fmtN(Math.round(totalToProd))},{l:'WC',v:allWCs.size}]
+        .forEach(({l,v})=>{const b=dv('');b.style.cssText='display:inline-flex;align-items:center;gap:4px;padding:2px 8px;background:#f1f5f9;border:1px solid #e2e8f0;border-radius:10px;font-size:10px;font-weight:700;color:var(--text2)';
+          b.innerHTML=`<span style="color:var(--text3)">${l}:</span><span style="color:var(--accent)">${v}</span>`;summaryBar.appendChild(b);});
+      }
 
       // ── Group by WC: sum neededHours per WC for this component (consecutive ops on same WC) ──
       const _zoomLbl=document.getElementById('pv2-zoom-lbl');if(_zoomLbl)_zoomLbl.textContent=st.zoom+'%';
@@ -8150,8 +8161,10 @@ function renderPlanV2(){
           const g=wcGroups.get(wcName);
           const key=c.fpItemNo+'__'+c.obKey+'__'+c.matNo;
           const existIdx=g.findIndex(e=>e._key===key);
-          if(existIdx<0) g.push({...c,_key:key,wcName,wcMinutes});
-          else g[existIdx].wcMinutes+=wcMinutes;
+          const wcOpInfo_=c.wcOps?.find(op=>op.wcName===wcName);
+          if(existIdx<0) g.push({...c,_key:key,wcName,wcMinutes,
+            _subcoText:wcOpInfo_?.subcoText||'',_subcoSupplier:wcOpInfo_?.supplier||''});
+          else{g[existIdx].wcMinutes+=wcMinutes;}
         });
       });
 
@@ -8170,17 +8183,22 @@ function renderPlanV2(){
 
       // Sort rows function
       // Sort by priority first (if not explicitly sorting another col), then by selected col
+      const getRowVal=(r,col)=>{
+        if(col==='priority')return parseInt(S.planV2Meta?.priorities?.[r.obKey]||'9999')||9999;
+        if(col==='obs')return S.planV2Meta?.observations?.[r.obKey]||'';
+        if(col==='subcoText')return r._subcoText||'';
+        if(col==='subcoSupplier')return r._subcoSupplier||'';
+        if(col==='toProduceQty')return r.wcToProduceQty!=null?r.wcToProduceQty:r.toProduceQty;
+        if(col==='compStartDate')return r.compStartDate?r.compStartDate.getTime():9e15;
+        if(col==='fpConfirmDt')return r.fpConfirmDt?r.fpConfirmDt.getTime():9e15;
+        return r[col];
+      };
       const sortFn=(rows)=>{
         const {sortCol,sortDir}=st;
         return [...rows].sort((a,b)=>{
-          const va=a[sortCol],vb=b[sortCol];
+          const va=getRowVal(a,sortCol),vb=getRowVal(b,sortCol);
           if(va==null&&vb==null)return 0;if(va==null)return sortDir;if(vb==null)return-sortDir;
           if(typeof va==='number'&&typeof vb==='number')return sortDir*(va-vb);
-          // Priority: lower number = higher priority
-          if(sortCol==='priority'){
-            const pa=parseInt(va)||9999,pb=parseInt(vb)||9999;
-            return sortDir*(pa-pb);
-          }
           return sortDir*String(va).localeCompare(String(vb));
         });
       };
@@ -8260,7 +8278,30 @@ function renderPlanV2(){
           th.appendChild(rh);
           hr.appendChild(th);
         });
-        thead.appendChild(hr);tbl.appendChild(thead);
+        thead.appendChild(hr);
+        // Filter row
+        const fr=el('tr');fr.style.background='#0f2540';
+        visCols.forEach(c=>{
+          const fth=el('th');fth.style.cssText='padding:2px 4px;border-right:1px solid #2d4e7a';
+          const finp=el('input');finp.type='text';finp.placeholder='Filtrează...';
+          finp.value=st.colFilters[c.key]||'';
+          finp.setAttribute('data-pv2-filter-col',c.key);
+          finp.style.cssText='width:100%;height:20px;padding:0 5px;border:none;border-radius:2px;font-size:9.5px;background:rgba(255,255,255,.15);color:#fff;box-sizing:border-box';
+          finp.addEventListener('focus',()=>finp.style.background='rgba(255,255,255,.9)');
+          finp.addEventListener('blur',()=>{finp.style.background='rgba(255,255,255,.15)';finp.style.color='#fff';});
+          finp.addEventListener('input',e=>{
+            const v=e.target.value;
+            if(!st.colFilters)st.colFilters={};
+            if(v)st.colFilters[c.key]=v;else delete st.colFilters[c.key];
+            rebuildContent();
+            // Restore focus
+            setTimeout(()=>{const r2=tbl.querySelector(`input[data-pv2-filter-col="${c.key}"]`);if(r2){r2.focus();r2.selectionStart=r2.selectionEnd=r2.value.length;}},10);
+          });
+          finp.addEventListener('click',ev=>ev.stopPropagation());
+          fth.appendChild(finp);fr.appendChild(fth);
+        });
+        thead.appendChild(fr);
+        tbl.appendChild(thead);
 
         const tbody=el('tbody');
         // Pre-sort by priority (lower = first), then apply selected sort
