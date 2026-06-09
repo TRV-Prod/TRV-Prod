@@ -4194,9 +4194,7 @@ function _buildObFull(wrap){
 function calcNecesarMaterii(){
   if(!S.obData||!S.bomData) return null;
 
-  // Build week-bucket sets:
-  //   0-2W: 0Late + W0 (current) + W1 + W2
-  //   3-4W: W3 + W4
+  // Week-bucket sets (0-2W and 3-4W)
   const now = new Date();
   const weeks02w = new Set(['0Late', isoWeekKey(now)]);
   const _n1=new Date(now);_n1.setDate(_n1.getDate()+7);weeks02w.add(isoWeekKey(_n1));
@@ -4206,7 +4204,7 @@ function calcNecesarMaterii(){
   const _n4=new Date(now);_n4.setDate(_n4.getDate()+28);weeks34w.add(isoWeekKey(_n4));
   const allNecWeeks = new Set([...weeks02w, ...weeks34w]);
 
-  // Step 1: Aggregate OB quantities per FP, split by bucket
+  // Aggregate OB quantities per FP per bucket
   const fpQty02w = new Map();
   const fpQty34w = new Map();
   for(const row of S.obData){
@@ -4219,70 +4217,52 @@ function calcNecesarMaterii(){
     if(weeks34w.has(wk)) fpQty34w.set(fp, (fpQty34w.get(fp)||0)+qty);
   }
 
-  // Deduct FP stock (onHand + WIP) from OB quantities before BOM walk
-  // Priority: deduct from 0-2W first, remainder from 3-4W
-  for(const fp of new Set([...fpQty02w.keys(), ...fpQty34w.keys()])){
-    const fpStock = S.stockIdx?.get(fp);
-    if(!fpStock) continue;
-    const avail = Math.max(0, fpStock.onHand||0) + Math.max(0, fpStock.totalWIP||0);
-    if(avail <= 0) continue;
-    const q02 = fpQty02w.get(fp)||0;
-    const q34 = fpQty34w.get(fp)||0;
-    const deduct02 = Math.min(avail, q02);
-    const deduct34 = Math.min(avail - deduct02, q34);
-    if(deduct02 > 0) fpQty02w.set(fp, q02 - deduct02);
-    if(deduct34 > 0) fpQty34w.set(fp, q34 - deduct34);
-  }
-
-  // Step 2: For each FP walk BOM and collect BUY materials per bucket
-  // At each MAKE sub-assembly, subtract its own stock before recursing
+  // Use calcNeeds (same as Structura) for each FP + bucket
+  // This correctly propagates net needs through all BOM levels (deducts sub-assembly stock too)
   const matMap = new Map();
 
-  // collectBuy: walk BOM from FP level with eff quantities (already net of FP stock)
-  // Sub-assembly stock is NOT deducted here — the FP-level deduction is sufficient.
-  // Sub-assembly WIP = material already consumed; sub-assembly onHand is captured in FP stock.
-  function collectBuy(fpCtx, compNo, eff02, eff34, vis){
-    if(vis.has(compNo)) return;
-    const vNext = new Set(vis); vNext.add(compNo);
-    const rows = S.bomIdx?.get(`${fpCtx}__${compNo}`) || [];
-    for(const row of rows){
-      const matNo = str(row['Material no']);
-      const unQty = parseFloat(row['Material qty'])||1;
-      const child02 = eff02 * unQty;
-      const child34 = eff34 * unQty;
-      const type = str(row['Material type']);
-      if(type==='BUY'){
-        if(!matMap.has(matNo)){
-          matMap.set(matNo,{
-            matNo,
-            name: str(row['Mat. name']||row['Mat desc']||''),
-            group: str(row['Mat product group']||''),
-            itemGroup: str(row['Mat. item group']||''),
-            unit: str(row['Mat U/M']||''),
-            needed02w: 0,
-            needed34w: 0,
-            fps: new Map(),
-          });
-        }
-        const m = matMap.get(matNo);
-        m.needed02w += child02;
-        m.needed34w += child34;
-        m.fps.set(fpCtx, (m.fps.get(fpCtx)||0) + child02 + child34);
-      } else if(type==='MAKE'){
-        collectBuy(fpCtx, matNo, child02, child34, vNext);
+  const addFromNeeds = (fp, needsMap, bucket) => {
+    for(const [matNo, need] of needsMap){
+      // Only BUY materials (MAKE sub-assemblies are intermediate, their children are included)
+      const stockEntry = S.stockIdx?.get(matNo);
+      const bomChildren = S.bomIdx?.get(`${fp}__${matNo}`)||[];
+      const isMake = bomChildren.length > 0;
+      if(isMake) continue; // MAKE items handled by recursion in calcNeeds
+
+      // Get BOM row for metadata
+      const bomRow = S.bomIdx?.get(`${fp}__${fp}`)?.find(r=>str(r['Material no'])===matNo)
+        || [...(S.bomIdx?.values()||[])].flat().find(r=>str(r['Material no'])===matNo);
+
+      if(!matMap.has(matNo)){
+        matMap.set(matNo,{
+          matNo,
+          name: str(bomRow?.['Mat. name']||bomRow?.['Mat desc']||''),
+          group: str(bomRow?.['Mat product group']||''),
+          itemGroup: str(bomRow?.['Mat. item group']||''),
+          unit: str(bomRow?.['Mat U/M']||''),
+          needed02w: 0, needed34w: 0,
+          fps: new Map(),
+        });
       }
+      const m = matMap.get(matNo);
+      // Use need.needed (gross at this level) — net is already propagated by calcNeeds
+      // We add the gross needed for this component (calcNeeds already deducted stock at each level)
+      const qty = need.needed||0;
+      if(bucket==='02') m.needed02w += qty;
+      else              m.needed34w += qty;
+      m.fps.set(fp, (m.fps.get(fp)||0)+qty);
     }
+  };
+
+  for(const fp of new Set([...fpQty02w.keys(), ...fpQty34w.keys()])){
+    if(!S.bomIdx||!S.stockIdx) continue;
+    const q02 = fpQty02w.get(fp)||0;
+    const q34 = fpQty34w.get(fp)||0;
+    if(q02>0){ const needs02=calcNeeds(fp,q02); addFromNeeds(fp,needs02,'02'); }
+    if(q34>0){ const needs34=calcNeeds(fp,q34); addFromNeeds(fp,needs34,'34'); }
   }
 
-  const allNecFPs = new Set([...fpQty02w.keys(), ...fpQty34w.keys()]);
-  for(const fp of allNecFPs){
-    if(!S.bomIdx) continue;
-    const eff02 = fpQty02w.get(fp)||0;
-    const eff34 = fpQty34w.get(fp)||0;
-    collectBuy(fp, fp, eff02, eff34, new Set());
-  }
-
-  // Step 3: Build result rows
+  // Build result rows
   const result = [];
   for(const [matNo, m] of matMap){
     const stock = S.stockIdx?.get(matNo)||{onHand:0,totalWIP:0,type:''};
@@ -4293,17 +4273,10 @@ function calcNecesarMaterii(){
     const totalNeeded = m.needed02w + m.needed34w;
     const netNeeded = Math.max(0, totalNeeded - avail);
     result.push({
-      matNo,
-      name: m.name,
-      group: m.group,
-      itemGroup: m.itemGroup,
-      unit: m.unit,
-      needed02w: m.needed02w,
-      needed34w: m.needed34w,
-      onHand,
-      wip,
-      netNeeded,
-      fps: [...m.fps.entries()].sort((a,b)=>b[1]-a[1]),
+      matNo, name:m.name, group:m.group, itemGroup:m.itemGroup, unit:m.unit,
+      needed02w:m.needed02w, needed34w:m.needed34w,
+      onHand, wip, netNeeded,
+      fps:[...m.fps.entries()].sort((a,b)=>b[1]-a[1]),
     });
   }
 
@@ -7563,50 +7536,9 @@ function _buildSubcoDaysIdx(){
 //            compSubcoDays, compStartDate, compStartWk,
 //            wcOps:[{opeName,wcName,runTime,setupTime,neededHours}]}]
 function computePV2Components(transportDays,prodDays){
-  if(!S.obData||!S.bomIdx)return[];
+  if(!S.obData||!S.bomIdx||!S.bowIdx) return [];
   const subcoDaysIdx=_buildSubcoDaysIdx();
-  const curWkEnd=_endOfWeek(new Date());
-
-  // ── Step 1: Aggregate OB demand per (fpItemNo, matNo) across all OB rows ──
-  // Key: fpItemNo+'__'+matNo → {fpItemNo,matNo,totalFPQty,fpOrders:[],matQtyPerFP,...}
-  const fpMatAgg=new Map();
-
-  function walkBOM(fpItemNo,fpOpenQty,fpConfirmDt,fpConfirmWk,fpCustomer,obKey,
-                   parentCode,parentQtyMult,visited){
-    if(visited.has(parentCode))return;
-    const vis2=new Set(visited);vis2.add(parentCode);
-    const bomRows=S.bomIdx.get(`${fpItemNo}__${parentCode}`)||[];
-    for(const br of bomRows){
-      const matNo=str(br['Material no']);
-      const matType=str(br['Material type']);
-      if(!matNo)continue;
-      const mqp=parseFloat(String(br['Material qty']||'1').replace(',','.'))||1;
-      const matQtyMult=parentQtyMult*mqp;
-      const matName=str(br['Mat. name']||br['Mat desc']||'');
-      // Compute this component's subco days and start date
-      const compSubcoDays=subcoDaysIdx.get(matNo)||0;
-      const leadDays=transportDays+prodDays+compSubcoDays;
-      const refDate=fpConfirmDt||new Date();
-      const compStartDate=_subWD(refDate,leadDays);
-      const compStartWk=_wkKey(compStartDate);
-      const aggKey=`${fpItemNo}__${obKey}__${matNo}`;
-      if(!fpMatAgg.has(aggKey)){
-        const matDraw=str(br['Mat. drawing']||'').trim();
-        fpMatAgg.set(aggKey,{
-          fpItemNo,fpCustomer,fpConfirmDt,fpConfirmWk,obKey,
-          fpQty:fpOpenQty,
-          matNo,matName,matDrawing:matDraw,matType,matQtyMult,
-          neededQty:0,compSubcoDays,compStartDate,compStartWk,
-          wcOps:[],
-        });
-      }
-      const entry=fpMatAgg.get(aggKey);
-      entry.neededQty+=fpOpenQty*matQtyMult;
-      entry.fpQty=fpOpenQty;  // always reflect the OB qty
-      // Recurse into MAKE components
-      if(matType==='MAKE') walkBOM(fpItemNo,fpOpenQty,fpConfirmDt,fpConfirmWk,fpCustomer,obKey,matNo,matQtyMult,vis2);
-    }
-  }
+  const eff=S.planV2State?.efficiency||100;
 
   // ── Filter OB to allowed weeks ──
   const _curKey=_currentWkKey();
@@ -7615,142 +7547,108 @@ function computePV2Components(transportDays,prodDays){
     getNextWeekKey(getNextWeekKey(getNextWeekKey(_curKey))),
   ]);
 
+  const result=[];
+
   for(const r of S.obData){
-    const fpItemNo=str(r['Item_no']);const openQty=parseFloat(r['Open qty'])||0;
+    const fpItemNo=str(r['Item_no']);
+    const openQty=parseFloat(r['Open qty'])||0;
     if(!fpItemNo||openQty<=0)continue;
-    const confirmDt=_parseDt(r['Confirm dt']);const confirmWk=str(r['Confirm_week']||'').trim();
+    const confirmDt=_parseDt(r['Confirm dt']);
+    const confirmWk=str(r['Confirm_week']||'').trim();
     if(!_allowedWks.has(confirmWk))continue;
     if(!confirmDt&&confirmWk!=='0Late')continue;
-    const obKey_fp=r._obKey||'';
-    const fpCustomer_fp=str(r['Customer_name']||'');
-    // Add FP itself as a "component" if it has BOW operations (e.g. product processed before subco)
-    if(S.bowData){
-      const fpSubcoDays=subcoDaysIdx.get(fpItemNo)||0;
-      const fpLeadDays=transportDays+prodDays+fpSubcoDays;
-      const fpStartDate=_subWD(confirmDt||new Date(),fpLeadDays);
-      const fpStartWk=_wkKey(fpStartDate);
-      const fpStock=S.stockIdx?.get(fpItemNo);
-      const fpOnHand=Math.max(0,fpStock?.onHand||0);
-      const fpWip=Math.max(0,fpStock?.totalWIP||0);
-      const fpToProduce=Math.max(0,openQty-fpOnHand-fpWip);
-      if(fpToProduce>0){
-        const fpAggKey=fpItemNo+'__'+obKey_fp+'__'+fpItemNo+'_self';
-        if(!fpMatAgg.has(fpAggKey)){
-          fpMatAgg.set(fpAggKey,{
-            fpItemNo,fpCustomer:fpCustomer_fp,fpConfirmDt:confirmDt,fpConfirmWk:confirmWk,obKey:obKey_fp,
-            fpQty:openQty,matNo:fpItemNo,matName:str(r['Item_name']||''),matDrawing:'',
-            matType:'MAKE',matQtyMult:1,neededQty:openQty,
-            compSubcoDays:fpSubcoDays,compStartDate:fpStartDate,compStartWk:fpStartWk,wcOps:[],
-          });
-        }
-        const fpEntry=fpMatAgg.get(fpAggKey);fpEntry.neededQty=openQty;
+    const obKey=r._obKey||'';
+    const fpCustomer=str(r['Customer_name']||'');
+
+    // Use same calcNeeds as Structura to get per-component net needs
+    const needs=S.stockIdx?calcNeeds(fpItemNo,openQty):null;
+    if(!needs) continue;
+
+    // Also get exec time breakdown same as Structura (per WC, per component)
+    // addOpsForComponent logic reused inline
+    const addOpsForComp=(matNo,unitsNeeded)=>{
+      const rawOps=S.bowIdx?.get(`${fpItemNo}__${matNo}`)||[];
+      if(!rawOps.length&&matNo!==fpItemNo)return null;
+      const allOps=rawOps.length?rawOps:S.bowIdx?.get(`${fpItemNo}__${fpItemNo}`)||[];
+      if(!allOps.length)return null;
+
+      const ops=allOps.map(op=>({
+        seq:parseFloat(String(op['Ope seq']||'0').replace(',','.'))||0,
+        productSeq:parseFloat(String(op['Product seq']||'0').replace(',','.'))||0,
+        wcName:str(op['Ope name']||op['Ope descr']||''),
+        runT:parseFloat(String(op['Run time']||'0').replace(',','.'))||0,
+        setupT:parseFloat(String(op['Setup time']||'0').replace(',','.'))||0,
+        isSubco:(str(op['Ope name']||op['Ope descr']||'')).toLowerCase()==='subcontracting',
+        t1:str(op['Text_line1']||'').trim(),sup:str(op['Supplier']||'').trim(),
+      })).sort((a,b)=>b.productSeq!==a.productSeq?(b.productSeq-a.productSeq):(a.seq-b.seq));
+
+      const stock=S.stockIdx?.get(matNo)||{onHand:0,wipByWC:{}};
+      const onHand=Math.max(0,stock.onHand);
+      const wipByWC=stock.wipByWC||{};
+
+      // Same WIP-at-index logic as calcExecTime
+      const wipAtIdx=new Map();
+      for(const[poCol,wipQty] of Object.entries(wipByWC)){
+        if(!wipQty||wipQty<=0)continue;
+        const wcNamePO=wcLabel(poCol).toLowerCase();
+        let bestIdx=-1;
+        for(let i=ops.length-1;i>=0;i--){if(ops[i].wcName.toLowerCase()===wcNamePO){bestIdx=i;break;}}
+        if(bestIdx<0)continue;
+        wipAtIdx.set(bestIdx,(wipAtIdx.get(bestIdx)||0)+wipQty);
       }
+
+      // Per WC: needing = unitsNeeded - onHand - Σ WIP after this op
+      const wcOps=[];
+      const wcSeen=new Set();
+      for(let i=0;i<ops.length;i++){
+        const op=ops[i];if(!op.wcName)continue;
+        let alreadyDone=onHand;
+        for(const[seqIdx,qty] of wipAtIdx){if(seqIdx>i)alreadyDone+=qty;}
+        const needing=Math.max(0,unitsNeeded-alreadyDone);
+        if(needing<=0)continue; // no work needed at this WC
+        const wcKey=op.wcName;
+        // Sum run for same WC, count setup once
+        const existing=wcOps.find(w=>w.wcName===wcKey);
+        if(existing){existing.runTime+=op.runT;existing.wcToProduceQty=needing;}
+        else{wcOps.push({wcName:wcKey,runTime:op.runT,setupTime:op.setupT,
+          wcToProduceQty:needing,isSubco:op.isSubco,subcoText:op.t1,supplier:op.sup});}
+      }
+      wcOps.forEach(op=>{op.wcMinutes=(op.runTime*op.wcToProduceQty+op.setupTime)/(eff/100);});
+      return {wcOps,onHand,wipQty:Math.max(0,stock.totalWIP||0)};
+    };
+
+    // Process FP itself
+    const fpSubcoDays=subcoDaysIdx.get(fpItemNo)||0;
+    const fpLeadDays=transportDays+prodDays+fpSubcoDays;
+    const fpStartDate=_subWD(confirmDt||new Date(),fpLeadDays);
+    const fpStartWk=_wkKey(fpStartDate);
+    const fpRes=addOpsForComp(fpItemNo,openQty);
+    if(fpRes?.wcOps?.length){
+      result.push({fpItemNo,fpCustomer,fpConfirmDt:confirmDt,fpConfirmWk:confirmWk,obKey,
+        fpQty:openQty,matNo:fpItemNo,matName:str(r['Item_name']||''),matDrawing:'',matType:'MAKE',
+        matQtyMult:1,neededQty:openQty,onHandQty:fpRes.onHand,wipQty:fpRes.wipQty,
+        toProduceQty:openQty,compSubcoDays:fpSubcoDays,compStartDate:fpStartDate,compStartWk:fpStartWk,
+        wcOps:fpRes.wcOps});
     }
-    walkBOM(fpItemNo,openQty,confirmDt,confirmWk,fpCustomer_fp,obKey_fp,fpItemNo,1,new Set());
-  }
 
-  // ── Step 2: For each aggregated component get stock and BOW ops ──
-  const result=[];
-  for(const [,e] of fpMatAgg){
-    const stock=S.stockIdx?.get(e.matNo);
-    const onHandQty=Math.max(0,stock?.onHand||0);
-    const wipQty=Math.max(0,stock?.totalWIP||0);
-    const toProduceQty=Math.max(0,e.neededQty-onHandQty-wipQty);
-    if(toProduceQty<=0)continue; // fully covered by stock+WIP
-
-    // Get BOW ops: group all operations per WC name
-    // For each WC: setup = first op's setup time (once), run = sum of ALL ops' runTime × qty
-    const wcOps=[];
-    if(S.bowData){
-      // Deduplicate BOW by (Product no, Ope seq) — collect ops in sequence order
-      const seenOpeSeq=new Set();
-      const opsSeq=[]; // ordered list: [{opeSeq, wcName, rt, st2, isSubco, ...}]
-      const bowRows4mat=[];
-      for(const bow of S.bowData){
-        if(str(bow['Product no'])!==e.matNo)continue;
-        const opeSeq=parseFloat(String(bow['Ope seq']||bow['Operation no']||'0').replace(',','.'))||0;
-        const dedupeKey=e.matNo+'__'+opeSeq;
-        if(opeSeq&&seenOpeSeq.has(dedupeKey))continue;
-        if(opeSeq)seenOpeSeq.add(dedupeKey);
-        const wcName=str(bow['Ope name']||bow['Ope descr']||'');if(!wcName)continue;
-        bowRows4mat.push({opeSeq,wcName,
-          rt:parseFloat(String(bow['Run time']||'0').replace(',','.'))||0,
-          st2:parseFloat(String(bow['Setup time']||'0').replace(',','.'))||0,
-          isSubco:wcName.toLowerCase()==='subcontracting',
-          t1:str(bow['Text_line1']||'').trim(),sup:str(bow['Supplier']||'').trim()});
-      }
-      bowRows4mat.sort((a,b)=>a.opeSeq-b.opeSeq);
-
-      // Build ordered WC list (deduplicated by name, preserving first occurrence order)
-      const wcOrder=[]; // ordered unique WC names
-      const wcAgg=new Map();
-      for(const op of bowRows4mat){
-        if(!wcAgg.has(op.wcName)){
-          wcAgg.set(op.wcName,{totalRun:0,firstSetup:op.st2,isSubco:op.isSubco,
-            subcoTexts:new Set(),suppliers:new Set(),seqPos:wcOrder.length});
-          wcOrder.push(op.wcName);
-        }
-        const agg=wcAgg.get(op.wcName);
-        agg.totalRun+=op.rt;
-        if(op.isSubco){if(op.t1)agg.subcoTexts.add(op.t1);if(op.sup)agg.suppliers.add(op.sup);}
-      }
-
-      // Build a map: WC_COL_key → wcName for WIP lookup
-      // WIP_COLS format: '710908-Milling' → wcLabel gives 'Milling'
-      // Match by wcLabel(wipCol).toLowerCase() === wcName.toLowerCase()
-      const wipByWC_raw=S.stockIdx?.get(e.matNo)?.wipByWC||{};
-      // Map each wipCol to its label for comparison
-      const wipByWCName={}; // wcName (lowercase) → wipQty
-      for(const [wipCol,qty] of Object.entries(wipByWC_raw)){
-        const lbl=wcLabel(wipCol).toLowerCase();
-        wipByWCName[lbl]=(wipByWCName[lbl]||0)+qty;
-      }
-
-      const eff=S.planV2State?.efficiency||100;
-      wcAgg.forEach(({totalRun,firstSetup,isSubco,subcoTexts,suppliers,seqPos},wcName)=>{
-        // WIP at WCs AFTER this position reduces the qty needed HERE
-        // (those pieces have already passed through this WC)
-        let wipAfter=0;
-        for(let i=seqPos+1;i<wcOrder.length;i++){
-          wipAfter+=(wipByWCName[wcOrder[i].toLowerCase()]||0);
-        }
-        const wcToProduce=Math.max(0,e.neededQty-Math.max(0,onHandQty)-wipAfter);
-        const rawMinutes=totalRun*wcToProduce+firstSetup;
-        const wcMinutes=rawMinutes/(eff/100);
-        wcOps.push({wcName,runTime:totalRun,setupTime:firstSetup,wcMinutes,
-          wcToProduceQty:wcToProduce,isSubco,
-          subcoText:[...subcoTexts].join(' / ')||'',supplier:[...suppliers].join(', ')||''});
-      });
+    // Process each BOM component using calcNeeds results
+    for(const[matNo,need] of needs){
+      if(need.needed<=0)continue;
+      const mat=S.bomIdx?.get(`${fpItemNo}__${fpItemNo}`)?.find(r2=>str(r2['Material no'])===matNo);
+      const matName=str(mat?.['Mat. name']||mat?.['Mat desc']||'');
+      const matDrawing=str(mat?.['Mat. drawing']||'').trim();
+      const compSubcoDays=subcoDaysIdx.get(matNo)||0;
+      const compLeadDays=transportDays+prodDays+compSubcoDays;
+      const compStartDate=_subWD(confirmDt||new Date(),compLeadDays);
+      const compStartWk=_wkKey(compStartDate);
+      const compRes=addOpsForComp(matNo,need.needed);
+      if(!compRes?.wcOps?.length)continue;
+      result.push({fpItemNo,fpCustomer,fpConfirmDt:confirmDt,fpConfirmWk:confirmWk,obKey,
+        fpQty:openQty,matNo,matName,matDrawing,matType:'MAKE',matQtyMult:1,
+        neededQty:need.needed,onHandQty:need.onHand,wipQty:need.totalWIP||0,
+        toProduceQty:need.net,compSubcoDays,compStartDate,compStartWk,
+        wcOps:compRes.wcOps});
     }
-    // For FP-self entries: get BOW ops from the FP's own BOW (using FP context)
-    if(e.matNo===e.fpItemNo){
-      const seenOpeSeq2=new Set();
-      const wcAgg2=new Map();
-      for(const bow of S.bowData||[]){
-        // For FP self, match by either Product no = fpItemNo OR Final product = fpItemNo with Product no = fpItemNo
-        if(str(bow['Product no'])!==e.fpItemNo&&str(bow['Final product'])!==e.fpItemNo)continue;
-        if(str(bow['Product no'])!==e.fpItemNo)continue;
-        const opeSeq=str(bow['Ope seq']||bow['Operation no']||'');
-        const dedupeKey=e.fpItemNo+'__'+opeSeq;
-        if(opeSeq&&seenOpeSeq2.has(dedupeKey))continue;
-        if(opeSeq)seenOpeSeq2.add(dedupeKey);
-        const wcName=str(bow['Ope name']||bow['Ope descr']||'');if(!wcName)continue;
-        const rt=parseFloat(String(bow['Run time']||'0').replace(',','.'))||0;
-        const st3=parseFloat(String(bow['Setup time']||'0').replace(',','.'))||0;
-        const isSubco=wcName.toLowerCase()==='subcontracting';
-        if(!wcAgg2.has(wcName))wcAgg2.set(wcName,{totalRun:0,firstSetup:st3,isSubco,subcoTexts:new Set(),suppliers:new Set()});
-        const agg2=wcAgg2.get(wcName);agg2.totalRun+=rt;
-        if(isSubco){const t1=str(bow['Text_line1']||'').trim();const sup=str(bow['Supplier']||'').trim();if(t1)agg2.subcoTexts.add(t1);if(sup)agg2.suppliers.add(sup);}
-      }
-      const eff2=S.planV2State?.efficiency||100;
-      wcAgg2.forEach(({totalRun,firstSetup,isSubco,subcoTexts,suppliers},wcName)=>{
-        const rawMin=totalRun*toProduceQty+firstSetup;
-        const wcMinutes=rawMin/(eff2/100);
-        wcOps.push({wcName,runTime:totalRun,setupTime:firstSetup,wcMinutes,isSubco,
-          subcoText:[...subcoTexts].join(' / ')||'',supplier:[...suppliers].join(', ')||''});
-      });
-    }
-    result.push({...e,onHandQty,wipQty,toProduceQty,wcOps});
   }
   return result;
 }
