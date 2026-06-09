@@ -7580,22 +7580,24 @@ function computePV2Components(transportDays,prodDays){
   if(!S.obData||!S.bomIdx||!S.bowIdx) return [];
   const subcoDaysIdx=_buildSubcoDaysIdx();
   const eff=S.planV2State?.efficiency||100;
-
-  // Filter OB to allowed weeks
   const _curKey=_currentWkKey();
   const _allowedWks=new Set(['0Late',_curKey,
     getNextWeekKey(_curKey),getNextWeekKey(getNextWeekKey(_curKey)),
     getNextWeekKey(getNextWeekKey(getNextWeekKey(_curKey))),
   ]);
 
-  // Sort OB rows by confirm_dt ascending (oldest first for stock allocation)
-  const obRows=S.obData.filter(r=>{
+  // ── Step 1: Aggregate OB demand per (fpItemNo, matNo) ──
+  // Key: fpItemNo+'|'+matNo → {totalNeeded, obRows:[], matName, matDrawing, matQtyMult, fpItemNo, matNo}
+  const demand = new Map();
+  const fpDemand = new Map(); // fpItemNo → {totalQty, obRows:[]}
+
+  const obFiltered = S.obData.filter(r=>{
     const wk=str(r['Confirm_week']||'').trim();
-    if(!_allowedWks.has(wk))return false;
-    const openQty=parseFloat(r['Open qty'])||0;
-    if(openQty<=0)return false;
-    const confirmDt=_parseDt(r['Confirm dt']);
-    if(!confirmDt&&wk!=='0Late')return false;
+    if(!_allowedWks.has(wk)) return false;
+    const q=parseFloat(r['Open qty'])||0;
+    if(q<=0) return false;
+    const dt=_parseDt(r['Confirm dt']);
+    if(!dt&&wk!=='0Late') return false;
     return true;
   }).sort((a,b)=>{
     const da=_parseDt(a['Confirm dt']),db=_parseDt(b['Confirm dt']);
@@ -7603,167 +7605,138 @@ function computePV2Components(transportDays,prodDays){
     return da-db;
   });
 
-  // ── Build BOW ops function (exact calcExecTime logic) ──
-  const getComponentOps=(fpItemNo,matNo,unitsNeeded,stockPool)=>{
-    const rawOps=S.bowIdx?.get(`${fpItemNo}__${matNo}`)||[];
-    if(!rawOps.length)return null;
-    const ops=rawOps.map(op=>({
-      seq:parseFloat(String(op['Ope seq']||'0').replace(',','.'))||0,
-      productSeq:parseFloat(String(op['Product seq']||'0').replace(',','.'))||0,
-      wcName:str(op['Ope name']||op['Ope descr']||''),
-      runT:parseFloat(String(op['Run time']||'0').replace(',','.'))||0,
-      setupT:parseFloat(String(op['Setup time']||'0').replace(',','.'))||0,
-      isSubco:(str(op['Ope name']||op['Ope descr']||'')).toLowerCase()==='subcontracting',
-      t1:str(op['Text_line1']||'').trim(),sup:str(op['Supplier']||'').trim(),
-    })).sort((a,b)=>b.productSeq!==a.productSeq?(b.productSeq-a.productSeq):(a.seq-b.seq));
+  for(const r of obFiltered){
+    const fpItemNo=str(r['Item_no']);
+    const openQty=parseFloat(r['Open qty'])||0;
+    const confirmDt=_parseDt(r['Confirm dt']);
+    const confirmWk=str(r['Confirm_week']||'').trim();
+    const obKey=r._obKey||'';
+    const obRow={
+      obKey,customer:str(r['Customer_name']||''),
+      cono:str(r['CO_no']||''),lineNo:str(r['CO_line']||''),
+      confirmDt,requestDt:_parseDt(r['Request dt']),
+      orderedQty:parseFloat(r['Ordered qty'])||openQty,
+      openQty,confirmWk
+    };
+    if(!fpDemand.has(fpItemNo))fpDemand.set(fpItemNo,{totalQty:0,obRows:[]});
+    const fd=fpDemand.get(fpItemNo);
+    fd.totalQty+=openQty;fd.obRows.push(obRow);
+  }
 
-    // Use stockPool (remaining after sequential allocation to earlier OB rows)
-    const onHand=Math.max(0,stockPool.onHand||0);
-    const wipByWC=stockPool.wipByWC||{};
-
-    // Map WIP to op indices
-    const wipAtIdx=new Map();
-    for(const[poCol,wipQty] of Object.entries(wipByWC)){
-      if(!wipQty||wipQty<=0)continue;
-      const wcNamePO=wcLabel(poCol).toLowerCase();
-      let bestIdx=-1;
-      for(let i=ops.length-1;i>=0;i--){if(ops[i].wcName.toLowerCase()===wcNamePO){bestIdx=i;break;}}
-      if(bestIdx<0)continue;
-      wipAtIdx.set(bestIdx,(wipAtIdx.get(bestIdx)||0)+wipQty);
-    }
-
-    // Per-WC needing (exact calcExecTime logic)
-    const wcOps=[];const wcSeen=new Set();
-    for(let i=0;i<ops.length;i++){
-      const op=ops[i];if(!op.wcName)continue;
-      let alreadyDone=onHand;
-      for(const[seqIdx,qty] of wipAtIdx){if(seqIdx>i)alreadyDone+=qty;}
-      const needing=Math.max(0,unitsNeeded-alreadyDone);
-      if(needing<=0)continue;
-      // WIP shown = only WIP AT or BEFORE this WC (upstream), not downstream
-      let wipDisplayed=0;
-      const wipBreakdown={};
-      for(const[seqIdx,qty] of wipAtIdx){
-        if(seqIdx<=i&&qty>0){
-          wipDisplayed+=qty;
-          const wcN=ops[seqIdx]?.wcName||'Op '+seqIdx;
-          wipBreakdown[wcN]=(wipBreakdown[wcN]||0)+qty;
-        }
-      }
-      const ex=wcOps.find(w=>w.wcName===op.wcName);
-      if(ex){ex.runTime+=op.runT;ex.wcToProduceQty=needing;ex.wcMinutes=(ex.runTime*needing+ex.setupTime)/(eff/100);}
-      else wcOps.push({wcName:op.wcName,runTime:op.runT,setupTime:op.setupT,
-        wcToProduceQty:needing,wipDisplayed,wipBreakdown,isSubco:op.isSubco,
-        subcoText:op.t1,supplier:op.sup,
-        wcMinutes:(op.runT*needing+op.setupT)/(eff/100)});
-    }
-    return wcOps.length>0?{wcOps,onHand,wipByWC,wipAtIdx,ops}:null;
-  };
-
-  // ── Sequential stock pool per component ──
-  // Map: matNo → {onHand, wipByWC}  (decremented as OB rows consume stock)
-  const stockPools=new Map();
-  const getPool=(matNo)=>{
-    if(!stockPools.has(matNo)){
-      const s=S.stockIdx?.get(matNo)||{onHand:0,wipByWC:{}};
-      stockPools.set(matNo,{
-        onHand:Math.max(0,s.onHand||0),
-        wipByWC:Object.fromEntries(Object.entries(s.wipByWC||{}).map(([k,v])=>[k,Math.max(0,v||0)]))
-      });
-    }
-    return stockPools.get(matNo);
-  };
-
-  const consumePool=(pool,qty)=>{
-    // Consume qty from pool: onHand first, then WIP from earliest stage
-    let rem=qty;
-    const fromOH=Math.min(pool.onHand,rem);pool.onHand-=fromOH;rem-=fromOH;
-    if(rem>0){
-      for(const k of Object.keys(pool.wipByWC)){
-        if(rem<=0)break;const take=Math.min(pool.wipByWC[k],rem);pool.wipByWC[k]-=take;rem-=take;
-      }
-    }
-  };
-
+  // ── Step 2: Walk BOM for each FP using calcNeeds(total demand) ──
   const result=[];
-  // Track remaining WIP display per (matNo__wcName) across OB rows
-  // Each row "consumes" wcToProduceQty from the WIP display pool for that position
-  const wipDispTracker=new Map(); // key: matNo+'__'+wcName → remaining wip to display
 
-  for(const r of obRows){
-    const fpItemNo=str(r['Item_no']);const openQty=parseFloat(r['Open qty'])||0;
-    const confirmDt=_parseDt(r['Confirm dt']);const confirmWk=str(r['Confirm_week']||'').trim();
-    const obKey=r._obKey||'';const fpCustomer=str(r['Customer_name']||'');
-
-    // Get BOM children via calcNeeds
-    const needs=S.stockIdx?calcNeeds(fpItemNo,openQty):null;
+  for(const [fpItemNo,fd] of fpDemand){
+    if(!fd.totalQty) continue;
+    const needs=S.stockIdx?calcNeeds(fpItemNo,fd.totalQty):null;
     if(!needs) continue;
 
-    // Process FP itself
-    const fpPool=getPool(fpItemNo);
-    const fpCopy={onHand:fpPool.onHand,wipByWC:{...fpPool.wipByWC}};
-    const fpSubcoDays=subcoDaysIdx.get(fpItemNo)||0;
-    const fpStart=_subWD(confirmDt||new Date(),transportDays+prodDays+fpSubcoDays);
-    const fpRes=getComponentOps(fpItemNo,fpItemNo,openQty,fpCopy);
-    if(fpRes?.wcOps?.length){
-      const stock=S.stockIdx?.get(fpItemNo)||{};
-      result.push({fpItemNo,fpCustomer,fpConfirmDt:confirmDt,fpConfirmWk:confirmWk,obKey,
-        fpQty:openQty,matNo:fpItemNo,matName:str(r['Item_name']||''),matDrawing:'',matType:'MAKE',
-        matQtyMult:1,neededQty:openQty,onHandQty:fpPool.onHand,wipQty:Math.max(0,stock.totalWIP||0),
-        toProduceQty:openQty,compSubcoDays:fpSubcoDays,compStartDate:fpStart,compStartWk:_wkKey(fpStart),
-        wcOps:fpRes.wcOps});
-    }
-    consumePool(fpPool,Math.min(fpPool.onHand+Object.values(fpPool.wipByWC).reduce((s,v)=>s+v,0),openQty));
+    // FP itself
+    const fpRawOps=S.bowIdx?.get(`${fpItemNo}__${fpItemNo}`)||[];
+    if(fpRawOps.length) _pushComponentRow(fpItemNo,fpItemNo,str(fd.obRows[0]?.customer||''),fd,
+      fd.totalQty,fd.obRows,needs,subcoDaysIdx,transportDays,prodDays,eff,result);
 
-    // Process each BOM component with sequential stock pools
-    for(const[matNo,need] of needs){
-      if(need.needed<=0)continue;
-      const pool=getPool(matNo);
-      const poolSnapshot={onHand:pool.onHand,wipByWC:{...pool.wipByWC}};
-      const compRes=getComponentOps(fpItemNo,matNo,need.needed,poolSnapshot);
-      if(!compRes?.wcOps?.length){consumePool(pool,Math.min(pool.onHand+Object.values(pool.wipByWC).reduce((s,v)=>s+v,0),need.needed));continue;}
-      // Apply sequential WIP display tracking: each row sees decremented WIP
-      compRes.wcOps.forEach(op=>{
-        const tk=matNo+'__'+(op.wcName||'').toLowerCase().trim();
-        const originalWip=op.wipDisplayed||0;
-        if(!wipDispTracker.has(tk)) wipDispTracker.set(tk,originalWip);
-        const trackedWip=wipDispTracker.get(tk);
-        op.wipDisplayed=trackedWip;
-        // Scale wipBreakdown proportionally to tracked value
-        if(trackedWip!==originalWip&&originalWip>0&&op.wipBreakdown){
-          const scale=trackedWip/originalWip;
-          const scaled={};
-          Object.entries(op.wipBreakdown).forEach(([wcn,q])=>{scaled[wcn]=Math.round(q*scale*10)/10;});
-          op.wipBreakdown=scaled;
-        }
-        // Decrement tracker by what this row needs to produce at this WC
-        wipDispTracker.set(tk,Math.max(0,trackedWip-(op.wcToProduceQty||0)));
-      });
-
-      // Get metadata from BOM
-      const bomRow=[...(S.bomIdx?.values()||[])].flat().find(br=>
-        str(br['Material no'])===matNo&&S.bomIdx?.get(`${fpItemNo}__${fpItemNo}`)?.includes(br));
-      const matName=str(S.stockIdx?.get(matNo)?.name||need.matName||'');
-      const matDrawing='';
-      const compSubcoDays=subcoDaysIdx.get(matNo)||0;
-      const compStart=_subWD(confirmDt||new Date(),transportDays+prodDays+compSubcoDays);
-
-      // Show WIP at each WC from the pool snapshot
-      const stock=S.stockIdx?.get(matNo)||{};
-
-      result.push({fpItemNo,fpCustomer,fpConfirmDt:confirmDt,fpConfirmWk:confirmWk,obKey,
-        fpQty:openQty,matNo,matName,matDrawing,matType:'MAKE',matQtyMult:1,
-        neededQty:need.needed,onHandQty:poolSnapshot.onHand,
-        wipQty:Math.max(0,stock.totalWIP||0),
-        toProduceQty:need.net,
-        compSubcoDays,compStartDate:compStart,compStartWk:_wkKey(compStart),
-        wcOps:compRes.wcOps});
-
-      // Consume from pool for next OB rows
-      consumePool(pool,Math.min(pool.onHand+Object.values(pool.wipByWC).reduce((s,v)=>s+v,0),need.needed));
+    // All BOM components
+    for(const [matNo,need] of needs){
+      if(need.needed<=0) continue;
+      _pushComponentRow(fpItemNo,matNo,str(fd.obRows[0]?.customer||''),fd,
+        need.needed,fd.obRows,needs,subcoDaysIdx,transportDays,prodDays,eff,result);
     }
   }
   return result;
+}
+
+// Helper: build and push one component row
+function _pushComponentRow(fpItemNo,matNo,fpCustomer,fd,unitsNeeded,obRows,
+    needs,subcoDaysIdx,transportDays,prodDays,eff,result){
+  const rawOps=S.bowIdx?.get(`${fpItemNo}__${matNo}`)||[];
+  if(!rawOps.length) return;
+
+  const ops=rawOps.map(op=>({
+    seq:parseFloat(String(op['Ope seq']||'0').replace(',','.'))||0,
+    productSeq:parseFloat(String(op['Product seq']||'0').replace(',','.'))||0,
+    wcName:str(op['Ope name']||op['Ope descr']||''),
+    runT:parseFloat(String(op['Run time']||'0').replace(',','.'))||0,
+    setupT:parseFloat(String(op['Setup time']||'0').replace(',','.'))||0,
+    isSubco:(str(op['Ope name']||op['Ope descr']||'')).toLowerCase()==='subcontracting',
+    t1:str(op['Text_line1']||'').trim(),sup:str(op['Supplier']||'').trim(),
+  })).sort((a,b)=>b.productSeq!==a.productSeq?(b.productSeq-a.productSeq):(a.seq-b.seq));
+
+  const stock=S.stockIdx?.get(matNo)||{onHand:0,wipByWC:{},totalWIP:0};
+  const onHand=Math.max(0,stock.onHand||0);
+  const wipByWC=stock.wipByWC||{};
+
+  // Map WIP to op indices
+  const wipAtIdx=new Map();
+  for(const[poCol,wipQty] of Object.entries(wipByWC)){
+    if(!wipQty||wipQty<=0) continue;
+    const wcNamePO=wcLabel(poCol).toLowerCase();
+    let bestIdx=-1;
+    for(let i=ops.length-1;i>=0;i--){if(ops[i].wcName.toLowerCase()===wcNamePO){bestIdx=i;break;}}
+    if(bestIdx<0) continue;
+    wipAtIdx.set(bestIdx,(wipAtIdx.get(bestIdx)||0)+wipQty);
+  }
+
+  // Per-WC: De produs = max(0, needed - onHand - WIP_after_this_WC)
+  // WIP shown in column = WIP at positions AFTER current WC (already passed through here)
+  const wcOps=[];
+  for(let i=0;i<ops.length;i++){
+    const op=ops[i];if(!op.wcName)continue;
+    let wipAfter=0;
+    const wipBreakdown={}; // WC→qty for WIP at positions > i
+    for(const[seqIdx,qty] of wipAtIdx){
+      if(seqIdx>i&&qty>0){
+        wipAfter+=qty;
+        const wcN=ops[seqIdx]?.wcName||'WC '+seqIdx;
+        wipBreakdown[wcN]=(wipBreakdown[wcN]||0)+qty;
+      }
+    }
+    const needing=Math.max(0,unitsNeeded-onHand-wipAfter);
+    if(needing<=0) continue;
+    const ex=wcOps.find(w=>w.wcName===op.wcName);
+    if(ex){
+      ex.runTime+=op.runT;
+      ex.wcToProduceQty=needing;
+      ex.wipDisplayed=wipAfter;
+      ex.wipBreakdown=wipBreakdown;
+      ex.wcMinutes=(ex.runTime*needing+ex.setupTime)/(eff/100);
+    } else {
+      wcOps.push({wcName:op.wcName,runTime:op.runT,setupTime:op.setupT,
+        wcToProduceQty:needing,wipDisplayed:wipAfter,wipBreakdown,
+        isSubco:op.isSubco,subcoText:op.t1,supplier:op.sup,
+        wcMinutes:(op.runT*needing+op.setupT)/(eff/100)});
+    }
+  }
+  if(!wcOps.length) return;
+
+  // Date ranges from obRows: START = earliest start, Livrare = earliest delivery
+  const compSubcoDays=subcoDaysIdx.get(matNo)||0;
+  const leadDays=transportDays+prodDays+compSubcoDays;
+  const startDates=obRows.map(r=>r.confirmDt?_subWD(r.confirmDt,leadDays):null).filter(Boolean);
+  const compStartDate=startDates.length?startDates.reduce((a,b)=>a<b?a:b):null;
+  const compStartWk=compStartDate?_wkKey(compStartDate):'0Late';
+  const delivDates=obRows.map(r=>r.confirmDt).filter(Boolean);
+  const fpConfirmDt=delivDates.length?delivDates.reduce((a,b)=>a<b?a:b):null;
+
+  // matName/drawing from BOM index
+  const bomRow=[...(S.bomIdx?.values()||[])].flat().find(br=>
+    str(br['Material no'])===matNo);
+  const matName=str(stock.name||bomRow?.['Mat. name']||'');
+  const matDrawing=str(bomRow?.['Mat. drawing']||'').trim();
+
+  result.push({
+    fpItemNo,fpCustomer,fpConfirmDt,fpConfirmWk:obRows[0]?.confirmWk||'',
+    obKey:obRows.map(r=>r.obKey).join(','),
+    fpQty:fd.totalQty,
+    _obRows:obRows, // for popup
+    matNo,matName,matDrawing,matType:'MAKE',matQtyMult:1,
+    neededQty:unitsNeeded,
+    onHandQty:onHand,
+    wipQty:Math.max(0,stock.totalWIP||0),
+    toProduceQty:Math.max(0,unitsNeeded-onHand-(wipAtIdx.size>0?[...wipAtIdx.values()].reduce((s,v)=>s+v,0):0)),
+    compSubcoDays,compStartDate,compStartWk,
+    wcOps
+  });
 }
 
 // ── Get tab buckets ──
@@ -7941,6 +7914,48 @@ td{padding:3px 8px;border:1px solid #e2e8f0;font-size:9pt}
 <table><thead><tr><th>MO</th><th>MO St</th><th>MO Start</th><th>MO Finish</th><th>Order Qty</th><th>Report Qty</th><th>Deschise</th></tr></thead>
 <tbody>${bodyRows}</tbody></table></body></html>`);
   w.document.close();setTimeout(()=>w.print(),400);
+}
+
+function openPV2FpPopup(r, anchorEl){
+  document.getElementById('pv2-fp-popup')?.remove();
+  const rows = r._obRows||[];
+  const pop = dv('');pop.id='pv2-fp-popup';
+  pop.style.cssText='position:fixed;z-index:9999;background:#fff;border:1px solid #c7d2fe;border-radius:10px;box-shadow:0 12px 40px rgba(0,0,0,.2);min-width:500px;max-width:700px;overflow:hidden;font-size:11.5px';
+  const rect=anchorEl.getBoundingClientRect();
+  const top=Math.min(rect.bottom+4, window.innerHeight-280);
+  const left=Math.min(rect.left, window.innerWidth-520);
+  pop.style.top=top+'px';pop.style.left=left+'px';
+
+  const hdr=dv('');hdr.style.cssText='background:#1e3a5f;color:#fff;padding:8px 14px;display:flex;justify-content:space-between;align-items:center';
+  hdr.innerHTML=`<span style="font-weight:800;font-size:12px">📋 ${r.fpItemNo} — ${rows.length} comenzi · Total: ${fmtN(r.fpQty)} buc</span>`;
+  const cls=el('button');cls.textContent='✕';cls.style.cssText='border:none;background:rgba(255,255,255,.2);color:#fff;width:22px;height:22px;border-radius:3px;cursor:pointer;font-size:13px';
+  cls.addEventListener('click',()=>pop.remove());hdr.appendChild(cls);pop.appendChild(hdr);
+
+  const tbl=el('table');tbl.style.cssText='width:100%;border-collapse:collapse;font-size:11px';
+  tbl.innerHTML=`<thead><tr style="background:#f0f4fa">
+    <th style="padding:5px 10px;text-align:left;font-size:9px;font-weight:700;text-transform:uppercase;color:var(--text2)">Nr. Comandă</th>
+    <th style="padding:5px 10px;text-align:left;font-size:9px;font-weight:700;text-transform:uppercase;color:var(--text2)">Client</th>
+    <th style="padding:5px 10px;text-align:center;font-size:9px;font-weight:700;text-transform:uppercase;color:var(--text2)">Confirm Dt</th>
+    <th style="padding:5px 10px;text-align:center;font-size:9px;font-weight:700;text-transform:uppercase;color:var(--text2)">Request Dt</th>
+    <th style="padding:5px 10px;text-align:right;font-size:9px;font-weight:700;text-transform:uppercase;color:var(--text2)">Ordered</th>
+    <th style="padding:5px 10px;text-align:right;font-size:9px;font-weight:700;text-transform:uppercase;color:var(--text2)">Open Qty</th>
+  </tr></thead>`;
+  const tbody=el('tbody');
+  rows.forEach((ob,i)=>{
+    const tr=el('tr');tr.style.background=i%2?'#f8fafc':'#fff';
+    tr.innerHTML=`
+      <td style="padding:4px 10px;font-family:monospace;font-weight:700">${ob.cono||''}${ob.lineNo?' / '+ob.lineNo:''}</td>
+      <td style="padding:4px 10px;color:var(--text2)">${ob.customer}</td>
+      <td style="padding:4px 10px;text-align:center">${_fmtDt(ob.confirmDt)||ob.confirmWk}</td>
+      <td style="padding:4px 10px;text-align:center;color:var(--text3)">${_fmtDt(ob.requestDt)||'—'}</td>
+      <td style="padding:4px 10px;text-align:right;font-weight:600">${fmtN(ob.orderedQty)}</td>
+      <td style="padding:4px 10px;text-align:right;font-weight:700;color:var(--accent)">${fmtN(ob.openQty)}</td>`;
+    tbody.appendChild(tr);
+  });
+  tbl.appendChild(tbody);pop.appendChild(tbl);
+  document.body.appendChild(pop);
+  const close=ev=>{if(!pop.contains(ev.target)&&ev.target!==anchorEl){pop.remove();document.removeEventListener('mousedown',close);}};
+  setTimeout(()=>document.addEventListener('mousedown',close),10);
 }
 function renderPlanV2(){
   try{
@@ -8366,7 +8381,13 @@ function renderPlanV2(){
             td.style.cssText=`padding:4px 8px;text-align:${c.align};overflow:hidden;text-overflow:ellipsis;white-space:nowrap;width:${_cw2}px;max-width:${_cw2+40}px;font-size:${st.zoom/100*11.5}px`;
             td.setAttribute('data-pv2-col',c.key);td.setAttribute('data-pv2-val',String(r[c.key]||''));
             const val=cellVals[c.key]||'—';
-            if(c.key==='fpItemNo'){td.style.fontFamily='monospace';td.style.fontWeight='700';td.textContent=val;}
+            if(c.key==='fpItemNo'){
+              td.style.fontFamily='monospace';td.style.fontWeight='700';
+              td.style.cursor='pointer';td.style.textDecoration='underline dotted';
+              td.title='Click pentru detalii comenzi';
+              td.textContent=val+(r._obRows?.length>1?' ('+r._obRows.length+')':'');
+              td.addEventListener('click',e=>{e.stopPropagation();openPV2FpPopup(r,td);});
+            }
             else if(c.key==='matNo'){const span=dv('pv2-mo-clickable');span.style.fontFamily='monospace';span.style.fontWeight='700';span.textContent=r.matNo;span.title=r.matName||r.matNo;span.addEventListener('click',ev=>{ev.stopPropagation();openPV2MoPopup(r.matNo,r.matName,wc);});td.appendChild(span);}
             else if(c.key==='matDrawing'){td.textContent=r.matDrawing||'—';td.title=r.matDrawing||'';td.style.fontSize=(st.zoom/100*10)+'px';td.style.color=r.matDrawing?'var(--text1)':'#9ca3af';}
             else if(c.key==='fpQty'){td.textContent=val;td.style.fontWeight='600';td.style.color='var(--accent)';}
