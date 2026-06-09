@@ -7724,11 +7724,20 @@ function computePV2Components(transportDays,prodDays){
       if(!compRes?.wcOps?.length){consumePool(pool,Math.min(pool.onHand+Object.values(pool.wipByWC).reduce((s,v)=>s+v,0),need.needed));continue;}
       // Apply sequential WIP display tracking: each row sees decremented WIP
       compRes.wcOps.forEach(op=>{
-        const tk=matNo+'__'+op.wcName;
-        if(!wipDispTracker.has(tk)) wipDispTracker.set(tk,op.wipDisplayed||0);
-        op.wipDisplayed=wipDispTracker.get(tk);
+        const tk=matNo+'__'+(op.wcName||'').toLowerCase().trim();
+        const originalWip=op.wipDisplayed||0;
+        if(!wipDispTracker.has(tk)) wipDispTracker.set(tk,originalWip);
+        const trackedWip=wipDispTracker.get(tk);
+        op.wipDisplayed=trackedWip;
+        // Scale wipBreakdown proportionally to tracked value
+        if(trackedWip!==originalWip&&originalWip>0&&op.wipBreakdown){
+          const scale=trackedWip/originalWip;
+          const scaled={};
+          Object.entries(op.wipBreakdown).forEach(([wcn,q])=>{scaled[wcn]=Math.round(q*scale*10)/10;});
+          op.wipBreakdown=scaled;
+        }
         // Decrement tracker by what this row needs to produce at this WC
-        wipDispTracker.set(tk,Math.max(0,wipDispTracker.get(tk)-op.wcToProduceQty));
+        wipDispTracker.set(tk,Math.max(0,trackedWip-(op.wcToProduceQty||0)));
       });
 
       // Get metadata from BOM
@@ -8369,21 +8378,31 @@ function renderPlanV2(){
               const wipDisp=wcOpForWip?.wipDisplayed!=null?wcOpForWip.wipDisplayed:0;
               td.textContent=wipDisp>0?fmtN(wipDisp):'—';
               td.style.color=wipDisp>0?'#7c3aed':'#9ca3af';td.style.fontWeight='600';
-              if(wipDisp>0&&wcOpForWip?.wipBreakdown&&Object.keys(wcOpForWip.wipBreakdown).length){
-                td.style.cursor='pointer';td.title='Click pentru detalii WIP';
+              if(wipDisp>0){
+                td.style.cursor='pointer';td.title='Click pentru detalii WIP pe Workcenter';
+                td.style.textDecoration='underline dotted';
                 td.addEventListener('click',e=>{
                   e.stopPropagation();
                   document.getElementById('pv2-wip-balloon')?.remove();
                   const bln=dv('');bln.id='pv2-wip-balloon';
-                  bln.style.cssText='position:fixed;z-index:9999;background:#fff;border:1px solid #e2e8f0;border-radius:8px;box-shadow:0 8px 24px rgba(0,0,0,.18);padding:10px 14px;min-width:160px;font-size:11px';
+                  bln.style.cssText='position:fixed;z-index:9999;background:#fff;border:1px solid #c4b5fd;border-radius:8px;box-shadow:0 8px 24px rgba(0,0,0,.2);padding:10px 14px;min-width:180px;font-size:11px';
                   const rect=td.getBoundingClientRect();
-                  bln.style.top=(rect.bottom+4)+'px';bln.style.left=rect.left+'px';
-                  bln.innerHTML='<div style="font-weight:700;margin-bottom:6px;color:#7c3aed">WIP detalii — '+r.matNo+'</div>';
-                  Object.entries(wcOpForWip.wipBreakdown).forEach(([wcn,q])=>{
-                    const row=dv('');row.style.cssText='display:flex;justify-content:space-between;gap:16px;padding:2px 0;border-bottom:1px solid #f1f5f9';
-                    row.innerHTML='<span>'+wcn+'</span><span style="font-weight:700;color:#7c3aed">'+fmtN(q)+'</span>';
-                    bln.appendChild(row);
-                  });
+                  const top=rect.bottom+4;const left=Math.min(rect.left,window.innerWidth-200);
+                  bln.style.top=Math.min(top,window.innerHeight-150)+'px';bln.style.left=left+'px';
+                  bln.innerHTML='<div style="font-weight:800;margin-bottom:8px;color:#7c3aed;font-size:12px">📦 WIP — '+r.matNo+'</div>';
+                  const breakdown=wcOpForWip?.wipBreakdown||{};
+                  if(Object.keys(breakdown).length){
+                    Object.entries(breakdown).forEach(([wcn,q])=>{
+                      if(!q||q<=0)return;
+                      const row=dv('');row.style.cssText='display:flex;justify-content:space-between;gap:16px;padding:3px 0;border-bottom:1px solid #f3f4f6';
+                      row.innerHTML='<span style="color:#374151">'+wcn+'</span><span style="font-weight:700;color:#7c3aed">'+fmtN(q)+'</span>';
+                      bln.appendChild(row);
+                    });
+                  } else {
+                    const tot=dv('');tot.style.cssText='display:flex;justify-content:space-between;gap:16px;padding:3px 0';
+                    tot.innerHTML='<span style="color:#374151">Total WIP</span><span style="font-weight:700;color:#7c3aed">'+fmtN(wipDisp)+'</span>';
+                    bln.appendChild(tot);
+                  }
                   document.body.appendChild(bln);
                   const close=ev=>{if(!bln.contains(ev.target)){bln.remove();document.removeEventListener('mousedown',close);}};
                   setTimeout(()=>document.addEventListener('mousedown',close),10);
