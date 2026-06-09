@@ -1173,6 +1173,10 @@ button { font-family: var(--sans); }
 .pv2-mo-st-badge{display:inline-block;padding:1px 6px;border-radius:3px;font-size:9.5px;font-weight:700}
 .pv2-mo-clickable{cursor:pointer;text-decoration:underline;text-underline-offset:2px;color:var(--accent)}
 .pv2-mo-clickable:hover{color:#1d4ed8}
+
+/* PV2 sticky WC header */
+.pv2-wc-card{position:relative}
+.pv2-wc-sticky-hdr{position:sticky;top:0;z-index:5;background:#1e3a5f;color:#fff;padding:8px 14px;display:flex;justify-content:space-between;align-items:center;box-shadow:0 2px 6px rgba(0,0,0,.25)}
 </style>
 </head>
 <body>
@@ -7547,114 +7551,158 @@ function computePV2Components(transportDays,prodDays){
   const subcoDaysIdx=_buildSubcoDaysIdx();
   const eff=S.planV2State?.efficiency||100;
 
-  // ── Filter OB to allowed weeks ──
+  // Filter OB to allowed weeks
   const _curKey=_currentWkKey();
   const _allowedWks=new Set(['0Late',_curKey,
     getNextWeekKey(_curKey),getNextWeekKey(getNextWeekKey(_curKey)),
     getNextWeekKey(getNextWeekKey(getNextWeekKey(_curKey))),
   ]);
 
+  // Sort OB rows by confirm_dt ascending (oldest first for stock allocation)
+  const obRows=S.obData.filter(r=>{
+    const wk=str(r['Confirm_week']||'').trim();
+    if(!_allowedWks.has(wk))return false;
+    const openQty=parseFloat(r['Open qty'])||0;
+    if(openQty<=0)return false;
+    const confirmDt=_parseDt(r['Confirm dt']);
+    if(!confirmDt&&wk!=='0Late')return false;
+    return true;
+  }).sort((a,b)=>{
+    const da=_parseDt(a['Confirm dt']),db=_parseDt(b['Confirm dt']);
+    if(!da&&!db)return 0;if(!da)return 1;if(!db)return-1;
+    return da-db;
+  });
+
+  // ── Build BOW ops function (exact calcExecTime logic) ──
+  const getComponentOps=(fpItemNo,matNo,unitsNeeded,stockPool)=>{
+    const rawOps=S.bowIdx?.get(`${fpItemNo}__${matNo}`)||[];
+    if(!rawOps.length)return null;
+    const ops=rawOps.map(op=>({
+      seq:parseFloat(String(op['Ope seq']||'0').replace(',','.'))||0,
+      productSeq:parseFloat(String(op['Product seq']||'0').replace(',','.'))||0,
+      wcName:str(op['Ope name']||op['Ope descr']||''),
+      runT:parseFloat(String(op['Run time']||'0').replace(',','.'))||0,
+      setupT:parseFloat(String(op['Setup time']||'0').replace(',','.'))||0,
+      isSubco:(str(op['Ope name']||op['Ope descr']||'')).toLowerCase()==='subcontracting',
+      t1:str(op['Text_line1']||'').trim(),sup:str(op['Supplier']||'').trim(),
+    })).sort((a,b)=>b.productSeq!==a.productSeq?(b.productSeq-a.productSeq):(a.seq-b.seq));
+
+    // Use stockPool (remaining after sequential allocation to earlier OB rows)
+    const onHand=Math.max(0,stockPool.onHand||0);
+    const wipByWC=stockPool.wipByWC||{};
+
+    // Map WIP to op indices
+    const wipAtIdx=new Map();
+    for(const[poCol,wipQty] of Object.entries(wipByWC)){
+      if(!wipQty||wipQty<=0)continue;
+      const wcNamePO=wcLabel(poCol).toLowerCase();
+      let bestIdx=-1;
+      for(let i=ops.length-1;i>=0;i--){if(ops[i].wcName.toLowerCase()===wcNamePO){bestIdx=i;break;}}
+      if(bestIdx<0)continue;
+      wipAtIdx.set(bestIdx,(wipAtIdx.get(bestIdx)||0)+wipQty);
+    }
+
+    // Per-WC needing (exact calcExecTime logic)
+    const wcOps=[];const wcSeen=new Set();
+    for(let i=0;i<ops.length;i++){
+      const op=ops[i];if(!op.wcName)continue;
+      let alreadyDone=onHand;
+      for(const[seqIdx,qty] of wipAtIdx){if(seqIdx>i)alreadyDone+=qty;}
+      const needing=Math.max(0,unitsNeeded-alreadyDone);
+      if(needing<=0)continue;
+      // Per-WC WIP shown = WIP specifically AT this WC
+      const wipAtThisWC=wipAtIdx.get(i)||0;
+      const ex=wcOps.find(w=>w.wcName===op.wcName);
+      if(ex){ex.runTime+=op.runT;ex.wcToProduceQty=needing;ex.wcMinutes=(ex.runTime*needing+ex.setupTime)/(eff/100);}
+      else wcOps.push({wcName:op.wcName,runTime:op.runT,setupTime:op.setupT,
+        wcToProduceQty:needing,wipAtThisWC,isSubco:op.isSubco,
+        subcoText:op.t1,supplier:op.sup,
+        wcMinutes:(op.runT*needing+op.setupT)/(eff/100)});
+    }
+    return wcOps.length>0?{wcOps,onHand,wipByWC,wipAtIdx,ops}:null;
+  };
+
+  // ── Sequential stock pool per component ──
+  // Map: matNo → {onHand, wipByWC}  (decremented as OB rows consume stock)
+  const stockPools=new Map();
+  const getPool=(matNo)=>{
+    if(!stockPools.has(matNo)){
+      const s=S.stockIdx?.get(matNo)||{onHand:0,wipByWC:{}};
+      stockPools.set(matNo,{
+        onHand:Math.max(0,s.onHand||0),
+        wipByWC:Object.fromEntries(Object.entries(s.wipByWC||{}).map(([k,v])=>[k,Math.max(0,v||0)]))
+      });
+    }
+    return stockPools.get(matNo);
+  };
+
+  const consumePool=(pool,qty)=>{
+    // Consume qty from pool: onHand first, then WIP from earliest stage
+    let rem=qty;
+    const fromOH=Math.min(pool.onHand,rem);pool.onHand-=fromOH;rem-=fromOH;
+    if(rem>0){
+      for(const k of Object.keys(pool.wipByWC)){
+        if(rem<=0)break;const take=Math.min(pool.wipByWC[k],rem);pool.wipByWC[k]-=take;rem-=take;
+      }
+    }
+  };
+
   const result=[];
 
-  for(const r of S.obData){
-    const fpItemNo=str(r['Item_no']);
-    const openQty=parseFloat(r['Open qty'])||0;
-    if(!fpItemNo||openQty<=0)continue;
-    const confirmDt=_parseDt(r['Confirm dt']);
-    const confirmWk=str(r['Confirm_week']||'').trim();
-    if(!_allowedWks.has(confirmWk))continue;
-    if(!confirmDt&&confirmWk!=='0Late')continue;
-    const obKey=r._obKey||'';
-    const fpCustomer=str(r['Customer_name']||'');
+  for(const r of obRows){
+    const fpItemNo=str(r['Item_no']);const openQty=parseFloat(r['Open qty'])||0;
+    const confirmDt=_parseDt(r['Confirm dt']);const confirmWk=str(r['Confirm_week']||'').trim();
+    const obKey=r._obKey||'';const fpCustomer=str(r['Customer_name']||'');
 
-    // Use same calcNeeds as Structura to get per-component net needs
+    // Get BOM children via calcNeeds
     const needs=S.stockIdx?calcNeeds(fpItemNo,openQty):null;
     if(!needs) continue;
 
-    // Also get exec time breakdown same as Structura (per WC, per component)
-    // addOpsForComponent logic reused inline
-    const addOpsForComp=(matNo,unitsNeeded)=>{
-      const rawOps=S.bowIdx?.get(`${fpItemNo}__${matNo}`)||[];
-      if(!rawOps.length&&matNo!==fpItemNo)return null;
-      const allOps=rawOps.length?rawOps:S.bowIdx?.get(`${fpItemNo}__${fpItemNo}`)||[];
-      if(!allOps.length)return null;
-
-      const ops=allOps.map(op=>({
-        seq:parseFloat(String(op['Ope seq']||'0').replace(',','.'))||0,
-        productSeq:parseFloat(String(op['Product seq']||'0').replace(',','.'))||0,
-        wcName:str(op['Ope name']||op['Ope descr']||''),
-        runT:parseFloat(String(op['Run time']||'0').replace(',','.'))||0,
-        setupT:parseFloat(String(op['Setup time']||'0').replace(',','.'))||0,
-        isSubco:(str(op['Ope name']||op['Ope descr']||'')).toLowerCase()==='subcontracting',
-        t1:str(op['Text_line1']||'').trim(),sup:str(op['Supplier']||'').trim(),
-      })).sort((a,b)=>b.productSeq!==a.productSeq?(b.productSeq-a.productSeq):(a.seq-b.seq));
-
-      const stock=S.stockIdx?.get(matNo)||{onHand:0,wipByWC:{}};
-      const onHand=Math.max(0,stock.onHand);
-      const wipByWC=stock.wipByWC||{};
-
-      // Same WIP-at-index logic as calcExecTime
-      const wipAtIdx=new Map();
-      for(const[poCol,wipQty] of Object.entries(wipByWC)){
-        if(!wipQty||wipQty<=0)continue;
-        const wcNamePO=wcLabel(poCol).toLowerCase();
-        let bestIdx=-1;
-        for(let i=ops.length-1;i>=0;i--){if(ops[i].wcName.toLowerCase()===wcNamePO){bestIdx=i;break;}}
-        if(bestIdx<0)continue;
-        wipAtIdx.set(bestIdx,(wipAtIdx.get(bestIdx)||0)+wipQty);
-      }
-
-      // Per WC: needing = unitsNeeded - onHand - Σ WIP after this op
-      const wcOps=[];
-      const wcSeen=new Set();
-      for(let i=0;i<ops.length;i++){
-        const op=ops[i];if(!op.wcName)continue;
-        let alreadyDone=onHand;
-        for(const[seqIdx,qty] of wipAtIdx){if(seqIdx>i)alreadyDone+=qty;}
-        const needing=Math.max(0,unitsNeeded-alreadyDone);
-        if(needing<=0)continue; // no work needed at this WC
-        const wcKey=op.wcName;
-        // Sum run for same WC, count setup once
-        const existing=wcOps.find(w=>w.wcName===wcKey);
-        if(existing){existing.runTime+=op.runT;existing.wcToProduceQty=needing;}
-        else{wcOps.push({wcName:wcKey,runTime:op.runT,setupTime:op.setupT,
-          wcToProduceQty:needing,isSubco:op.isSubco,subcoText:op.t1,supplier:op.sup});}
-      }
-      wcOps.forEach(op=>{op.wcMinutes=(op.runTime*op.wcToProduceQty+op.setupTime)/(eff/100);});
-      return {wcOps,onHand,wipQty:Math.max(0,stock.totalWIP||0)};
-    };
-
     // Process FP itself
+    const fpPool=getPool(fpItemNo);
+    const fpCopy={onHand:fpPool.onHand,wipByWC:{...fpPool.wipByWC}};
     const fpSubcoDays=subcoDaysIdx.get(fpItemNo)||0;
-    const fpLeadDays=transportDays+prodDays+fpSubcoDays;
-    const fpStartDate=_subWD(confirmDt||new Date(),fpLeadDays);
-    const fpStartWk=_wkKey(fpStartDate);
-    const fpRes=addOpsForComp(fpItemNo,openQty);
+    const fpStart=_subWD(confirmDt||new Date(),transportDays+prodDays+fpSubcoDays);
+    const fpRes=getComponentOps(fpItemNo,fpItemNo,openQty,fpCopy);
     if(fpRes?.wcOps?.length){
+      const stock=S.stockIdx?.get(fpItemNo)||{};
       result.push({fpItemNo,fpCustomer,fpConfirmDt:confirmDt,fpConfirmWk:confirmWk,obKey,
         fpQty:openQty,matNo:fpItemNo,matName:str(r['Item_name']||''),matDrawing:'',matType:'MAKE',
-        matQtyMult:1,neededQty:openQty,onHandQty:fpRes.onHand,wipQty:fpRes.wipQty,
-        toProduceQty:openQty,compSubcoDays:fpSubcoDays,compStartDate:fpStartDate,compStartWk:fpStartWk,
+        matQtyMult:1,neededQty:openQty,onHandQty:fpPool.onHand,wipQty:Math.max(0,stock.totalWIP||0),
+        toProduceQty:openQty,compSubcoDays:fpSubcoDays,compStartDate:fpStart,compStartWk:_wkKey(fpStart),
         wcOps:fpRes.wcOps});
     }
+    consumePool(fpPool,Math.min(fpPool.onHand+Object.values(fpPool.wipByWC).reduce((s,v)=>s+v,0),openQty));
 
-    // Process each BOM component using calcNeeds results
+    // Process each BOM component with sequential stock pools
     for(const[matNo,need] of needs){
       if(need.needed<=0)continue;
-      const mat=S.bomIdx?.get(`${fpItemNo}__${fpItemNo}`)?.find(r2=>str(r2['Material no'])===matNo);
-      const matName=str(mat?.['Mat. name']||mat?.['Mat desc']||'');
-      const matDrawing=str(mat?.['Mat. drawing']||'').trim();
+      const pool=getPool(matNo);
+      const poolSnapshot={onHand:pool.onHand,wipByWC:{...pool.wipByWC}};
+      const compRes=getComponentOps(fpItemNo,matNo,need.needed,poolSnapshot);
+      if(!compRes?.wcOps?.length){consumePool(pool,Math.min(pool.onHand+Object.values(pool.wipByWC).reduce((s,v)=>s+v,0),need.needed));continue;}
+
+      // Get metadata from BOM
+      const bomRow=[...(S.bomIdx?.values()||[])].flat().find(br=>
+        str(br['Material no'])===matNo&&S.bomIdx?.get(`${fpItemNo}__${fpItemNo}`)?.includes(br));
+      const matName=str(S.stockIdx?.get(matNo)?.name||need.matName||'');
+      const matDrawing='';
       const compSubcoDays=subcoDaysIdx.get(matNo)||0;
-      const compLeadDays=transportDays+prodDays+compSubcoDays;
-      const compStartDate=_subWD(confirmDt||new Date(),compLeadDays);
-      const compStartWk=_wkKey(compStartDate);
-      const compRes=addOpsForComp(matNo,need.needed);
-      if(!compRes?.wcOps?.length)continue;
+      const compStart=_subWD(confirmDt||new Date(),transportDays+prodDays+compSubcoDays);
+
+      // Show WIP at each WC from the pool snapshot
+      const stock=S.stockIdx?.get(matNo)||{};
+
       result.push({fpItemNo,fpCustomer,fpConfirmDt:confirmDt,fpConfirmWk:confirmWk,obKey,
         fpQty:openQty,matNo,matName,matDrawing,matType:'MAKE',matQtyMult:1,
-        neededQty:need.needed,onHandQty:need.onHand,wipQty:need.totalWIP||0,
-        toProduceQty:need.net,compSubcoDays,compStartDate,compStartWk,
+        neededQty:need.needed,onHandQty:poolSnapshot.onHand,
+        wipQty:Math.max(0,stock.totalWIP||0),
+        toProduceQty:need.net,
+        compSubcoDays,compStartDate:compStart,compStartWk:_wkKey(compStart),
         wcOps:compRes.wcOps});
+
+      // Consume from pool for next OB rows
+      consumePool(pool,Math.min(pool.onHand+Object.values(pool.wipByWC).reduce((s,v)=>s+v,0),need.needed));
     }
   }
   return result;
@@ -8011,47 +8059,31 @@ function renderPlanV2(){
 
     let allComponents=[];
 
+    function applyRowFilter(rows){
+      const cf=st.colFilters||{};
+      if(!Object.values(cf).some(v=>v))return rows;
+      const chk=(v,fv)=>!fv||String(v||'').toLowerCase().includes(fv.toLowerCase());
+      return rows.filter(r=>{
+        if(!chk(r.fpItemNo,cf.fpItemNo))return false;
+        if(!chk(r.matNo,cf.matNo))return false;
+        if(!chk(r.matDrawing,cf.matDrawing))return false;
+        if(!chk(r.fpCustomer,cf.fpCustomer))return false;
+        if(cf.subcoText&&!r.wcOps?.some(op=>String(op.subcoText||'').toLowerCase().includes(cf.subcoText.toLowerCase())))return false;
+        if(cf.subcoSupplier&&!r.wcOps?.some(op=>String(op.supplier||'').toLowerCase().includes(cf.subcoSupplier.toLowerCase())))return false;
+        return true;
+      });
+    }
+
     function rebuildAllTbodies(){
-      // Lightweight rebuild: only replace tbody in existing tables, keep thead (and focus)
       document.querySelectorAll('#pv2-drop-zone table[id^="pv2-tbl-"]').forEach(tbl=>{
-        const wcName=tbl.id.replace('pv2-tbl-','').replace(/_/g,' ');
+        const wc=tbl._wc;const visCols_=tbl._visCols;
+        if(!wc||!visCols_)return;
         const oldTbody=tbl.querySelector('tbody');if(!oldTbody)return;
-        // Rebuild tbody using current filters/sort
-        const wcGroup=_currentWcGroups?.get(wcName);if(!wcGroup)return;
-        const preSorted=[...wcGroup].sort((a,b)=>{
-          const pa=parseInt(S.planV2Meta?.priorities?.[a.obKey]||'9999');
-          const pb=parseInt(S.planV2Meta?.priorities?.[b.obKey]||'9999');
-          return pa-pb;
-        });
-        const rows=sortFn(preSorted);
-        const cf=st.colFilters||{};
-        const filteredRows=rows.filter(r=>{
-          const chk=(v,fv)=>!fv||String(v||'').toLowerCase().includes(fv.toLowerCase());
-          if(!chk(r.fpItemNo,cf.fpItemNo))return false;
-          if(!chk(r.matNo,cf.matNo))return false;
-          if(!chk(r.matDrawing,cf.matDrawing))return false;
-          if(!chk(r.fpCustomer,cf.fpCustomer))return false;
-          if(!chk(r.neededQty,cf.neededQty))return false;
-          if(!chk(r.onHandQty,cf.onHandQty))return false;
-          if(!chk(r.wipQty,cf.wipQty))return false;
-          if(!chk(r.toProduceQty,cf.toProduceQty))return false;
-          if(!chk(r.compSubcoDays,cf.compSubcoDays))return false;
-          if(cf.subcoText&&!String(r._subcoText||'').toLowerCase().includes(cf.subcoText.toLowerCase()))return false;
-          if(cf.subcoSupplier&&!String(r._subcoSupplier||'').toLowerCase().includes(cf.subcoSupplier.toLowerCase()))return false;
-          return true;
-        });
-        const newTbody=buildPV2Tbody(filteredRows,tbl._wc||wcName,tbl._visCols||[]);
+        const wcGroup=_currentWcGroups?.get(wc);if(!wcGroup)return;
+        const filtered=applyRowFilter(wcGroup);
+        const newTbody=buildPV2Tbody(filtered,wc,visCols_);
         tbl.replaceChild(newTbody,oldTbody);
       });
-      // Update summary bar
-      const allRows=_currentAllRows||[];
-      const fpS=new Set(allRows.map(c=>c.fpItemNo+c.obKey));
-      const cpS=new Set(allRows.map(c=>c.matNo));
-      const bar=document.getElementById('pv2-summary-bar');
-      if(bar){bar.textContent='';
-        [{l:'FP',v:fpS.size},{l:'Comp',v:cpS.size},{l:'WC',v:document.querySelectorAll('#pv2-drop-zone table[id^="pv2-tbl-"]').length}]
-        .forEach(({l,v})=>{const b=dv('');b.style.cssText='display:inline-flex;align-items:center;gap:4px;padding:2px 8px;background:#f1f5f9;border:1px solid #e2e8f0;border-radius:10px;font-size:10px;font-weight:700;color:var(--text2)';b.innerHTML=`<span style="color:var(--text3)">${l}:</span><span style="color:var(--accent)">${v}</span>`;bar.appendChild(b);});
-      }
     }
     let _currentWcGroups=null,_currentAllRows=null;
     let buildPV2Tbody=null; // will be set during rebuildContent
@@ -8079,24 +8111,7 @@ function renderPlanV2(){
       // Apply column filters BEFORE everything else
       const cf=st.colFilters||{};
       const hasFilter=Object.values(cf).some(v=>v);
-      const filteredComps=hasFilter?visComps.filter(c=>{
-        const chk=(v,fv)=>!fv||String(v||'').toLowerCase().includes(fv.toLowerCase());
-        if(!chk(c.fpItemNo,cf.fpItemNo))return false;
-        if(!chk(c.matNo,cf.matNo))return false;
-        if(!chk(c.matDrawing,cf.matDrawing))return false;
-        if(!chk(c.fpCustomer,cf.fpCustomer))return false;
-        if(!chk(c.neededQty,cf.neededQty))return false;
-        if(!chk(c.onHandQty,cf.onHandQty))return false;
-        if(!chk(c.wipQty,cf.wipQty))return false;
-        if(!chk(c.toProduceQty,cf.toProduceQty))return false;
-        if(!chk(c.compSubcoDays,cf.compSubcoDays))return false;
-        // subco fields: check against any op
-        if(cf.subcoText&&!c.wcOps?.some(op=>op.subcoText?.toLowerCase().includes(cf.subcoText.toLowerCase())))return false;
-        if(cf.subcoSupplier&&!c.wcOps?.some(op=>op.supplier?.toLowerCase().includes(cf.subcoSupplier.toLowerCase())))return false;
-        if(!chk(_fmtDt(c.compStartDate),cf.compStartDate))return false;
-        if(!chk(_fmtDt(c.fpConfirmDt)||c.fpConfirmWk,cf.fpConfirmDt))return false;
-        return true;
-      }):visComps;
+      const filteredComps=hasFilter?applyRowFilter(visComps):visComps;
 
       if(!filteredComps.length){
         contentArea.innerHTML='<div style="padding:24px;color:var(--text3);font-size:12px;text-align:center">Nicio componentă pentru filtrele aplicate.</div>';return;
@@ -8304,8 +8319,8 @@ function renderPlanV2(){
         const wcType=wcTypeMap.get(wc)||'';
         const totalH=rows.reduce((s,r)=>s+(r.wcMinutes||0),0)/60;
         const totalProd=rows.reduce((s,r)=>s+r.toProduceQty,0);
-        const wcCard=dv('');wcCard.style.cssText='background:#fff;border:1px solid var(--border);border-radius:8px;margin-bottom:12px;overflow:hidden;box-shadow:0 1px 4px rgba(0,0,0,.06)';
-        const wcHdrDiv=dv('');wcHdrDiv.style.cssText='background:#1e3a5f;color:#fff;padding:8px 14px;display:flex;justify-content:space-between;align-items:center';
+        const wcCard=dv('pv2-wc-card');wcCard.style.cssText='background:#fff;border:1px solid var(--border);border-radius:8px;margin-bottom:12px;overflow:hidden;box-shadow:0 1px 4px rgba(0,0,0,.06)';
+        const wcHdrDiv=dv('pv2-wc-sticky-hdr');
         wcHdrDiv.innerHTML=`<span style="font-size:13px;font-weight:800">⚙ ${wc}${wcType?' <span style="font-size:9px;opacity:.7;margin-left:6px">['+wcType+']</span>':''}${isSubcoWC?' <span style="background:#f59e0b;color:#fff;font-size:9px;border-radius:3px;padding:1px 5px;margin-left:6px">SUBCO</span>':''}</span><span style="font-size:10px;opacity:.8">${rows.length} comp · ${fmtN(totalProd)} buc · ${totalH.toFixed(1)}h</span>`;
         wcCard.appendChild(wcHdrDiv);
 
