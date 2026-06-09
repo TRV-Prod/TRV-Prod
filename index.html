@@ -7465,8 +7465,15 @@ async function loadPlanV2Meta(){
 }
 function initPlanV2State(){
   if(S.planV2State) return;
-  S.planV2State={transportDays:5,prodDays:7,selectedWk:'current',selectedWC:'all',selectedWCType:'1 Initial Op',colFilters:{},sortCol:'fpItemNo',sortDir:1,zoom:100,hiddenCols:new Set(),colWidths:{},efficiency:100,
-    colOrder:null,qtyEdits:{}};
+  const meta=S.planV2Meta||{};
+  S.planV2State={
+    transportDays: meta.transportDays!=null?meta.transportDays:5,
+    prodDays:      meta.prodDays!=null?meta.prodDays:7,
+    efficiency:    meta.efficiency!=null?meta.efficiency:100,
+    selectedWk:'current',selectedWC:'all',selectedWCType:'1 Initial Op',
+    colFilters:{},sortCol:'fpItemNo',sortDir:1,zoom:100,
+    hiddenCols:new Set(),colWidths:{},colOrder:null,qtyEdits:{}
+  };
   if(!S.planV2Meta) S.planV2Meta={priorities:{},observations:{}};
 }
 
@@ -7877,6 +7884,25 @@ function renderPlanV2(){
     const wcSel=el('select');wcSel.id='pv2-wc-sel';
     wcSel.style.cssText='height:28px;padding:0 8px;border:1px solid var(--border);border-radius:4px;font-size:11px;max-width:180px';
     wcSel.addEventListener('change',()=>{st.selectedWC=wcSel.value;rebuildContent();});
+
+    // Update WC selector when type changes
+    const updateWcOptions=()=>{
+      const prevWC=st.selectedWC;
+      wcSel.innerHTML='';
+      const optAll=el('option');optAll.value='all';optAll.textContent='Toate';wcSel.appendChild(optAll);
+      (S.wcSetupData||[]).forEach(r=>{
+        const wt=str(r['Workcenter Type']||'').trim();
+        if(st.selectedWCType!=='Toate tipurile'&&wt!==st.selectedWCType)return;
+        const wn=str(r['Workcenter name']||'').trim();if(!wn)return;
+        const o=el('option');o.value=wn;o.textContent=wn;
+        if(prevWC===wn)o.selected=true;
+        wcSel.appendChild(o);
+      });
+      if(![...wcSel.options].some(o=>o.value===prevWC)){wcSel.value='all';st.selectedWC='all';}
+    };
+    wcTypeSel.addEventListener('change',()=>{st.selectedWCType=wcTypeSel.value;updateWcOptions();rebuildContent();});
+    updateWcOptions();
+
     g3.appendChild(wcSel);tb.appendChild(g3);
 
     // Column picker button
@@ -8167,6 +8193,48 @@ function renderPlanV2(){
 
       _currentWcGroups=wcGroups;_currentAllRows=filteredComps;
 
+      // ONE global filter bar above all cards
+      const existingFbar=document.getElementById('pv2-global-filter-bar');
+      if(!existingFbar){
+        const fbar=dv('');fbar.id='pv2-global-filter-bar';
+        fbar.style.cssText='display:flex;flex-wrap:wrap;gap:6px;padding:8px 12px;background:#fff;border:1px solid var(--border);border-radius:7px;margin-bottom:10px;align-items:center';
+        fbar.innerHTML='<span style="font-size:9px;font-weight:700;color:var(--text3);text-transform:uppercase;letter-spacing:.06em;white-space:nowrap;margin-right:4px">🔍 Filtrare:</span>';
+        // Add one input per filterable column
+        const filterCols=[
+          {key:'fpItemNo',label:'Produs Final',w:120},
+          {key:'matNo',label:'MOVEX Code',w:110},
+          {key:'matDrawing',label:'Cod extern',w:120},
+          {key:'fpCustomer',label:'Client',w:110},
+          {key:'subcoText',label:'Tip Subco',w:110},
+          {key:'subcoSupplier',label:'Furnizor',w:110},
+        ];
+        filterCols.forEach(fc=>{
+          const wrap=dv('');wrap.style.cssText='display:flex;align-items:center;gap:3px';
+          const lbl=dv('');lbl.style.cssText='font-size:9px;font-weight:600;color:var(--text3);white-space:nowrap';lbl.textContent=fc.label+':';
+          const inp=el('input');inp.type='text';inp.placeholder='...';
+          inp.value=st.colFilters[fc.key]||'';
+          inp.setAttribute('data-pv2-filter-col',fc.key);
+          inp.style.cssText=`width:${fc.w}px;height:26px;padding:0 7px;border:1px solid ${st.colFilters[fc.key]?'var(--accent)':'var(--border)'};border-radius:4px;font-size:10.5px`;
+          inp.addEventListener('input',e=>{
+            const v=e.target.value;const col=fc.key;
+            const ss=inp.selectionStart,se=inp.selectionEnd;
+            if(!st.colFilters)st.colFilters={};
+            if(v)st.colFilters[col]=v;else delete st.colFilters[col];
+            inp.style.borderColor=v?'var(--accent)':'var(--border)';
+            rebuildAllTbodies();
+            requestAnimationFrame(()=>{
+              const i2=document.querySelector(`input[data-pv2-filter-col="${col}"]`);
+              if(i2){i2.focus();try{i2.setSelectionRange(ss,se);}catch(_){}}
+            });
+          });
+          wrap.appendChild(lbl);wrap.appendChild(inp);fbar.appendChild(wrap);
+        });
+        const clearBtn=el('button','tbtn');clearBtn.textContent='✕ Clear';clearBtn.style.cssText='height:26px;padding:0 8px;font-size:10px;border-color:#dc2626;color:#dc2626';
+        clearBtn.addEventListener('click',()=>{st.colFilters={};rebuildContent();});
+        fbar.appendChild(clearBtn);
+        contentArea.appendChild(fbar);
+      }
+
       // tbody builder function (used by rebuildAllTbodies too)
       buildPV2Tbody=(rows,wc,visCols_)=>{
         const tbody=el('tbody');
@@ -8280,34 +8348,6 @@ function renderPlanV2(){
           hr.appendChild(th);
         });
         thead.appendChild(hr);
-        // Filter row
-        const fr=el('tr');fr.style.background='#0f2540';
-        visCols.forEach(c=>{
-          const fth=el('th');fth.style.cssText='padding:2px 4px;border-right:1px solid #2d4e7a';
-          const finp=el('input');finp.type='text';finp.placeholder='Filtrează...';
-          finp.value=st.colFilters[c.key]||'';
-          finp.setAttribute('data-pv2-filter-col',c.key);
-          finp.style.cssText='width:100%;height:20px;padding:0 5px;border:none;border-radius:2px;font-size:9.5px;background:rgba(255,255,255,.15);color:#fff;box-sizing:border-box';
-          finp.addEventListener('focus',()=>finp.style.background='rgba(255,255,255,.9)');
-          finp.addEventListener('blur',()=>{finp.style.background='rgba(255,255,255,.15)';finp.style.color='#fff';});
-          finp.addEventListener('input',e=>{
-            const v=e.target.value;
-            const col=c.key;
-            const selStart=finp.selectionStart,selEnd=finp.selectionEnd;
-            if(!st.colFilters)st.colFilters={};
-            if(v)st.colFilters[col]=v;else delete st.colFilters[col];
-            // Rebuild only tbodies — do NOT rebuild thead (would lose focus)
-            rebuildAllTbodies();
-            // Restore focus and cursor position after DOM update
-            requestAnimationFrame(()=>{
-              const inp2=document.querySelector(`input[data-pv2-filter-col="${col}"]`);
-              if(inp2){inp2.focus();try{inp2.setSelectionRange(selStart,selEnd);}catch(_){}}
-            });
-          });
-          finp.addEventListener('click',ev=>ev.stopPropagation());
-          fth.appendChild(finp);fr.appendChild(fth);
-        });
-        thead.appendChild(fr);
         tbl.appendChild(thead);
 
         const tbody=el('tbody');
@@ -10139,8 +10179,8 @@ function buildPwcData(eff){
         if(needs){
           const needEntry=needs.get(matNo);
           if(!needEntry)continue; // not in needs = parent stock covered this branch
-          neededQty=needEntry.net; // net = after deducting onHand + WIP
-          if(neededQty<=0)continue; // skip if stock covers this component
+          neededQty=needEntry.needed; // GROSS needed — processComp does per-WC WIP deduction
+          if(neededQty<=0)continue;
         } else {
           neededQty=parentQty*unQty;
           if(neededQty<=0)continue;
