@@ -8335,9 +8335,9 @@ function renderPlanV2(){
             compSubcoDays:r.compSubcoDays>0?r.compSubcoDays+'z':'—',
             subcoText:wcOpInfo?.isSubco?(wcOpInfo.subcoText||'—'):'—',
             subcoSupplier:wcOpInfo?.isSubco?(wcOpInfo.supplier||'—'):'—',
-            compStartDate:r._agg&&r._dates?.length>1?r._dates.map(d=>_fmtDt(d.startDt)+(d.qty?' - '+fmtN(d.qty)+'buc':'')).join(', '):(_fmtDt(r.compStartDate)||'URGENT'),
+            compStartDate:_fmtDt(r.compStartDate)||'URGENT',
             wcMinutes:r.wcMinutes>0?fmtBowTime(r.wcMinutes):'—',
-            fpConfirmDt:r._agg&&r._dates?.length>1?r._dates.map(d=>_fmtDt(d.delivDt)+(d.qty?' - '+fmtN(d.qty)+'buc':'')).join(', '):(_fmtDt(r.fpConfirmDt)||r.fpConfirmWk),
+            fpConfirmDt:_fmtDt(r.fpConfirmDt)||r.fpConfirmWk,
             priority:'',obs:'',
           };
           (visCols_||visCols).forEach(c=>{
@@ -8430,33 +8430,8 @@ function renderPlanV2(){
           return (wcTypeMap.get(wc)||'')===(st.selectedWCType);
         })
         .sort((a,b)=>wcSortFn(a[0],b[0])).forEach(([wc,rows_raw])=>{
-        // Filter out rows where De produs = 0 at this WC
-        const rows_pos=rows_raw.filter(r=>(r.wcToProduceQty??r.toProduceQty)>0);
-        // Aggregate same fpItemNo+matNo across multiple OB rows
-        const aggMap=new Map();
-        rows_pos.forEach(r=>{
-          const aggKey=r.fpItemNo+'__'+r.matNo;
-          const op=r.wcOps?.find(o=>o.wcName===wc);
-          const rQty=op?.wcToProduceQty??r.wcToProduceQty??r.toProduceQty??0;
-          const rNeed=r.neededQty??0;
-          if(!aggMap.has(aggKey)){
-            // Initialize with first row data, reset wipQty to 0 (will accumulate below)
-            aggMap.set(aggKey,{...r,
-              wcToProduceQty:rQty,neededQty:rNeed,wipQty:0,
-              _dates:[],_agg:true,_initialized:true});
-          } else {
-            const a=aggMap.get(aggKey);
-            a.wcToProduceQty=(a.wcToProduceQty||0)+rQty;
-            a.neededQty=(a.neededQty||0)+rNeed;
-            a.onHandQty=0;
-          }
-          const a=aggMap.get(aggKey);
-          a.wipQty=(a.wipQty||0)+(op?.wipDisplayed||0);
-          if(r.compStartDate||r.fpConfirmDt){
-            a._dates.push({startDt:r.compStartDate,delivDt:r.fpConfirmDt,qty:rQty,wk:r.compStartWk});
-          }
-        });
-        const rows=[...aggMap.values()];
+        // Show each OB row separately — hide only where De produs = 0
+        const rows=rows_raw.filter(r=>(r.wcToProduceQty??r.toProduceQty)>0);
         if(!rows.length)return;
         // Find subco info for this WC (if it's subcontracting)
         const sampleOp=filteredComps.find(c=>c.wcOps.some(op=>op.wcName===wc))?.wcOps.find(op=>op.wcName===wc);
