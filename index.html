@@ -7389,25 +7389,37 @@ td{padding:3px 7px;border:1px solid #e2e8f0;font-size:8pt}
 
 
 function copyToClipboard(text, menuEl){
-  const doClose=()=>{if(menuEl&&menuEl.parentNode)menuEl.remove();};
+  // Strip any accidental HTML tags, get clean plain text
+  const clean=String(text||'').replace(/<[^>]*>/g,'').trim();
+  if(!clean)return;
+  // Close menu immediately — before async operation
+  if(menuEl&&menuEl.parentNode)menuEl.remove();
+  // Direct clipboard write — must be called synchronously in click handler
   if(navigator.clipboard&&window.isSecureContext){
-    navigator.clipboard.writeText(text).then(()=>{
-      showToast('Copiat: '+text.slice(0,40)+(text.length>40?'…':''),'ok',1500);
-      doClose();
-    }).catch(()=>fallbackCopy(text,menuEl,doClose));
+    navigator.clipboard.writeText(clean)
+      .then(()=>showToast('✓ Copiat în clipboard','ok',1400))
+      .catch(()=>_legacyCopy(clean));
   } else {
-    fallbackCopy(text,menuEl,doClose);
+    _legacyCopy(clean);
   }
 }
-function fallbackCopy(text,menuEl,cb){
+function _legacyCopy(text){
+  // Textarea fallback — guaranteed plain text
   const ta=document.createElement('textarea');
-  ta.value=text;ta.style.cssText='position:fixed;opacity:0;top:0;left:0';
-  document.body.appendChild(ta);ta.focus();ta.select();
-  try{
-    document.execCommand('copy');
-    showToast('Copiat: '+text.slice(0,40)+(text.length>40?'…':''),'ok',1500);
-  }catch(e){showToast('Copiere eșuată','err',2000);}
-  ta.remove();cb&&cb();
+  ta.value=text;
+  ta.setAttribute('readonly','');
+  ta.style.cssText='position:fixed;top:50%;left:50%;width:2px;height:2px;padding:0;border:none;outline:none;box-shadow:none;background:transparent;opacity:0';
+  document.body.appendChild(ta);
+  ta.focus();ta.select();
+  ta.setSelectionRange(0,ta.value.length);
+  let ok=false;
+  try{ok=document.execCommand('copy');}catch(_){}
+  document.body.removeChild(ta);
+  if(ok){showToast('✓ Copiat în clipboard','ok',1400);}
+  else{
+    // Last resort: prompt lets user copy manually
+    window.prompt('Copiați manual (Ctrl+C):',text);
+  }
 }
 function fmtBowTime(minutes){
   if(!minutes||minutes<=0)return'—';
@@ -8116,7 +8128,7 @@ function renderPlanV2(){
       // Don't destroy inputs while user is editing priority/obs/qty fields
       const fa=document.activeElement;
       if(fa&&(fa.getAttribute('data-pv2-prio-key')||fa.getAttribute('data-pv2-obs-key')||fa.closest('td[data-pv2-col="toProduceQty"]')))return;
-      document.querySelectorAll('#pv2-drop-zone table[id^="pv2-tbl-"]').forEach(tbl=>{
+      document.querySelectorAll('#pv2-content table[id^="pv2-tbl-"]').forEach(tbl=>{
         const wc=tbl._wc;const visCols_=tbl._visCols;
         if(!wc||!visCols_)return;
         const oldTbody=tbl.querySelector('tbody');if(!oldTbody)return;
@@ -8323,9 +8335,9 @@ function renderPlanV2(){
             compSubcoDays:r.compSubcoDays>0?r.compSubcoDays+'z':'—',
             subcoText:wcOpInfo?.isSubco?(wcOpInfo.subcoText||'—'):'—',
             subcoSupplier:wcOpInfo?.isSubco?(wcOpInfo.supplier||'—'):'—',
-            compStartDate:r._agg&&r._dates?.length>1?r._dates.map(d=>_fmtDt(d.startDt)+(d.qty?' - '+fmtN(d.qty)+'buc':'')).join(' | '):(_fmtDt(r.compStartDate)||'URGENT'),
+            compStartDate:r._agg&&r._dates?.length>1?r._dates.map(d=>_fmtDt(d.startDt)+(d.qty?' - '+fmtN(d.qty)+'buc':'')).join(', '):(_fmtDt(r.compStartDate)||'URGENT'),
             wcMinutes:r.wcMinutes>0?fmtBowTime(r.wcMinutes):'—',
-            fpConfirmDt:r._agg&&r._dates?.length>1?r._dates.map(d=>_fmtDt(d.delivDt)+(d.qty?' - '+fmtN(d.qty)+'buc':'')).join(' | '):(_fmtDt(r.fpConfirmDt)||r.fpConfirmWk),
+            fpConfirmDt:r._agg&&r._dates?.length>1?r._dates.map(d=>_fmtDt(d.delivDt)+(d.qty?' - '+fmtN(d.qty)+'buc':'')).join(', '):(_fmtDt(r.fpConfirmDt)||r.fpConfirmWk),
             priority:'',obs:'',
           };
           (visCols_||visCols).forEach(c=>{
@@ -8342,10 +8354,11 @@ function renderPlanV2(){
             else if(c.key==='onHandQty'){td.textContent=val;td.style.color=r.onHandQty>0?'#15803d':'#9ca3af';td.style.fontWeight='600';}
             else if(c.key==='wipQty'){
               const wcOpForWip=r.wcOps?.find(op=>op.wcName===wc);
-              const wipDisp=wcOpForWip?.wipDisplayed??r.wipQty;
+              // Only show WIP at or upstream of this WC (wipDisplayed), not total WIP
+              const wipDisp=wcOpForWip?.wipDisplayed!=null?wcOpForWip.wipDisplayed:0;
               td.textContent=wipDisp>0?fmtN(wipDisp):'—';
               td.style.color=wipDisp>0?'#7c3aed':'#9ca3af';td.style.fontWeight='600';
-              if(wipDisp>0&&wcOpForWip?.wipBreakdown){
+              if(wipDisp>0&&wcOpForWip?.wipBreakdown&&Object.keys(wcOpForWip.wipBreakdown).length){
                 td.style.cursor='pointer';td.title='Click pentru detalii WIP';
                 td.addEventListener('click',e=>{
                   e.stopPropagation();
@@ -8423,26 +8436,22 @@ function renderPlanV2(){
         const aggMap=new Map();
         rows_pos.forEach(r=>{
           const aggKey=r.fpItemNo+'__'+r.matNo;
-          if(!aggMap.has(aggKey)){
-            aggMap.set(aggKey,{...r,
-              _dates:[],  // [{date,qty,wk}] for concatenation
-              _agg:true});
-          }
-          const a=aggMap.get(aggKey);
           const op=r.wcOps?.find(o=>o.wcName===wc);
           const rQty=op?.wcToProduceQty??r.wcToProduceQty??r.toProduceQty??0;
           const rNeed=r.neededQty??0;
-          // Accumulate
-          if(!a._initialized){
-            a.wcToProduceQty=rQty;a.neededQty=rNeed;a.onHandQty=r.onHandQty;
-            a._wcOp=op;a._initialized=true;
+          if(!aggMap.has(aggKey)){
+            // Initialize with first row data, reset wipQty to 0 (will accumulate below)
+            aggMap.set(aggKey,{...r,
+              wcToProduceQty:rQty,neededQty:rNeed,wipQty:0,
+              _dates:[],_agg:true,_initialized:true});
           } else {
+            const a=aggMap.get(aggKey);
             a.wcToProduceQty=(a.wcToProduceQty||0)+rQty;
             a.neededQty=(a.neededQty||0)+rNeed;
-            a.onHandQty=0; // consumed by first row
+            a.onHandQty=0;
           }
+          const a=aggMap.get(aggKey);
           a.wipQty=(a.wipQty||0)+(op?.wipDisplayed||0);
-          // Collect dates
           if(r.compStartDate||r.fpConfirmDt){
             a._dates.push({startDt:r.compStartDate,delivDt:r.fpConfirmDt,qty:rQty,wk:r.compStartWk});
           }
