@@ -8306,7 +8306,26 @@ function renderPlanV2(){
             else if(c.key==='compStartDate'){td.textContent=val;td.style.cssText+=';'+urgCls;}
             else if(c.key==='wcMinutes'){td.textContent=val;td.style.color='#0369a1';td.style.fontWeight='600';}
             else if(c.key==='fpConfirmDt'){td.textContent=val;td.style.color='var(--text2)';}
-            else if(c.key==='priority'){td.style.overflow='visible';td.style.padding='2px 4px';const inp=el('input');inp.type='number';inp.min=1;inp.max=999;inp.value=S.planV2Meta?.priorities?.[r.obKey]||'';inp.placeholder='—';inp.style.cssText='width:60px;height:24px;padding:0 4px;border:1px solid var(--border);border-radius:3px;font-size:11px;text-align:center;font-weight:700;color:var(--accent)';inp.addEventListener('blur',async()=>{if(!S.planV2Meta)S.planV2Meta={priorities:{},observations:{}};const v=parseInt(inp.value)||0;if(v>0)S.planV2Meta.priorities[r.obKey]=v;else delete S.planV2Meta.priorities[r.obKey];await savePlanV2Meta();rebuildContent();});td.appendChild(inp);}
+            else if(c.key==='priority'){
+              td.style.overflow='visible';td.style.padding='2px 4px';
+              const inp=el('input');inp.type='text';
+              const curPrio=S.planV2Meta?.priorities?.[r.obKey]||'';
+              inp.value=curPrio;inp.placeholder='—';
+              inp.style.cssText='width:70px;height:24px;padding:0 5px;border:1px solid '+(curPrio?'var(--accent)':'var(--border)')+';border-radius:3px;font-size:11px;text-align:center;font-weight:700;color:var(--accent)';
+              inp.addEventListener('input',()=>{inp.style.borderColor=inp.value.trim()?'var(--accent)':'var(--border)';});
+              inp.addEventListener('blur',async()=>{
+                if(!S.planV2Meta)S.planV2Meta={priorities:{},observations:{}};
+                const v=inp.value.trim();
+                if(v)S.planV2Meta.priorities[r.obKey]=v;
+                else delete S.planV2Meta.priorities[r.obKey];
+                savePlanV2Meta(); // fire-and-forget, don't await
+                // Lightweight sort re-apply without full rebuild
+                const allPrioInputs=document.querySelectorAll('[data-pv2-prio-key="'+r.obKey+'"]');
+                allPrioInputs.forEach(el2=>{if(el2!==inp)el2.value=v;});
+              });
+              inp.setAttribute('data-pv2-prio-key',r.obKey);
+              td.appendChild(inp);
+            }
             else if(c.key==='obs'){td.style.overflow='visible';td.style.padding='2px 4px';const inp=el('input');inp.type='text';inp.value=S.planV2Meta?.observations?.[r.obKey]||'';inp.placeholder='Observații...';inp.style.cssText='width:100%;min-width:150px;height:24px;padding:0 6px;border:1px solid var(--border);border-radius:3px;font-size:11px';inp.addEventListener('blur',async()=>{if(!S.planV2Meta)S.planV2Meta={priorities:{},observations:{}};if(inp.value.trim())S.planV2Meta.observations[r.obKey]=inp.value.trim();else delete S.planV2Meta.observations[r.obKey];await savePlanV2Meta();});td.appendChild(inp);}
             else td.textContent=val;
             tr.appendChild(td);
