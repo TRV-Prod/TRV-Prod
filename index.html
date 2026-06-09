@@ -8045,7 +8045,19 @@ function renderPlanV2(){
     const excelBtn=el('button','tbtn');excelBtn.style.cssText='border-color:#16a34a;color:#15803d;background:#f0fdf4';
     excelBtn.innerHTML='⬇ Excel';excelBtn.addEventListener('click',()=>exportPV2Excel(st));
     const pdfBtn=el('button','tbtn');pdfBtn.innerHTML='🖨 PDF';pdfBtn.addEventListener('click',()=>printPV2(st));
-    g4.appendChild(excelBtn);g4.appendChild(pdfBtn);tb.appendChild(g4);
+    const clearPrioBtn=el('button','tbtn');clearPrioBtn.innerHTML='🗑 Golește priorități';
+    clearPrioBtn.style.cssText='border-color:#dc2626;color:#dc2626';
+    clearPrioBtn.addEventListener('click',()=>{
+      if(!confirm('Golești toate prioritățile din Planificare V2?'))return;
+      if(!S.planV2Meta)S.planV2Meta={priorities:{},observations:{}};
+      S.planV2Meta.priorities={};
+      savePlanV2Meta();
+      // Clear all priority inputs in DOM without full rebuild
+      document.querySelectorAll('[data-pv2-prio-key]').forEach(inp=>{
+        inp.value='';inp.style.borderColor='var(--border)';
+      });
+    });
+    g4.appendChild(clearPrioBtn);g4.appendChild(excelBtn);g4.appendChild(pdfBtn);tb.appendChild(g4);
     page.appendChild(tb);
 
     // ── TABS + CONTENT ──
@@ -8316,20 +8328,26 @@ function renderPlanV2(){
               inp.type='text';inp.autocomplete='off';inp.spellcheck=false;
               inp.value=S.planV2Meta?.priorities?.[r.obKey]||'';
               inp.placeholder='—';
-              inp.style.cssText='width:70px;height:24px;padding:0 5px;border:1px solid var(--border);border-radius:3px;font-size:11px;text-align:center;font-weight:700;color:var(--accent);background:#fff';
-              // Stop all event propagation so container doesn't intercept
-              ['input','keydown','keyup','change','click'].forEach(ev2=>{
-                inp.addEventListener(ev2,e=>e.stopPropagation());
-              });
-              inp.addEventListener('change',()=>{
+              inp.style.cssText='width:70px;height:24px;padding:0 5px;border:1px solid '+(S.planV2Meta?.priorities?.[r.obKey]?'var(--accent)':'var(--border)')+';border-radius:3px;font-size:11px;text-align:center;font-weight:700;color:var(--accent);background:#fff';
+              // Stop propagation to prevent container rebuilds while typing
+              ['input','keydown','keyup','change','click'].forEach(ev2=>inp.addEventListener(ev2,e=>e.stopPropagation()));
+              const savePrio=()=>{
                 if(!S.planV2Meta)S.planV2Meta={priorities:{},observations:{}};
                 const v=inp.value.trim();
                 if(v)S.planV2Meta.priorities[r.obKey]=v;
                 else delete S.planV2Meta.priorities[r.obKey];
                 inp.style.borderColor=v?'var(--accent)':'var(--border)';
-                // Sync to all other priority inputs for same obKey
-                document.querySelectorAll('[data-pv2-prio-key="'+r.obKey+'"]').forEach(el2=>{if(el2!==inp)el2.value=v;});
+                document.querySelectorAll('[data-pv2-prio-key="'+r.obKey+'"]').forEach(el2=>{if(el2!==inp){el2.value=v;el2.style.borderColor=v?'var(--accent)':'var(--border)';}});
                 savePlanV2Meta();
+              };
+              // Save on every change AND on blur (catches delete/clear)
+              inp.addEventListener('change',savePrio);
+              inp.addEventListener('blur',savePrio);
+              // Also handle Delete/Backspace to clear immediately
+              inp.addEventListener('keydown',e=>{
+                if((e.key==='Delete'||e.key==='Backspace')&&inp.value.length<=1){
+                  setTimeout(()=>{if(!inp.value.trim())savePrio();},0);
+                }
               });
               td.appendChild(inp);
             }
