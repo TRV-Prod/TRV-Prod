@@ -7686,6 +7686,9 @@ function computePV2Components(transportDays,prodDays){
   };
 
   const result=[];
+  // Track remaining WIP display per (matNo__wcName) across OB rows
+  // Each row "consumes" wcToProduceQty from the WIP display pool for that position
+  const wipDispTracker=new Map(); // key: matNo+'__'+wcName → remaining wip to display
 
   for(const r of obRows){
     const fpItemNo=str(r['Item_no']);const openQty=parseFloat(r['Open qty'])||0;
@@ -7719,6 +7722,14 @@ function computePV2Components(transportDays,prodDays){
       const poolSnapshot={onHand:pool.onHand,wipByWC:{...pool.wipByWC}};
       const compRes=getComponentOps(fpItemNo,matNo,need.needed,poolSnapshot);
       if(!compRes?.wcOps?.length){consumePool(pool,Math.min(pool.onHand+Object.values(pool.wipByWC).reduce((s,v)=>s+v,0),need.needed));continue;}
+      // Apply sequential WIP display tracking: each row sees decremented WIP
+      compRes.wcOps.forEach(op=>{
+        const tk=matNo+'__'+op.wcName;
+        if(!wipDispTracker.has(tk)) wipDispTracker.set(tk,op.wipDisplayed||0);
+        op.wipDisplayed=wipDispTracker.get(tk);
+        // Decrement tracker by what this row needs to produce at this WC
+        wipDispTracker.set(tk,Math.max(0,wipDispTracker.get(tk)-op.wcToProduceQty));
+      });
 
       // Get metadata from BOM
       const bomRow=[...(S.bomIdx?.values()||[])].flat().find(br=>
