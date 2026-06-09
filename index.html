@@ -7472,7 +7472,7 @@ function initPlanV2State(){
   const meta=S.planV2Meta||{};
   S.planV2State={
     transportDays: meta.transportDays!=null?meta.transportDays:5,
-    prodDays:      meta.prodDays!=null?meta.prodDays:7,
+    prodDays:      meta.prodDays!=null?meta.prodDays:5,
     efficiency:    meta.efficiency!=null?meta.efficiency:100,
     selectedWk:'current',selectedWC:'all',selectedWCType:'1 Initial Op',
     colFilters:{},sortCol:'fpItemNo',sortDir:1,zoom:100,
@@ -8147,8 +8147,13 @@ function renderPlanV2(){
           const existIdx=g.findIndex(e=>e._key===key);
           const wcOpInfo_=c.wcOps?.find(op=>op.wcName===wcName);
           if(existIdx<0) g.push({...c,_key:key,wcName,wcMinutes,
+            wcToProduceQty:wcOpInfo_?.wcToProduceQty??c.toProduceQty,
             _subcoText:wcOpInfo_?.subcoText||'',_subcoSupplier:wcOpInfo_?.supplier||''});
-          else{g[existIdx].wcMinutes+=wcMinutes;}
+          else{
+            const prevRow=g[existIdx];prevRow.wcMinutes+=wcMinutes;
+            // Keep the per-WC quantity (same component might have been pushed twice)
+            if(wcOpInfo_?.wcToProduceQty!=null)prevRow.wcToProduceQty=wcOpInfo_.wcToProduceQty;
+          }
         });
       });
 
@@ -8247,6 +8252,11 @@ function renderPlanV2(){
         const clearBtn=el('button','tbtn');clearBtn.textContent='✕ Clear';clearBtn.style.cssText='height:26px;padding:0 8px;font-size:10px;border-color:#dc2626;color:#dc2626';
         clearBtn.addEventListener('click',()=>{st.colFilters={};rebuildContent();});
         fbar.appendChild(clearBtn);
+        const searchBtn=el('button','tbtn');searchBtn.textContent='🔍 Caută';searchBtn.style.cssText='height:26px;padding:0 8px;font-size:10px;border-color:var(--accent);color:var(--accent)';
+        searchBtn.addEventListener('click',()=>rebuildContent());
+        fbar.appendChild(searchBtn);
+        // Enter key in any filter input triggers rebuildContent
+        fbar.addEventListener('keydown',ev=>{if(ev.key==='Enter')rebuildContent();});
         contentArea.appendChild(fbar);
       }
 
@@ -8311,7 +8321,9 @@ function renderPlanV2(){
           if(st.selectedWCType==='Toate tipurile')return true;
           return (wcTypeMap.get(wc)||'')===(st.selectedWCType);
         })
-        .sort((a,b)=>wcSortFn(a[0],b[0])).forEach(([wc,rows])=>{
+        .sort((a,b)=>wcSortFn(a[0],b[0])).forEach(([wc,rows_raw])=>{
+        // Filter out rows where De produs = 0 at this WC (nothing left to process)
+        const rows=rows_raw.filter(r=>(r.wcToProduceQty??r.toProduceQty)>0);
         if(!rows.length)return;
         // Find subco info for this WC (if it's subcontracting)
         const sampleOp=filteredComps.find(c=>c.wcOps.some(op=>op.wcName===wc))?.wcOps.find(op=>op.wcName===wc);
@@ -8409,7 +8421,8 @@ function renderPlanV2(){
             else if(c.key==='fpQty'){td.textContent=val;td.style.fontWeight='600';td.style.color='var(--accent)';}
             else if(c.key==='toProduceQty'){
               td.style.overflow='visible';td.style.padding='2px 4px';
-              const baseQty=Math.round((r.wcToProduceQty!=null?r.wcToProduceQty:r.toProduceQty)*10)/10;
+              const wcOpInfo4Qty=r.wcOps?.find(op=>op.wcName===wc);
+              const baseQty=Math.round((wcOpInfo4Qty?.wcToProduceQty??r.wcToProduceQty??r.toProduceQty)*10)/10;
               const editKey=r.obKey+'__'+r.matNo;
               const curQty=(st.qtyEdits&&st.qtyEdits[editKey]!=null)?st.qtyEdits[editKey]:baseQty;
               const qInp=el('input');qInp.type='number';qInp.min=0;qInp.step='any';
