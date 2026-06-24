@@ -2221,6 +2221,192 @@ function calcTotalExecTime(fpCode, inputQty){
   return {totalRun, totalSetup, total:totalRun+totalSetup, byWC};
 }
 
+
+/* ═══════════════════════════════════════════════════════════════
+   EXPORT STRUCTURA → PDF (print-friendly window with tree connectors)
+═══════════════════════════════════════════════════════════════ */
+function exportStructuraPDF(){
+  if(!S.selFP){alert('Selectați un produs final.');return;}
+  const fp=S.fps.find(f=>f.code===S.selFP);
+  const tree=buildTree(S.selFP,S.selFP);
+  const fpOps=S.bowIdx?(S.bowIdx.get(`${S.selFP}__${S.selFP}`)||[]):[];
+  const needs=S.stockIdx?calcNeeds(S.selFP,S.qtyInput):null;
+  const ignoreStock=!!S.structIgnoreStock;
+
+  // ── Recursive HTML builder, always fully expanded for export ──
+  function buildOpsRowsHtml(ops,matNo,depth){
+    if(!ops||!ops.length) return '';
+    const unitsNeeded = matNo===S.selFP ? S.qtyInput : Math.max(0,needs?.get(matNo)?.needed??0);
+    const stock = ignoreStock?null:S.stockIdx?.get(matNo);
+    const sortedOps=[...ops].map(op=>({
+      seq:parseFloat(String(op['Ope seq']||'0').replace(',','.'))||0,
+      productSeq:parseFloat(String(op['Product seq']||'0').replace(',','.'))||0,
+      runT:parseFloat(String(op['Run time']||'0').replace(',','.'))||0,
+      setupT:parseFloat(String(op['Setup time']||'0').replace(',','.'))||0,
+      wcName:str(op['Ope name']||op['Ope descr']||''),
+      isSubco:(str(op['Ope name']||op['Ope descr']||'')).toLowerCase()==='subcontracting',
+      t1:str(op['Text_line1']||'').trim(),sup:str(op['Supplier']||'').trim(),
+      _orig:op,
+    })).sort((a,b)=>b.productSeq!==a.productSeq?(b.productSeq-a.productSeq):(a.seq-b.seq));
+    const wipAtIdx=new Map();
+    if(stock&&!ignoreStock){
+      for(const[poCol,wq] of Object.entries(stock.wipByWC||{})){
+        if(!wq||wq<=0)continue;
+        const wcNP=wcLabel(poCol).toLowerCase();
+        let bestIdx=-1;
+        for(let i=sortedOps.length-1;i>=0;i--){if(sortedOps[i].wcName.toLowerCase()===wcNP){bestIdx=i;break;}}
+        if(bestIdx>=0)wipAtIdx.set(bestIdx,(wipAtIdx.get(bestIdx)||0)+wq);
+      }
+    }
+    let rowsHtml='';
+    sortedOps.forEach((op,i)=>{
+      let needing;
+      if(ignoreStock) needing=unitsNeeded;
+      else{
+        let done=Math.max(0,stock?.onHand||0);
+        for(const[si,wq] of wipAtIdx){if(si>i)done+=wq;}
+        needing=Math.max(0,unitsNeeded-done);
+      }
+      const indent=(depth+1)*16;
+      rowsHtml+=`<tr class="op-row"><td style="padding-left:${indent}px" colspan="2">
+        <span class="op-ico">⚙</span> ${op.wcName}
+        ${op.isSubco?'<span class="op-subco-tag">SUBCO'+(op.t1?': '+op.t1:'')+(op.sup?' · '+op.sup:'')+'</span>':''}
+      </td>
+      <td style="text-align:right">${needing>0?fmtN(needing)+' buc':'—'}</td>
+      <td style="text-align:right">${fmtMin(op.runT*needing)}</td>
+      <td style="text-align:right">${fmtMin(op.setupT)}</td>
+      </tr>`;
+    });
+    return rowsHtml;
+  }
+
+  function buildNodeHtml(node, isLastSibling, ancestorLines){
+    const hasCh=node.children.length>0||node.ops.length>0;
+    const stock = ignoreStock?null:S.stockIdx?.get(node.matNo);
+    const need = needs?.get(node.matNo);
+
+    // Connector cells: one per ancestor depth + this node's own elbow
+    let connectors='';
+    for(let i=0;i<node.depth;i++){
+      const drawLine = ancestorLines[i];
+      connectors+=`<td class="conn-cell">${drawLine?'<div class="conn-vline"></div>':''}</td>`;
+    }
+    // This node's own connector: vertical (if has children, extends down) + horizontal elbow
+    connectors+=`<td class="conn-cell">
+      <div class="conn-elbow"></div>
+      ${hasCh?'<div class="conn-vline-down"></div>':''}
+    </td>`;
+
+    const qtyStr = node.qty!=null ? fmtQty(node.qty,node.unit) : '';
+    let stockHtml='';
+    if(!ignoreStock&&stock){
+      const oh=stock.onHand??0, wip=stock.totalWIP??0;
+      stockHtml+=`<span class="stk-pill ${oh<0?'neg':'oh'}">📦 OH: ${fmtN(oh)}</span>`;
+      if(wip) stockHtml+=`<span class="stk-pill ${wip<0?'neg':'wip'}">🔄 WIP: ${fmtN(wip)}</span>`;
+      if(need){
+        const ok=need.net===0;
+        stockHtml+=`<span class="stk-pill ${ok?'ok':'miss'}">${ok?'✓ Acoperit':'⚠ Lipsă: '+fmtN(need.net)}</span>`;
+      }
+    } else if(ignoreStock&&need){
+      stockHtml+=`<span class="stk-pill miss">⚠ Necesar: ${fmtN(need.needed)} (de la 0)</span>`;
+    }
+
+    let html=`<tr class="node-row depth-${node.depth}">
+      ${connectors}
+      <td class="node-main" colspan="${10-node.depth}">
+        <span class="n-code ${node.isMake?'':'buy'}">${node.matNo}</span>
+        ${node.matDraw?`<span class="n-draw">⇒ ${node.matDraw}</span>`:''}
+        ${node.matName?`<span class="n-desc">${node.matName}</span>`:''}
+        ${qtyStr?`<span class="n-qty">${qtyStr}</span>`:''}
+        <span class="n-type ${node.isMake?'make':'buy'}">${node.matType||'BUY'}</span>
+        ${stockHtml}
+      </td>
+    </tr>`;
+
+    // Operations (if any) — shown as sub-rows
+    if(node.ops.length){
+      html+=buildOpsRowsHtml(node.ops,node.matNo,node.depth);
+    }
+
+    // Children — recurse
+    node.children.forEach((child,ci)=>{
+      const childIsLast = ci===node.children.length-1;
+      const newAncestorLines=[...ancestorLines,!isLastSibling];
+      html+=buildNodeHtml(child, childIsLast, newAncestorLines);
+    });
+
+    return html;
+  }
+
+  // Build FP root row (depth -1 equivalent, no connectors)
+  let bodyHtml = `<tr class="node-row fp-row"><td class="node-main" colspan="10">
+    <span class="n-code fp">${S.selFP}</span>
+    ${fp?.drawing?`<span class="n-draw">⇒ ${fp.drawing}</span>`:''}
+    ${fp?.name?`<span class="n-desc">${fp.name}</span>`:''}
+    <span class="n-qty">${fmtN(S.qtyInput)} buc</span>
+  </td></tr>`;
+  if(fpOps.length) bodyHtml+=buildOpsRowsHtml(fpOps,S.selFP,-1);
+  tree.forEach((node,i)=>{
+    bodyHtml+=buildNodeHtml(node, i===tree.length-1, []);
+  });
+
+  const execTimeRaw=S.bowIdx?calcExecTime(S.selFP,S.qtyInput,needs):null;
+  const eff=(S.efficienta||100)/100;
+  const execTotal=execTimeRaw?execTimeRaw.total/eff:0;
+
+  const w=window.open('','_blank','width=1300,height=900');
+  if(!w){alert('Permiteți popup-urile pentru export.');return;}
+
+  w.document.write(`<!DOCTYPE html><html><head><meta charset="UTF-8"><title>Structura ${S.selFP}</title>
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:Arial,sans-serif;font-size:9pt;padding:10mm;color:#1e293b}
+h2{font-size:14pt;margin-bottom:2px}
+p.sub{font-size:8.5pt;color:#666;margin-bottom:10px}
+table{width:100%;border-collapse:collapse}
+.node-row td{padding:3px 2px;vertical-align:middle;border-bottom:1px solid #f1f5f9}
+.fp-row{background:#eff6ff}
+.fp-row td{padding:8px 6px;border-bottom:2px solid #1e3a5f}
+.conn-cell{width:16px;min-width:16px;position:relative;height:24px;padding:0!important}
+.conn-vline{position:absolute;left:8px;top:0;bottom:0;width:1.3px;background:#94a3b8}
+.conn-vline-down{position:absolute;left:8px;top:50%;bottom:0;width:1.3px;background:#94a3b8}
+.conn-elbow{position:absolute;left:8px;top:0;width:9px;height:50%;border-left:1.3px solid #94a3b8;border-bottom:1.3px solid #94a3b8}
+.node-main{padding-left:4px!important}
+.n-code{font-weight:800;font-family:monospace;font-size:9pt;color:#1e3a5f}
+.n-code.fp{font-size:11pt;color:#1e3a5f}
+.n-code.buy{color:#15803d}
+.n-draw{color:#7c3aed;font-size:8pt;margin-left:6px}
+.n-desc{color:#475569;font-size:8.5pt;margin-left:6px}
+.n-qty{font-weight:700;color:#dc2626;margin-left:8px;font-size:8.5pt}
+.n-type{display:inline-block;margin-left:6px;padding:1px 5px;border-radius:3px;font-size:7pt;font-weight:700}
+.n-type.make{background:#dbeafe;color:#1d4ed8}
+.n-type.buy{background:#dcfce7;color:#15803d}
+.stk-pill{display:inline-block;margin-left:6px;padding:1px 6px;border-radius:9px;font-size:7.5pt;font-weight:600;border:1px solid}
+.stk-pill.oh{background:#e0f2fe;color:#0369a1;border-color:#7dd3fc}
+.stk-pill.wip{background:#ede9fe;color:#7c3aed;border-color:#c4b5fd}
+.stk-pill.ok{background:#dcfce7;color:#15803d;border-color:#86efac}
+.stk-pill.miss{background:#fef2f2;color:#dc2626;border-color:#fca5a5}
+.stk-pill.neg{background:#fef2f2;color:#dc2626;border-color:#fca5a5}
+.op-row td{font-size:8pt;color:#475569;padding:2px 2px}
+.op-ico{color:#7c3aed;margin-right:3px}
+.op-subco-tag{display:inline-block;margin-left:6px;padding:1px 5px;border-radius:3px;background:#fef3c7;color:#92400e;font-size:7pt;font-weight:700;border:1px solid #fde68a}
+.summary-bar{display:flex;gap:14px;margin-bottom:10px;padding:8px 12px;background:#f8fafc;border:1px solid #e2e8f0;border-radius:6px;font-size:8.5pt}
+.summary-bar b{color:#1e3a5f}
+@page{size:A3 landscape;margin:8mm}
+@media print{ tr{page-break-inside:avoid} }
+</style></head><body>
+<h2>Structura BOM — ${S.selFP}${fp?.name?' · '+fp.name:''}</h2>
+<p class="sub">Cantitate: ${fmtN(S.qtyInput)} buc · Eficiență: ${S.efficienta}%${ignoreStock?' · ⚠ Stocuri ignorate (calcul de la 0)':''} · ${new Date().toLocaleDateString('ro-RO')} ${new Date().toLocaleTimeString('ro-RO')}</p>
+<div class="summary-bar">
+  <span>Timp total execuție: <b>${fmtMin(execTotal)}</b></span>
+</div>
+<table><tbody>${bodyHtml}</tbody></table>
+</body></html>`);
+  w.document.close();
+  w.document.title = S.selFP; // used as default PDF filename suggestion by browser print dialog
+  setTimeout(()=>w.print(),600);
+}
+
 /*
   mkOpsGroup — renders a collapsible operations block.
   opsId: unique key used in S.expOps to track expand state
@@ -3377,7 +3563,9 @@ function renderStructura(){
   const tbr=dv('tb-r');
   const bx=el('button','tbtn');bx.textContent='⊞ Extinde tot';bx.onclick=()=>{expandAll(buildTree(S.selFP,S.selFP));reTree();};
   const bc=el('button','tbtn');bc.textContent='⊟ Colaseaza tot';bc.onclick=()=>{S.exp=new Set();S.expOps=new Set();reTree();};
-  tbr.appendChild(bx);tbr.appendChild(bc);
+  const bpdf=el('button','tbtn');bpdf.textContent='🖨 Export PDF';bpdf.style.cssText='border-color:#dc2626;color:#dc2626';
+  bpdf.onclick=()=>exportStructuraPDF();
+  tbr.appendChild(bx);tbr.appendChild(bc);tbr.appendChild(bpdf);
   tbr.appendChild(mkZoomCtrl('structura'));
   tb.appendChild(tbr);cnt.appendChild(tb);
 
