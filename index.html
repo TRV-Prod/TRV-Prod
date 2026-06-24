@@ -1207,6 +1207,7 @@ const S={
   fps:[],selFP:null,q:'',
   exp:new Set(),expOps:new Set(),
   qtyInput:1,
+  structIgnoreStock:false,
   efficienta:100,
   stockFilter:{q:'',type:'all',onlyWip:false,onlyZero:false,onlyNeg:false,sortCol:'fp',sortDir:1,
     colOrder:['fp','code','name','type','oh','mo','wip','wc'],
@@ -2051,30 +2052,32 @@ function applyZoom(tabId){
 ────────────────────────────────────────────────────────────────────── */
 function calcNeeds(fpCode, inputQty){
   const needs = new Map();
+  const ignoreStock = !!S.structIgnoreStock;
   const fpStock = S.stockIdx?.get(fpCode)||{onHand:0,totalWIP:0};
-  // Negative stock treated as 0 for calculation
-  const fpAvail = Math.max(0, fpStock.onHand) + Math.max(0, fpStock.totalWIP);
+  // Negative stock treated as 0 for calculation; if ignoring stock, avail is always 0
+  const fpAvail = ignoreStock ? 0 : (Math.max(0, fpStock.onHand) + Math.max(0, fpStock.totalWIP));
   const fpNeed = Math.max(0, inputQty - fpAvail);
-  _calcNodeNeeds(fpCode, fpCode, fpNeed, needs);
+  _calcNodeNeeds(fpCode, fpCode, fpNeed, needs, ignoreStock);
   return needs;
 }
 
-function _calcNodeNeeds(fpCtx, compNo, parentNeed, needs){
+function _calcNodeNeeds(fpCtx, compNo, parentNeed, needs, ignoreStock){
+  ignoreStock = ignoreStock || !!S.structIgnoreStock;
   const rows = S.bomIdx?.get(`${fpCtx}__${compNo}`) || [];
   for(const row of rows){
     const matNo = str(row['Material no']);
     const unQty = parseFloat(row['Material qty']) || 1;
     const needed = parentNeed * unQty;
-    const stock = S.stockIdx?.get(matNo) || {onHand:0,totalWIP:0};
+    const stock = ignoreStock ? {onHand:0,totalWIP:0} : (S.stockIdx?.get(matNo) || {onHand:0,totalWIP:0});
     // Negative stock = treat as 0 for calculation purposes (shown in red in UI but not subtracted)
-    const onHand = Math.max(0, stock.onHand);
-    const totalWIP = Math.max(0, stock.totalWIP);
-    const avail = onHand + totalWIP;
+    const onHand = ignoreStock ? 0 : Math.max(0, stock.onHand);
+    const totalWIP = ignoreStock ? 0 : Math.max(0, stock.totalWIP);
+    const avail = ignoreStock ? 0 : (onHand + totalWIP);
     const net = Math.max(0, needed - avail);
-    needs.set(matNo, {needed, onHand:stock.onHand, totalWIP:stock.totalWIP, net, avail});
+    needs.set(matNo, {needed, onHand:ignoreStock?0:stock.onHand, totalWIP:ignoreStock?0:stock.totalWIP, net, avail});
     const childParentNeed = net;
     if(childParentNeed > 0 && (S.bomIdx?.get(`${fpCtx}__${matNo}`) || []).length > 0){
-      _calcNodeNeeds(fpCtx, matNo, childParentNeed, needs);
+      _calcNodeNeeds(fpCtx, matNo, childParentNeed, needs, ignoreStock);
     }
   }
 }
@@ -2104,6 +2107,7 @@ function calcExecTime(fpCode, inputQty, needs){
   function addOpsForComponent(fpCtxCode, matNo, unitsNeeded){
     const rawOps = S.bowIdx?.get(`${fpCtxCode}__${matNo}`) || [];
     if(!rawOps.length) return;
+    const ignoreStock = !!S.structIgnoreStock;
 
     const ops = rawOps.map(op=>({
       seq:    parseFloat(String(op['Ope seq']||'0').replace(',','.')) || 0,
@@ -2112,6 +2116,14 @@ function calcExecTime(fpCode, inputQty, needs){
       runT:   parseFloat(String(op['Run time']||'0').replace(',','.')) || 0,
       setupT: parseFloat(String(op['Setup time']||'0').replace(',','.')) || 0,
     })).sort((a,b)=>b.productSeq!==a.productSeq?(b.productSeq-a.productSeq):(a.seq-b.seq));
+
+    if(ignoreStock){
+      // No stock considered: every operation needs the full unitsNeeded
+      for(let i=0;i<ops.length;i++){
+        if(unitsNeeded>0) acc(ops[i].wcName, unitsNeeded, ops[i].runT, ops[i].setupT);
+      }
+      return;
+    }
 
     const stock  = S.stockIdx?.get(matNo) || {onHand:0,wipByWC:{}};
     const onHand = Math.max(0, stock.onHand);
@@ -2225,7 +2237,7 @@ function mkOpsGroup(opsId, ops, depth, color, matNo){
   const tog=el('div',`n-tog${isExpOps?' open':''}`);tog.textContent='▶';hrow.appendChild(tog);
   const inner=el('div','n-inner');
   const badge=el('span','ops-group-badge');badge.textContent=`⚙ ${ops.length} operat${ops.length===1?'ie':'ii'}`;inner.appendChild(badge);
-  const stock=S.stockIdx?.get(matNo);
+  const stock=S.structIgnoreStock?null:S.stockIdx?.get(matNo);
   if(stock&&stock.totalWIP>0){const wb=sp('stk-badge stk-wip',`WIP ${fmtN(stock.totalWIP)}`);wb.style.marginLeft='8px';inner.appendChild(wb);}
   hrow.appendChild(inner);
   hrow.addEventListener('click',()=>{S.expOps.has(opsId)?S.expOps.delete(opsId):S.expOps.add(opsId);reTree();});
@@ -2246,7 +2258,7 @@ function mkOpsGroup(opsId, ops, depth, color, matNo){
       _orig:op,
     })).sort((a,b)=>b.productSeq!==a.productSeq?(b.productSeq-a.productSeq):(a.seq-b.seq));
     const wipAtIdx=new Map();
-    if(stock){
+    if(stock&&!S.structIgnoreStock){
       for(const [poCol,wipQty] of Object.entries(stock.wipByWC||{})){
         if(!wipQty||wipQty<=0)continue;
         const wcNP=wcLabel(poCol).toLowerCase();
@@ -2256,6 +2268,7 @@ function mkOpsGroup(opsId, ops, depth, color, matNo){
       }
     }
     const needingPerOp=sortedOps.map((_,i)=>{
+      if(S.structIgnoreStock) return Math.max(0,unitsNeeded);
       let done=Math.max(0,stock?.onHand||0);
       for(const [si,wq] of wipAtIdx){if(si>i)done+=wq;}
       return Math.max(0,unitsNeeded-done);
@@ -2339,8 +2352,8 @@ function mkNode(node){
   if(q)inner.appendChild(sp('n-qty',' '+q));
   inner.appendChild(sp(`n-tag ${node.isMake?'make':'buy'}`,node.matType||'BUY'));
 
-  // ── Stock + Requirement badges ──
-  if(S.stockIdx){
+  // ── Stock + Requirement badges (hidden entirely when ignoring stock) ──
+  if(S.stockIdx&&!S.structIgnoreStock){
     const stock=S.stockIdx.get(node.matNo);
     const need=_needs?.get(node.matNo);
     const srow=el('div','stock-row');
@@ -2357,6 +2370,12 @@ function mkNode(node){
       const label=need.net===0?`✓ Acoperit`:`⚠ Necesar: ${fmtN(need.needed)} | Lipsă: ${fmtN(need.net)}`;
       srow.appendChild(sp(`stk-badge ${cls}`,label));
     }
+    inner.appendChild(srow);
+  } else if(S.structIgnoreStock&&_needs?.get(node.matNo)){
+    // Show only the needed quantity, no stock info
+    const need=_needs.get(node.matNo);
+    const srow=el('div','stock-row');
+    srow.appendChild(sp('stk-badge stk-need-miss',`⚠ Necesar: ${fmtN(need.needed)} buc (de la 0)`));
     inner.appendChild(srow);
   }
   row.appendChild(inner);
@@ -2507,8 +2526,8 @@ function reTree(){
   if(fp?.drawing)fpr.appendChild(sp('fp-hdr-draw',fp.drawing));
   fph.appendChild(fpr);
 
-  // Stock row
-  if(S.stockIdx){
+  // Stock row (hidden entirely when ignoring stock)
+  if(S.stockIdx&&!S.structIgnoreStock){
     const fpStock=S.stockIdx.get(S.selFP)||{onHand:0,totalWIP:0};
     const fpNet=Math.max(0,S.qtyInput - Math.max(0,fpStock.onHand) - Math.max(0,fpStock.totalWIP));
     const srow=el('div','stock-row');srow.style.marginTop='4px';
@@ -2524,6 +2543,10 @@ function reTree(){
       for(const [wc,qty] of Object.entries(fpStock.wipByWC)) wcRow.appendChild(sp('wip-wc-badge',`${wcLabel(wc)}: ${fmtN(qty)}`));
       fph.appendChild(wcRow);
     }
+  } else if(S.structIgnoreStock&&S.qtyInput>0){
+    const srow=el('div','stock-row');srow.style.marginTop='4px';
+    srow.appendChild(sp('stk-badge stk-need-miss',`⚠ De produs: ${fmtN(S.qtyInput)} buc (de la 0, stoc ignorat)`));
+    fph.appendChild(srow);
   }
 
   // ── Execution time breakdown panel ──
@@ -3335,6 +3358,21 @@ function renderStructura(){
   ew.appendChild(ei);
   ew.appendChild(sp('eff-unit','%'));
   tb.appendChild(ew);
+
+  // Ignore-stock checkbox
+  const isw=dv('ignore-stock-wrap');
+  isw.style.cssText='display:flex;align-items:center;gap:6px;margin-left:8px';
+  const isLbl=el('label');isLbl.style.cssText='display:flex;align-items:center;gap:5px;cursor:pointer;font-size:11px;font-weight:600;color:var(--text2);user-select:none';
+  const isCb=el('input');isCb.type='checkbox';isCb.checked=!!S.structIgnoreStock;
+  isCb.style.cssText='width:15px;height:15px;cursor:pointer;accent-color:var(--accent)';
+  isCb.addEventListener('change',()=>{
+    S.structIgnoreStock=isCb.checked;
+    reTree();
+  });
+  isLbl.appendChild(isCb);
+  isLbl.appendChild(document.createTextNode('Ignoră stocurile (calcul de la 0)'));
+  isw.appendChild(isLbl);
+  tb.appendChild(isw);
 
   const tbr=dv('tb-r');
   const bx=el('button','tbtn');bx.textContent='⊞ Extinde tot';bx.onclick=()=>{expandAll(buildTree(S.selFP,S.selFP));reTree();};
