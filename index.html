@@ -1177,6 +1177,21 @@ button { font-family: var(--sans); }
 /* PV2 sticky WC header */
 .pv2-wc-card{position:relative}
 .pv2-wc-sticky-hdr{position:sticky;top:0;z-index:5;background:#1e3a5f;color:#fff;padding:8px 14px;display:flex;justify-content:space-between;align-items:center;box-shadow:0 2px 6px rgba(0,0,0,.25)}
+
+/* ── Scanner balloon overlay ── */
+.scan-balloon-overlay{position:fixed;inset:0;background:rgba(0,0,0,.5);z-index:9500;display:flex;align-items:flex-end;justify-content:center}
+.scan-balloon{background:#fff;border-radius:16px 16px 0 0;width:100%;max-width:680px;max-height:90vh;display:flex;flex-direction:column;box-shadow:0 -8px 40px rgba(0,0,0,.25)}
+.scan-balloon-hdr{display:flex;align-items:center;justify-content:space-between;padding:14px 18px 10px;border-bottom:1px solid var(--border);flex-shrink:0}
+.scan-balloon-title{font-size:14px;font-weight:800;color:var(--text)}
+.scan-balloon-close{width:30px;height:30px;border:none;background:#f1f5f9;color:#475569;border-radius:50%;cursor:pointer;font-size:16px;display:flex;align-items:center;justify-content:center}
+.scan-balloon-body{flex:1;overflow-y:auto;padding:14px 18px}
+.scan-fp-pill-lg{display:inline-flex;align-items:center;gap:6px;padding:8px 14px;border-radius:8px;background:#eff6ff;border:1.5px solid #bfdbfe;color:#1e40af;font-size:16px;font-weight:800;font-family:Arial,monospace;cursor:pointer;margin:4px 2px;user-select:none;transition:all .15s}
+.scan-fp-pill-lg:hover{background:#dbeafe;border-color:#93c5fd}
+.scan-plan-row{display:flex;flex-direction:column;gap:2px;padding:10px 0;border-bottom:1px solid #f1f5f9}
+.scan-plan-row:last-child{border-bottom:none}
+.scan-plan-fp{font-size:17px;font-weight:800;font-family:Arial,monospace;color:#1e3a5f}
+.scan-plan-detail{font-size:13px;color:#475569}
+.scan-plan-qty{font-size:20px;font-weight:900;color:#dc2626}
 </style>
 </head>
 <body>
@@ -9119,6 +9134,86 @@ ${html}</body></html>`);
 }
 
 
+
+function getMatQtyInFP(fpCode, matNo){
+  // Find matQty for matNo within fpCode BOM
+  if(!S.bomIdx) return 1;
+  for(const [key, rows] of S.bomIdx){
+    if(!key.startsWith(fpCode+'__')) continue;
+    const row=rows.find(r=>str(r['Material no'])===matNo);
+    if(row) return parseFloat(String(row['Material qty']||'1').replace(',','.'))||1;
+  }
+  return 1;
+}
+
+function openScanBalloon(title, bodyFn){
+  document.getElementById('scan-balloon-overlay')?.remove();
+  const ov=dv('scan-balloon-overlay');ov.id='scan-balloon-overlay';
+  const bl=dv('scan-balloon');
+  const hdr=dv('scan-balloon-hdr');
+  const ttl=dv('scan-balloon-title');ttl.textContent=title;
+  const cls=el('button','scan-balloon-close');cls.innerHTML='✕';
+  cls.addEventListener('click',()=>ov.remove());
+  hdr.appendChild(ttl);hdr.appendChild(cls);bl.appendChild(hdr);
+  const body=dv('scan-balloon-body');bodyFn(body);
+  bl.appendChild(body);ov.appendChild(bl);
+  ov.addEventListener('click',e=>{if(e.target===ov)ov.remove();});
+  document.body.appendChild(ov);
+}
+
+function openBomBalloon(fpCode, fpName){
+  openScanBalloon('🌳 Structura BOM — '+fpCode, body=>{
+    if(!S.bomIdx||!S.bowIdx){body.innerHTML='<p style="color:var(--text3);text-align:center;padding:20px">Fișierele BOM/BOW nu sunt încărcate.</p>';return;}
+    // Save/restore current FP state
+    const prevFP=S.selFP, prevQty=S.qtyInput;
+    S.selFP=fpCode; S.qtyInput=1;
+    const needs=S.stockIdx?calcNeeds(fpCode,1):null;
+    const treeData=buildTree(fpCode,fpCode);
+    // Render simplified tree into balloon
+    function renderNode(node, depth){
+      const wrap=dv('');
+      const row=dv('');row.style.cssText=`display:flex;align-items:flex-start;padding:4px 0;padding-left:${depth*16}px;border-bottom:1px solid #f8fafc`;
+      const connector=depth>0?`<span style="color:#d1d5db;margin-right:4px;font-family:monospace">${'│  '.repeat(depth-1)}└─</span>`:'';
+      const isMake=node.isMake;
+      const need=needs?.get(node.matNo);
+      const stock=S.stockIdx?.get(node.matNo);
+      const oh=stock?.onHand??'—';const wip=stock?.totalWIP??'—';
+      row.innerHTML=`${connector}
+        <span style="font-family:monospace;font-weight:700;font-size:13px;color:${isMake?'#6d28d9':'#065f46'}">${node.matNo}</span>
+        ${node.matDraw?`<span style="color:#9ca3af;font-size:11px;margin-left:5px">⇒${node.matDraw}</span>`:''}
+        ${node.matName?`<span style="color:#6b7280;font-size:11px;margin-left:5px">${node.matName}</span>`:''}
+        ${node.qty!=null?`<span style="color:#dc2626;font-size:11px;margin-left:6px;font-style:italic">${fmtQty(node.qty,node.unit)}</span>`:''}
+        ${need?`<span style="margin-left:8px;padding:1px 5px;border-radius:2px;font-size:9.5px;font-weight:600;background:${need.net===0?'#dcfce7':'#fee2e2'};color:${need.net===0?'#14532d':'#7f1d1d'}">${need.net===0?'✓ OK':'⚠ Lipsă '+fmtN(need.net)}</span>`:''}
+        ${stock?`<span style="margin-left:6px;font-size:9.5px;color:#475569">OH:${fmtN(oh)} WIP:${fmtN(wip)}</span>`:''}
+      `;
+      wrap.appendChild(row);
+      node.children.forEach(ch=>wrap.appendChild(renderNode(ch,depth+1)));
+      return wrap;
+    }
+    if(!treeData.length){body.innerHTML='<p style="color:var(--text3);padding:16px;text-align:center">Nicio componentă BOM găsită.</p>';return;}
+    treeData.forEach(n=>body.appendChild(renderNode(n,0)));
+    S.selFP=prevFP;S.qtyInput=prevQty;
+  });
+}
+
+function openStocBalloon(fpCode){
+  openScanBalloon('📦 Stocuri subcomponente — '+fpCode, body=>{
+    if(!S.stockIdx||!S.bomIdx){body.innerHTML='<p style="color:var(--text3);padding:16px;text-align:center">Fișierele nu sunt încărcate.</p>';return;}
+    const treeData=buildTree(fpCode,fpCode);
+    function collectAll(nodes,out){nodes.forEach(n=>{out.push(n);collectAll(n.children,out);});}
+    const all=[];collectAll(treeData,all);
+    if(!all.length){body.innerHTML='<p style="color:var(--text3);padding:16px;text-align:center">Nicio componentă.</p>';return;}
+    all.forEach(n=>{
+      const stock=S.stockIdx.get(n.matNo)||{onHand:0,totalWIP:0};
+      const row=dv('');row.style.cssText='display:flex;justify-content:space-between;align-items:center;padding:8px 0;border-bottom:1px solid #f1f5f9';
+      const left=dv('');left.innerHTML=`<div style="font-family:monospace;font-weight:700;font-size:13px;color:#1e3a5f">${n.matNo}</div><div style="font-size:10px;color:#6b7280">${n.matName||''}</div>`;
+      const right=dv('');right.style.cssText='display:flex;gap:10px;text-align:right';
+      right.innerHTML=`<div><div style="font-size:9px;color:#94a3b8">ON HAND</div><div style="font-size:16px;font-weight:800;color:${stock.onHand>0?'#15803d':stock.onHand<0?'#dc2626':'#475569'}">${fmtN(stock.onHand)}</div></div>
+        <div><div style="font-size:9px;color:#94a3b8">WIP</div><div style="font-size:16px;font-weight:800;color:${stock.totalWIP>0?'#7c3aed':'#94a3b8'}">${fmtN(stock.totalWIP)}</div></div>`;
+      row.appendChild(left);row.appendChild(right);body.appendChild(row);
+    });
+  });
+}
 function renderScanner(){
   const page=dv('scanner-page');
 
@@ -9154,7 +9249,14 @@ function renderScanner(){
   const inp=el('input','scanner-inp');inp.id='scanner-inp';inp.type='text';inp.placeholder='Cauta cod manual (ex: BTF.RERNWE0079)...';inp.autocomplete='off';
   const searchBtn=el('button','scanner-search-btn');searchBtn.textContent='↵ Cauta';
   manualWrap.appendChild(inp);manualWrap.appendChild(searchBtn);
-  ctrl.appendChild(camBtn);ctrl.appendChild(scanTrigger);ctrl.appendChild(manualWrap);
+  // Zoom for result display
+  const zoomWrap=dv('');zoomWrap.style.cssText='display:flex;align-items:center;gap:4px;padding:0 4px';
+  const zm2=el('button');zm2.textContent='A−';zm2.style.cssText='height:36px;padding:0 10px;border:1px solid var(--border);border-radius:4px;font-size:14px;font-weight:700;background:#f8f9fb;cursor:pointer';
+  zm2.addEventListener('click',()=>{S.scannerZoom=Math.max(70,S.scannerZoom-15);document.getElementById('scanner-result-area')&&showScanResult(_lastScanCode||'',document.getElementById('scanner-result-area'),document.getElementById('scan-history'));});
+  const zp2=el('button');zp2.textContent='A+';zp2.style.cssText='height:36px;padding:0 10px;border:1px solid var(--border);border-radius:4px;font-size:15px;font-weight:700;background:#f8f9fb;cursor:pointer';
+  zp2.addEventListener('click',()=>{S.scannerZoom=Math.min(180,S.scannerZoom+15);document.getElementById('scanner-result-area')&&showScanResult(_lastScanCode||'',document.getElementById('scanner-result-area'),document.getElementById('scan-history'));});
+  zoomWrap.appendChild(zm2);zoomWrap.appendChild(zp2);
+  ctrl.appendChild(camBtn);ctrl.appendChild(scanTrigger);ctrl.appendChild(manualWrap);ctrl.appendChild(zoomWrap);
   bottom.appendChild(ctrl);
 
   // Result area
@@ -9305,7 +9407,9 @@ async function startBarcodeDetection(video,resultArea,histWrap,camBtn){
     if(code)addVote(code);
   });
 }
+let _lastScanCode='';
 function showScanResult(rawCode,resultArea,histWrap){
+  _lastScanCode=rawCode;
   const code=rawCode.trim();
   const result=lookupCode(code);
   resultArea.innerHTML='';
@@ -9350,24 +9454,27 @@ function showScanResult(rawCode,resultArea,histWrap){
     const keyBlock=dv('');keyBlock.style.cssText='background:#f0f9ff;border:2px solid #0ea5e9;border-radius:10px;padding:14px 16px;margin-bottom:14px';
 
     // Plan qty — most important
+    // For components: sum across all FPs; for FPs: direct
+    const totalPlanNeeded = result.type==='fp' ? planQ :
+      (result.fps||[]).reduce((s,fp)=>s+getMatQtyInFP(fp,result.code)*planQty(fp),0);
     const planRow=dv('');planRow.style.cssText='display:flex;align-items:center;justify-content:space-between;padding:6px 0;border-bottom:1px solid #bae6fd';
-    planRow.innerHTML=`<span style="font-size:13px;font-weight:700;color:#0369a1">📋 În plan de producție</span>
-      <span style="font-size:20px;font-weight:900;color:${planQ>0?'#0369a1':'#94a3b8'}">${planQ>0?fmtN(planQ)+' buc':'—'}</span>`;
+    planRow.innerHTML=`<span style="font-size:${S.scannerZoom/100*13}px;font-weight:700;color:#0369a1">📋 ${result.type==='fp'?'În plan de producție':'Total necesar în plan'}</span>
+      <span style="font-size:${S.scannerZoom/100*20}px;font-weight:900;color:${totalPlanNeeded>0?'#0369a1':'#94a3b8'}">${totalPlanNeeded>0?fmtN(totalPlanNeeded)+' buc':'—'}</span>`;
     keyBlock.appendChild(planRow);
 
     // On Hand
     const oh=st.onHand||0;
     const ohRow=dv('');ohRow.style.cssText='display:flex;align-items:center;justify-content:space-between;padding:6px 0;border-bottom:1px solid #bae6fd';
-    ohRow.innerHTML=`<span style="font-size:13px;font-weight:700;color:#15803d">📦 On Hand</span>
-      <span style="font-size:20px;font-weight:900;color:${oh>0?'#15803d':oh<0?'#dc2626':'#475569'}">${fmtN(oh)} buc</span>`;
+    ohRow.innerHTML=`<span style="font-size:${S.scannerZoom/100*13}px;font-weight:700;color:#15803d">📦 On Hand</span>
+      <span style="font-size:${S.scannerZoom/100*20}px;font-weight:900;color:${oh>0?'#15803d':oh<0?'#dc2626':'#475569'}">${fmtN(oh)} buc</span>`;
     keyBlock.appendChild(ohRow);
 
     // Total WIP — clickable for breakdown
     const totalWIPval=st.totalWIP||0;
     const wipEntries=Object.entries(st.wipByWC||{}).filter(([,q])=>q!==0);
     const wipRow=dv('');wipRow.style.cssText='display:flex;align-items:center;justify-content:space-between;padding:6px 0;'+(wipEntries.length?'cursor:pointer;':'');
-    wipRow.innerHTML=`<span style="font-size:13px;font-weight:700;color:#7c3aed">🔄 Total WIP${wipEntries.length?' <span style="font-size:10px;font-weight:400;color:#a78bfa">(click pt detalii)</span>':''}</span>
-      <span style="font-size:20px;font-weight:900;color:${totalWIPval>0?'#7c3aed':totalWIPval<0?'#dc2626':'#475569'}">${fmtN(totalWIPval)} buc</span>`;
+    wipRow.innerHTML=`<span style="font-size:${S.scannerZoom/100*13}px;font-weight:700;color:#7c3aed">🔄 Total WIP${wipEntries.length?' <span style="font-size:${S.scannerZoom/100*10}px;font-weight:400;color:#a78bfa">(click pt detalii)</span>':''}</span>
+      <span style="font-size:${S.scannerZoom/100*20}px;font-weight:900;color:${totalWIPval>0?'#7c3aed':totalWIPval<0?'#dc2626':'#475569'}">${fmtN(totalWIPval)} buc</span>`;
     if(wipEntries.length){
       wipRow.addEventListener('click',()=>{
         document.getElementById('wip-detail-popup')?.remove();
@@ -9384,21 +9491,54 @@ function showScanResult(rawCode,resultArea,histWrap){
     }
     keyBlock.appendChild(wipRow);
 
-    // Apare în produse finale
+    // Apare în produse finale — large pills with plan consumption breakdown
     if(result.fps?.length>0&&result.type!=='fp'){
-      const fpRow=dv('');fpRow.style.cssText='padding-top:8px';
-      const fpLbl=dv('');fpLbl.style.cssText='font-size:11px;font-weight:700;color:#475569;text-transform:uppercase;letter-spacing:.05em;margin-bottom:5px';fpLbl.textContent='Apare în produse finale:';
-      const pills=dv('');pills.style.cssText='display:flex;flex-wrap:wrap;gap:4px';
-      result.fps.slice(0,8).forEach(fp=>{
-        const pill=sp('stk-fp-pill',fp);pill.style.cursor='pointer';pill.title='Click: deschide Structura BOM în fereastră nouă';
-        pill.addEventListener('click',()=>{
-          const w=window.open(window.location.href,'_blank');
-          if(w){w.addEventListener('load',()=>{try{w.S.selFP=fp;w.S.tab='structura';w.render();}catch(_){}});}
-        });
-        pills.appendChild(pill);
+      const fpRow=dv('');fpRow.style.cssText='padding-top:10px';
+      const fpLbl=dv('');fpLbl.style.cssText='font-size:12px;font-weight:700;color:#475569;text-transform:uppercase;letter-spacing:.05em;margin-bottom:8px';fpLbl.textContent='Apare în produse finale:';
+      fpRow.appendChild(fpLbl);
+
+      // Plan breakdown per FP
+      const planListDiv=dv('');planListDiv.style.cssText='max-height:220px;overflow-y:auto;border-radius:8px;border:1px solid #e2e8f0';
+      let hasAnyPlan=false;
+      result.fps.forEach(fp=>{
+        const matQty=getMatQtyInFP(fp,result.code);
+        const fpPlanQ=planQty(fp);
+        const neededForFp=matQty*fpPlanQ;
+        const row=dv('scan-plan-row');
+        const fpBtn=dv('');fpBtn.style.cssText='display:flex;align-items:center;justify-content:space-between;gap:8px';
+        const left=dv('');
+        const fpName=S.fps?.find(f=>f.code===fp)?.name||'';
+        left.innerHTML=`<div class="scan-plan-fp" style="font-size:${S.scannerZoom/100*17}px">${fp}</div>
+          ${fpName?`<div style="font-size:${S.scannerZoom/100*11}px;color:#6b7280">${fpName}</div>`:''}
+          <div class="scan-plan-detail" style="font-size:${S.scannerZoom/100*12}px">${fmtN(matQty)} buc/FP · Plan: ${fpPlanQ>0?fmtN(fpPlanQ)+' FP':'—'}</div>`;
+        const right=dv('');
+        right.style.cssText='text-align:right;flex-shrink:0';
+        right.innerHTML=neededForFp>0
+          ?`<div style="font-size:9px;color:#94a3b8;text-transform:uppercase">În plan</div><div class="scan-plan-qty" style="font-size:${S.scannerZoom/100*22}px">${fmtN(neededForFp)} buc</div>`
+          :`<div style="font-size:${S.scannerZoom/100*12}px;color:#94a3b8">—</div>`;
+        if(neededForFp>0) hasAnyPlan=true;
+        fpBtn.appendChild(left);fpBtn.appendChild(right);
+        row.appendChild(fpBtn);
+        // Buttons: BOM + Stocuri as balloons
+        const btnRow=dv('');btnRow.style.cssText='display:flex;gap:6px;margin-top:6px';
+        const bomBtn=el('button');bomBtn.style.cssText='flex:1;height:32px;border:1.5px solid #3b82f6;background:#eff6ff;color:#1d4ed8;border-radius:6px;font-size:12px;font-weight:600;cursor:pointer';
+        bomBtn.textContent='🌳 Structura BOM';bomBtn.addEventListener('click',()=>openBomBalloon(fp,fpName));
+        const stocBtn=el('button');stocBtn.style.cssText='flex:1;height:32px;border:1.5px solid #16a34a;background:#f0fdf4;color:#15803d;border-radius:6px;font-size:12px;font-weight:600;cursor:pointer';
+        stocBtn.textContent='📦 Stocuri sub.';stocBtn.addEventListener('click',()=>openStocBalloon(fp));
+        btnRow.appendChild(bomBtn);btnRow.appendChild(stocBtn);
+        row.appendChild(btnRow);
+        planListDiv.appendChild(row);
       });
-      if(result.fps.length>8)pills.appendChild(sp('stk-fp-more',`+${result.fps.length-8} mai multe`));
-      fpRow.appendChild(fpLbl);fpRow.appendChild(pills);
+      fpRow.appendChild(planListDiv);
+
+      // Plan total summary if any FP has plan
+      if(hasAnyPlan){
+        const totalNeeded=result.fps.reduce((s,fp)=>s+getMatQtyInFP(fp,result.code)*planQty(fp),0);
+        const totalSummary=dv('');totalSummary.style.cssText='margin-top:8px;padding:8px 12px;background:#fef9c3;border:1.5px solid #fde047;border-radius:8px;display:flex;justify-content:space-between;align-items:center';
+        totalSummary.innerHTML=`<span style="font-size:13px;font-weight:700;color:#92400e">📋 Total necesar în plan</span>
+          <span style="font-size:${S.scannerZoom/100*24}px;font-weight:900;color:#92400e">${fmtN(totalNeeded)} buc</span>`;
+        fpRow.appendChild(totalSummary);
+      }
       keyBlock.appendChild(fpRow);
     }
     wrap.appendChild(keyBlock);
@@ -9416,30 +9556,23 @@ function showScanResult(rawCode,resultArea,histWrap){
     secBlock.appendChild(moCard);
     wrap.appendChild(secBlock);
 
-    // ── Action buttons — open in new window ──
-    const actions=dv('scan-actions');
-    if(S.bomData){
-      const fpCode=result.type==='fp'?result.code:result.fps?.[0];
-      if(fpCode){
+    // Actions for FP type: BOM + Stocuri sub. directly
+    if(result.type==='fp'){
+      const actions=dv('scan-actions');
+      if(S.bomData){
         const structBtn=el('button','scan-action-btn');structBtn.textContent='🌳 Structura BOM';
-        structBtn.style.cssText='background:#eff6ff;border-color:#3b82f6;color:#1d4ed8';
-        structBtn.addEventListener('click',()=>{
-          const w=window.open(window.location.href,'_blank');
-          if(w){w.addEventListener('load',()=>{try{w.S.selFP=fpCode;w.S.tab='structura';w.render();}catch(_){}});}
-        });
+        structBtn.style.cssText='background:#eff6ff;border-color:#3b82f6;color:#1d4ed8;font-size:${S.scannerZoom/100*11}px';
+        structBtn.addEventListener('click',()=>openBomBalloon(result.code,result.name));
         actions.appendChild(structBtn);
       }
+      if(S.stockIdx){
+        const stocBtn=el('button','scan-action-btn');stocBtn.textContent='📦 Stocuri subcomponente';
+        stocBtn.style.cssText='background:#f0fdf4;border-color:#16a34a;color:#15803d;font-size:${S.scannerZoom/100*11}px';
+        stocBtn.addEventListener('click',()=>openStocBalloon(result.code));
+        actions.appendChild(stocBtn);
+      }
+      wrap.appendChild(actions);
     }
-    if(S.stockIdx){
-      const stocBtn=el('button','scan-action-btn');stocBtn.textContent='📦 Vezi în Stocuri';
-      stocBtn.style.cssText='background:#f0fdf4;border-color:#16a34a;color:#15803d';
-      stocBtn.addEventListener('click',()=>{
-        const w=window.open(window.location.href,'_blank');
-        if(w){w.addEventListener('load',()=>{try{w.S.tab='stocuri';w.S.stockFilter.q=result.code;w.render();}catch(_){}});}
-      });
-      actions.appendChild(stocBtn);
-    }
-    wrap.appendChild(actions);
     resultArea.appendChild(wrap);
   }
   renderScanHistory(histWrap,resultArea);
