@@ -9201,17 +9201,73 @@ function openStocBalloon(fpCode){
     if(!S.stockIdx||!S.bomIdx){body.innerHTML='<p style="color:var(--text3);padding:16px;text-align:center">Fișierele nu sunt încărcate.</p>';return;}
     const treeData=buildTree(fpCode,fpCode);
     function collectAll(nodes,out){nodes.forEach(n=>{out.push(n);collectAll(n.children,out);});}
-    const all=[];collectAll(treeData,all);
-    if(!all.length){body.innerHTML='<p style="color:var(--text3);padding:16px;text-align:center">Nicio componentă.</p>';return;}
-    all.forEach(n=>{
+    const allNodes=[];collectAll(treeData,allNodes);
+    if(!allNodes.length){body.innerHTML='<p style="color:var(--text3);padding:16px;text-align:center">Nicio componentă.</p>';return;}
+    const planQ=planQty(fpCode);
+
+    // ── Filter bar ──
+    const filterBar=dv('');filterBar.style.cssText='display:flex;gap:6px;margin-bottom:10px;flex-wrap:wrap';
+    let currentFilter='all';
+    const mkFilterBtn=(label,val,color)=>{
+      const b=el('button');b.textContent=label;
+      b.style.cssText=`height:30px;padding:0 12px;border-radius:20px;border:1.5px solid ${color};font-size:12px;font-weight:700;cursor:pointer;transition:all .15s;background:${val===currentFilter?color:'#fff'};color:${val===currentFilter?'#fff':color}`;
+      b.addEventListener('click',()=>{
+        currentFilter=val;
+        document.querySelectorAll('[data-stoc-filter]').forEach(el2=>el2.style.display='none');
+        document.querySelectorAll(`[data-stoc-filter="${val}"]`).forEach(el2=>el2.style.display='');
+        if(val==='all') document.querySelectorAll('[data-stoc-filter]').forEach(el2=>el2.style.display='');
+        filterBar.querySelectorAll('button').forEach(b2=>{
+          const bval=b2.getAttribute('data-filter-val');
+          const bcol=b2.getAttribute('data-filter-col');
+          b2.style.background=bval===val?bcol:'#fff';
+          b2.style.color=bval===val?'#fff':bcol;
+        });
+      });
+      b.setAttribute('data-filter-val',val);b.setAttribute('data-filter-col',color);
+      return b;
+    };
+    filterBar.appendChild(mkFilterBtn('Toate','all','#475569'));
+    filterBar.appendChild(mkFilterBtn('MAKE','MAKE','#6d28d9'));
+    filterBar.appendChild(mkFilterBtn('Purchase','BUY','#065f46'));
+    body.appendChild(filterBar);
+
+    // ── Header row ──
+    const hdr=dv('');hdr.style.cssText='display:grid;grid-template-columns:1fr 70px 70px 70px;gap:6px;padding:6px 4px 6px;border-bottom:2px solid #e2e8f0;font-size:9.5px;font-weight:700;color:#94a3b8;text-transform:uppercase;letter-spacing:.05em';
+    hdr.innerHTML='<div>Item</div><div style="text-align:right">Necesar</div><div style="text-align:right">On Hand</div><div style="text-align:right">WIP</div>';
+    body.appendChild(hdr);
+
+    // ── Rows ──
+    const listWrap=dv('');
+    allNodes.forEach(n=>{
       const stock=S.stockIdx.get(n.matNo)||{onHand:0,totalWIP:0};
-      const row=dv('');row.style.cssText='display:flex;justify-content:space-between;align-items:center;padding:8px 0;border-bottom:1px solid #f1f5f9';
-      const left=dv('');left.innerHTML=`<div style="font-family:monospace;font-weight:700;font-size:13px;color:#1e3a5f">${n.matNo}</div><div style="font-size:10px;color:#6b7280">${n.matName||''}</div>`;
-      const right=dv('');right.style.cssText='display:flex;gap:10px;text-align:right';
-      right.innerHTML=`<div><div style="font-size:9px;color:#94a3b8">ON HAND</div><div style="font-size:16px;font-weight:800;color:${stock.onHand>0?'#15803d':stock.onHand<0?'#dc2626':'#475569'}">${fmtN(stock.onHand)}</div></div>
-        <div><div style="font-size:9px;color:#94a3b8">WIP</div><div style="font-size:16px;font-weight:800;color:${stock.totalWIP>0?'#7c3aed':'#94a3b8'}">${fmtN(stock.totalWIP)}</div></div>`;
-      row.appendChild(left);row.appendChild(right);body.appendChild(row);
+      const matQty=n.qty??1;
+      const necesarPlan=matQty*planQ;
+      const isMake=n.isMake;
+      const typeVal=isMake?'MAKE':'BUY';
+
+      const row=dv('');row.setAttribute('data-stoc-filter',typeVal);
+      row.style.cssText='display:grid;grid-template-columns:1fr 70px 70px 70px;gap:6px;padding:10px 4px;border-bottom:1px solid #f1f5f9;align-items:center';
+
+      const left=dv('');
+      left.innerHTML=`<div style="font-family:monospace;font-weight:700;font-size:12px;color:${isMake?'#6d28d9':'#065f46'}">${n.matNo}</div>
+        <div style="font-size:10px;color:#6b7280;margin-top:1px">${n.matName||''}</div>
+        <div style="display:inline-block;margin-top:2px;padding:0 4px;border-radius:2px;font-size:8.5px;font-weight:700;background:${isMake?'rgba(109,40,217,.1)':'rgba(6,95,70,.1)'};color:${isMake?'#6d28d9':'#065f46'};border:1px solid ${isMake?'rgba(109,40,217,.25)':'rgba(6,95,70,.25)'}">${typeVal}</div>`;
+
+      const necesarDiv=dv('');necesarDiv.style.cssText='text-align:right';
+      necesarDiv.innerHTML=planQ>0
+        ?`<div style="font-size:15px;font-weight:800;color:#dc2626">${fmtN(necesarPlan)}</div><div style="font-size:9px;color:#94a3b8">${fmtN(matQty)}/FP×${fmtN(planQ)}</div>`
+        :`<div style="font-size:13px;color:#94a3b8">—</div>`;
+
+      const ohDiv=dv('');ohDiv.style.cssText='text-align:right';
+      ohDiv.innerHTML=`<div style="font-size:15px;font-weight:800;color:${stock.onHand>0?'#15803d':stock.onHand<0?'#dc2626':'#94a3b8'}">${fmtN(stock.onHand)}</div>`;
+
+      const wipDiv=dv('');wipDiv.style.cssText='text-align:right';
+      wipDiv.innerHTML=`<div style="font-size:15px;font-weight:800;color:${stock.totalWIP>0?'#7c3aed':'#94a3b8'}">${stock.totalWIP?fmtN(stock.totalWIP):'—'}</div>`;
+
+      row.appendChild(left);row.appendChild(necesarDiv);row.appendChild(ohDiv);row.appendChild(wipDiv);
+      listWrap.appendChild(row);
     });
+    body.appendChild(listWrap);
   });
 }
 function renderScanner(){
@@ -9256,7 +9312,10 @@ function renderScanner(){
   const zp2=el('button');zp2.textContent='A+';zp2.style.cssText='height:36px;padding:0 10px;border:1px solid var(--border);border-radius:4px;font-size:15px;font-weight:700;background:#f8f9fb;cursor:pointer';
   zp2.addEventListener('click',()=>{S.scannerZoom=Math.min(180,S.scannerZoom+15);document.getElementById('scanner-result-area')&&showScanResult(_lastScanCode||'',document.getElementById('scanner-result-area'),document.getElementById('scan-history'));});
   zoomWrap.appendChild(zm2);zoomWrap.appendChild(zp2);
-  ctrl.appendChild(camBtn);ctrl.appendChild(scanTrigger);ctrl.appendChild(manualWrap);ctrl.appendChild(zoomWrap);
+  // Torch button (hidden until camera on and torch available)
+  const torchBtn=el('button');torchBtn.id='scan-torch-btn';torchBtn.textContent='🔦 OFF';
+  torchBtn.style.cssText='display:none;align-items:center;justify-content:center;height:36px;padding:0 12px;border:1.5px solid var(--border);border-radius:4px;background:#f8f9fb;cursor:pointer;font-size:13px;font-weight:700;color:#92400e;transition:all .2s';
+  ctrl.appendChild(camBtn);ctrl.appendChild(scanTrigger);ctrl.appendChild(torchBtn);ctrl.appendChild(manualWrap);ctrl.appendChild(zoomWrap);
   bottom.appendChild(ctrl);
 
   // Result area
@@ -9280,6 +9339,8 @@ function renderScanner(){
       scanTrigger.style.display='none';
       video.srcObject=null;return;
     }
+    const torchBtnEl=document.getElementById('scan-torch-btn');
+    if(torchBtnEl){torchBtnEl.style.display='none';torchBtnEl.textContent='🔦 OFF';}
     camBtn.disabled=true;camBtn.textContent='Se initializeaza...';
     try{
       _scannerStream=await navigator.mediaDevices.getUserMedia({
@@ -9289,8 +9350,25 @@ function renderScanner(){
       await video.play();
       _scannerActive=true;
       camBtn.disabled=false;camBtn.textContent='⏹ Opreste';camBtn.className='scanner-cam-btn stop';
-      scanTrigger.style.display='';  // show scan button
+      scanTrigger.style.display='';
       overlay.querySelector('.scanner-hint').textContent='Apasa butonul galben pentru a scana';
+      // ── Torch/flashlight support ──
+      const track=_scannerStream.getVideoTracks()[0];
+      const caps=track?.getCapabilities?.();
+      if(caps?.torch){
+        let torchOn=false;
+        const torchBtn=document.getElementById('scan-torch-btn');
+        if(torchBtn){
+          torchBtn.style.display='flex';
+          torchBtn.addEventListener('click',async()=>{
+            torchOn=!torchOn;
+            try{await track.applyConstraints({advanced:[{torch:torchOn}]});}catch(_){}
+            torchBtn.textContent=torchOn?'🔦 ON':'🔦 OFF';
+            torchBtn.style.background=torchOn?'#fef08a':'#f8f9fb';
+            torchBtn.style.borderColor=torchOn?'#ca8a04':'var(--border)';
+          });
+        }
+      }
       startBarcodeDetection(video,resultArea,histWrap,camBtn);
     }catch(e){
       camBtn.disabled=false;camBtn.textContent='📷 Porneste camera';camBtn.className='scanner-cam-btn';
