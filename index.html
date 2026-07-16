@@ -6972,27 +6972,45 @@ function perfFmtPeriod(p){
 
 // ── Parse uploaded Livrari Excel rows ──
 function applyLivrari(rows){
-  // Aggregate: period+item → qty
-  const agg=new Map(); // 'YYYYMM|item' → {period,item,name,qty}
+  if(!rows||!rows.length){showToast('Fișier gol sau format necunoscut','err',3000);return;}
+  // Detect column names robustly (case-insensitive, trim)
+  const sampleKeys=Object.keys(rows[0]||{});
+  const findCol=(...candidates)=>{
+    for(const c of candidates){
+      const found=sampleKeys.find(k=>k.trim().toLowerCase()===c.toLowerCase());
+      if(found)return found;
+    }
+    return candidates[0]; // fallback
+  };
+  const colPeriod=findCol('Period','period','PERIOD','Perioada');
+  const colItem=findCol('Item','item','ITEM','Produs','Product');
+  const colQty=findCol('Quantity','quantity','Qty','qty','QTY','Cantitate');
+  const colName=findCol('Name','name','NAME','Denumire','Descriere');
+  console.log('[Perf] Columns detected:',{colPeriod,colItem,colQty,colName});
+  console.log('[Perf] First row sample:',rows[0]);
+
+  const agg=new Map();
   const months=new Set(), items=new Map();
+  let skipped=0;
   for(const r of rows){
-    const period=str(r['Period']||'').trim();
-    const item=str(r['Item']||'').trim();
-    const qty=parseFloat(r['Quantity'])||0;
-    const name=str(r['Name']||'').trim();
-    if(!period||!item||qty<=0)continue;
+    const period=String(r[colPeriod]??'').trim().replace(/[^0-9]/g,'').slice(0,6);
+    const item=String(r[colItem]??'').trim();
+    const qty=parseFloat(r[colQty])||0;
+    const name=String(r[colName]??'').trim();
+    if(!period||period.length!==6||!item||qty<=0){skipped++;continue;}
     months.add(period);
     items.set(item,name);
     const k=`${period}|${item}`;
     if(!agg.has(k))agg.set(k,{period,item,name,qty:0});
     agg.get(k).qty+=qty;
   }
-  S.perfData={
-    rows:[...agg.values()],
-    months:[...months].sort(),
-    items
-  };
-  showToast(`✓ Livrări încărcate: ${agg.size} linii, ${months.size} luni, ${items.size} produse`,'ok',3000);
+  console.log('[Perf] Parsed:',agg.size,'entries,',skipped,'skipped');
+  if(!agg.size){
+    showToast(`Import eșuat: 0 linii valide (${rows.length} rânduri citite, ${skipped} omise). Verificați coloanele: Period, Item, Quantity`,'err',5000);
+    return;
+  }
+  S.perfData={rows:[...agg.values()],months:[...months].sort(),items};
+  showToast(`✓ Livrări: ${agg.size} intrări, ${months.size} luni, ${items.size} produse`,'ok',3000);
 }
 
 // ── Core computation: minutes per WC per period ──
