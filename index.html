@@ -1223,6 +1223,10 @@ const S={
   exp:new Set(),expOps:new Set(),
   qtyInput:1,
   structIgnoreStock:false,
+  perfData:null,
+  perfWcGroups:[],
+  perfData:null,  // {rows:[{period,item,name,qty}], months:[...], items:{item→{name}}}
+  perfWcGroups:[],  // [{groupName, wcs:[wcName,...]}]
   efficienta:100,
   stockFilter:{q:'',type:'all',onlyWip:false,onlyZero:false,onlyNeg:false,sortCol:'fp',sortDir:1,
     colOrder:['fp','code','name','type','oh','mo','wip','wc'],
@@ -3267,6 +3271,7 @@ function render(){
     {id:'scanner',label:'📷 Scanner'},
   ];
   if(S.session.role==='admin') tabs.push({id:'dctr',label:'Disciplina CTR'});
+  if(S.session.role==='admin') tabs.push({id:'performanta',label:'Performanță'});
   if(S.session.role==='admin') tabs.push({id:'utilizatori',label:'Utilizatori'});
 
   // ── Hamburger button (mobile) ──
@@ -3368,6 +3373,7 @@ function render(){
   else if(S.tab==='planv2')body.appendChild(renderPlanV2());
   else if(S.tab==='pwc')body.appendChild(renderPwcTab());
   else if(S.tab==='dctr')body.appendChild(renderDctrTab());
+  else if(S.tab==='performanta')body.appendChild(renderPerformanta());
   else if(S.tab==='scanari')body.appendChild(renderScanariTab());
   else if(S.tab==='scanner')body.appendChild(renderScanner());
   else if(S.tab==='utilizatori'&&S.session.role==='admin')body.appendChild(renderUsersTab());
@@ -6952,6 +6958,375 @@ function dctrConfirmDelete(title, bodyHtml, confirmLabel){
     cancelBtn.focus();
   });
 }
+/* ═══════════════════════════════════════════════════════════════
+   PERFORMANȚĂ — Timp normat per workcenter pe baza livrărilor
+═══════════════════════════════════════════════════════════════ */
+
+const PERF_MONTHS_RO=['Ian','Feb','Mar','Apr','Mai','Iun','Iul','Aug','Sep','Oct','Nov','Dec'];
+
+function perfFmtPeriod(p){
+  // '202601' → 'Ian 2026'
+  const y=p.slice(0,4),m=parseInt(p.slice(4,6),10);
+  return (PERF_MONTHS_RO[m-1]||m)+' '+y;
+}
+
+// ── Parse uploaded Livrari Excel rows ──
+function applyLivrari(rows){
+  // Aggregate: period+item → qty
+  const agg=new Map(); // 'YYYYMM|item' → {period,item,name,qty}
+  const months=new Set(), items=new Map();
+  for(const r of rows){
+    const period=str(r['Period']||'').trim();
+    const item=str(r['Item']||'').trim();
+    const qty=parseFloat(r['Quantity'])||0;
+    const name=str(r['Name']||'').trim();
+    if(!period||!item||qty<=0)continue;
+    months.add(period);
+    items.set(item,name);
+    const k=`${period}|${item}`;
+    if(!agg.has(k))agg.set(k,{period,item,name,qty:0});
+    agg.get(k).qty+=qty;
+  }
+  S.perfData={
+    rows:[...agg.values()],
+    months:[...months].sort(),
+    items
+  };
+  showToast(`✓ Livrări încărcate: ${agg.size} linii, ${months.size} luni, ${items.size} produse`,'ok',3000);
+}
+
+// ── Core computation: minutes per WC per period ──
+// Returns Map<wcName, Map<period, minutes>>
+function computePerfMatrix(effPct){
+  if(!S.perfData||!S.bowIdx||!S.bomIdx) return null;
+  const eff=(effPct||100)/100;
+  const result=new Map(); // wcName → Map<period,min>
+  const prevIgnore=S.structIgnoreStock;
+  S.structIgnoreStock=true; // always start from 0
+
+  for(const {period,item,qty} of S.perfData.rows){
+    // Use calcExecTime with stock=0
+    const needs=calcNeeds(item,qty);
+    const exec=calcExecTime(item,qty,needs);
+    if(!exec) continue;
+    for(const [wcName,data] of exec.byWC){
+      const rawMin=(data.runTime||0)/eff;
+      if(rawMin<=0)continue;
+      if(!result.has(wcName))result.set(wcName,new Map());
+      const wcMap=result.get(wcName);
+      wcMap.set(period,(wcMap.get(period)||0)+rawMin);
+    }
+  }
+  S.structIgnoreStock=prevIgnore;
+  return result;
+}
+
+// ── Apply WC groups: collapse WCs into sections ──
+function applyPerfGroups(matrix, groups){
+  if(!groups||!groups.length) return matrix;
+  const grouped=new Map();
+  const assignedWCs=new Set();
+  for(const g of groups){
+    if(!g.groupName||!g.wcs?.length)continue;
+    const gMap=new Map();
+    for(const wc of g.wcs){
+      assignedWCs.add(wc);
+      const wcMap=matrix.get(wc);
+      if(!wcMap)continue;
+      for(const [period,min] of wcMap){
+        gMap.set(period,(gMap.get(period)||0)+min);
+      }
+    }
+    if(gMap.size>0)grouped.set(g.groupName,gMap);
+  }
+  // Remaining ungrouped WCs
+  for(const [wc,wcMap] of matrix){
+    if(!assignedWCs.has(wc))grouped.set(wc,wcMap);
+  }
+  return grouped;
+}
+
+function renderPerformanta(){
+  const page=dv('');page.style.cssText='display:flex;flex-direction:column;height:100%;overflow:hidden;background:#f8f9fb';
+
+  if(!S.bowIdx||!S.bomIdx){
+    page.innerHTML='<div style="padding:32px;text-align:center;color:var(--text3);font-size:13px">Încărcați fișierele BOM și BOW din Fisiere.</div>';
+    return page;
+  }
+
+  let effPct=S.efficienta||100;
+
+  // ── Toolbar ──
+  const tb=dv('');tb.style.cssText='display:flex;align-items:center;gap:10px;padding:8px 14px;background:#fff;border-bottom:2px solid var(--border);flex-shrink:0;flex-wrap:wrap';
+
+  // Import button
+  const impBtn=el('button','tbtn');impBtn.innerHTML='📂 Import Livrări (.xlsx)';
+  const fileIn=el('input');fileIn.type='file';fileIn.accept='.xlsx';fileIn.style.display='none';
+  fileIn.addEventListener('change',async()=>{
+    if(!fileIn.files[0])return;
+    impBtn.textContent='Se procesează...';impBtn.disabled=true;
+    try{
+      const ab=await fileIn.files[0].arrayBuffer();
+      const wb=XLSX.read(ab,{type:'array',cellDates:true});
+      const ws=wb.Sheets[wb.SheetNames[0]];
+      const rows=XLSX.utils.sheet_to_json(ws,{defval:''});
+      applyLivrari(rows);
+      rebuild();
+    }catch(e){showToast('Eroare import: '+e.message,'err',4000);}
+    impBtn.textContent='📂 Import Livrări (.xlsx)';impBtn.disabled=false;
+    fileIn.value='';
+  });
+  impBtn.addEventListener('click',()=>fileIn.click());
+  tb.appendChild(impBtn);tb.appendChild(fileIn);
+
+  // Efficiency
+  const effWrap=dv('');effWrap.style.cssText='display:flex;align-items:center;gap:5px;padding-left:10px;border-left:1px solid #e2e8f0';
+  effWrap.innerHTML='<span style="font-size:10px;font-weight:700;color:var(--text3);text-transform:uppercase">Eficiență:</span>';
+  const effInp=el('input');effInp.type='number';effInp.min=10;effInp.max=200;effInp.value=effPct;
+  effInp.style.cssText='width:65px;height:28px;padding:0 6px;border:1px solid var(--border);border-radius:4px;font-size:12px;font-weight:700;text-align:center;color:var(--accent)';
+  effInp.addEventListener('change',()=>{effPct=Math.max(10,Math.min(200,parseInt(effInp.value)||100));rebuild();});
+  const effLbl=dv('');effLbl.textContent='%';effLbl.style.cssText='font-size:12px;color:var(--text3)';
+  effWrap.appendChild(effInp);effWrap.appendChild(effLbl);tb.appendChild(effWrap);
+
+  // WC Group editor button
+  const grpBtn=el('button','tbtn');grpBtn.innerHTML='⚙ Grupuri WC';
+  grpBtn.addEventListener('click',()=>openPerfGroupEditor(()=>rebuild()));
+  tb.appendChild(grpBtn);
+
+  // Unit toggle: hours vs minutes
+  let unitHours=true;
+  const unitBtn=el('button','tbtn');unitBtn.innerHTML='Ore';
+  unitBtn.addEventListener('click',()=>{unitHours=!unitHours;unitBtn.innerHTML=unitHours?'Ore':'Minute';rebuild();});
+  tb.appendChild(unitBtn);
+
+  // Export
+  const excelBtn=el('button','tbtn');excelBtn.style.cssText='border-color:#16a34a;color:#15803d;background:#f0fdf4;margin-left:auto';
+  excelBtn.innerHTML='⬇ Export Excel';
+  excelBtn.addEventListener('click',()=>exportPerfExcel(effPct,unitHours));
+  tb.appendChild(excelBtn);
+  page.appendChild(tb);
+
+  // ── Content ──
+  const content=dv('');content.id='perf-content';content.style.cssText='flex:1;overflow:auto;padding:14px 16px';
+  page.appendChild(content);
+
+  function rebuild(){
+    content.innerHTML='';
+    if(!S.perfData){
+      content.innerHTML='<div style="padding:40px;text-align:center;color:var(--text3);font-size:13px">📂 Importați un fișier Livrări pentru a genera raportul.</div>';
+      return;
+    }
+    content.innerHTML='<div style="padding:20px;text-align:center;color:var(--text3)">⏳ Se calculează...</div>';
+    // Async-like: yield UI then compute
+    setTimeout(()=>{
+      content.innerHTML='';
+      const matrix=computePerfMatrix(effPct);
+      if(!matrix||!matrix.size){
+        content.innerHTML='<div style="padding:32px;text-align:center;color:var(--text3)">Nu s-au găsit date BOW pentru produsele din fișier.</div>';
+        return;
+      }
+      const finalMatrix=applyPerfGroups(matrix,S.perfWcGroups);
+      const months=S.perfData.months;
+      buildPerfTable(content,finalMatrix,months,unitHours);
+    },50);
+  }
+
+  rebuild();
+  return page;
+}
+
+function buildPerfTable(wrap, matrix, months, unitHours){
+  // Sort WC/groups
+  const wcs=[...matrix.keys()].sort((a,b)=>{
+    // Put grouped WCs first (not containing '.') then by name
+    return a.localeCompare(b);
+  });
+
+  const tbl=el('table');tbl.style.cssText='border-collapse:collapse;min-width:100%;font-size:11.5px';
+  // Header
+  const thead=el('thead');
+  const hr=el('tr');hr.style.cssText='background:#1e3a5f;color:#fff';
+  const thWC=el('th');thWC.style.cssText='position:sticky;left:0;z-index:2;background:#1e3a5f;padding:7px 12px;text-align:left;font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;white-space:nowrap;min-width:200px';
+  thWC.textContent='Workcenter / Grup';
+  hr.appendChild(thWC);
+  // Month totals row header
+  months.forEach(m=>{
+    const th=el('th');th.style.cssText='padding:7px 10px;text-align:right;font-size:10px;font-weight:700;white-space:nowrap;border-left:1px solid #2d4e7a';
+    th.textContent=perfFmtPeriod(m);
+    hr.appendChild(th);
+  });
+  const thTot=el('th');thTot.style.cssText='padding:7px 10px;text-align:right;font-size:10px;font-weight:700;background:#0f2540;border-left:2px solid #4b6cb7;white-space:nowrap';
+  thTot.textContent='TOTAL';
+  hr.appendChild(thTot);
+  thead.appendChild(hr);tbl.appendChild(thead);
+
+  // Body
+  const tbody=el('tbody');
+  const colTotals=new Map();months.forEach(m=>colTotals.set(m,0));
+  let grandTotal=0;
+
+  wcs.forEach((wc,wi)=>{
+    const wcMap=matrix.get(wc);
+    const tr=el('tr');tr.style.background=wi%2?'#f8fafc':'#fff';
+
+    const tdWC=el('td');tdWC.style.cssText='position:sticky;left:0;z-index:1;background:inherit;padding:6px 12px;font-weight:700;font-size:11.5px;border-right:2px solid #e2e8f0;white-space:nowrap';
+    tdWC.textContent=wc;tr.appendChild(tdWC);
+
+    let rowTotal=0;
+    months.forEach(m=>{
+      const minVal=wcMap.get(m)||0;
+      colTotals.set(m,(colTotals.get(m)||0)+minVal);
+      rowTotal+=minVal;
+      const td=el('td');td.style.cssText='padding:6px 10px;text-align:right;border-left:1px solid #f1f5f9;white-space:nowrap;font-family:monospace';
+      const display=unitHours?(minVal/60):minVal;
+      td.textContent=display>0?display.toFixed(1):'—';
+      if(minVal>0)td.style.color='#1d4ed8';
+      tr.appendChild(td);
+    });
+    grandTotal+=rowTotal;
+    const tdTot=el('td');tdTot.style.cssText='padding:6px 10px;text-align:right;font-weight:800;border-left:2px solid #bfdbfe;background:#eff6ff;color:#1d4ed8;white-space:nowrap;font-family:monospace';
+    const totDisp=unitHours?(rowTotal/60):rowTotal;
+    tdTot.textContent=totDisp>0?totDisp.toFixed(1):'—';
+    tr.appendChild(tdTot);
+    tbody.appendChild(tr);
+  });
+
+  // Totals row
+  const trTot=el('tr');trTot.style.cssText='background:#1e3a5f;color:#fff;font-weight:800';
+  const tdTotWC=el('td');tdTotWC.style.cssText='position:sticky;left:0;z-index:1;background:#1e3a5f;padding:7px 12px;font-weight:800;font-size:11px;text-transform:uppercase;letter-spacing:.05em;border-right:2px solid #2d4e7a';
+  tdTotWC.textContent='TOTAL';trTot.appendChild(tdTotWC);
+  months.forEach(m=>{
+    const td=el('td');td.style.cssText='padding:7px 10px;text-align:right;border-left:1px solid #2d4e7a;font-family:monospace';
+    const v=colTotals.get(m)||0;const disp=unitHours?(v/60):v;
+    td.textContent=disp>0?disp.toFixed(1):'—';
+    trTot.appendChild(td);
+  });
+  const tdGrand=el('td');tdGrand.style.cssText='padding:7px 10px;text-align:right;border-left:2px solid #4b6cb7;font-family:monospace;font-size:13px';
+  const gDisp=unitHours?(grandTotal/60):grandTotal;tdGrand.textContent=gDisp.toFixed(1);
+  trTot.appendChild(tdGrand);
+  tbody.appendChild(trTot);
+  tbl.appendChild(tbody);
+  wrap.appendChild(tbl);
+
+  // Summary
+  const sum=dv('');sum.style.cssText='margin-top:10px;font-size:10px;color:var(--text3);padding:6px 0';
+  sum.textContent=`${wcs.length} workcentere · ${months.length} luni · Total: ${(unitHours?grandTotal/60:grandTotal).toFixed(1)} ${unitHours?'ore':'minute'}`;
+  wrap.appendChild(sum);
+}
+
+function openPerfGroupEditor(onClose){
+  document.getElementById('perf-group-overlay')?.remove();
+  const ov=dv('');ov.id='perf-group-overlay';
+  ov.style.cssText='position:fixed;inset:0;background:rgba(0,0,0,.5);z-index:9000;display:flex;align-items:center;justify-content:center;padding:16px';
+  const modal=dv('');modal.style.cssText='background:#fff;border-radius:10px;box-shadow:0 20px 60px rgba(0,0,0,.3);width:min(580px,95vw);max-height:80vh;display:flex;flex-direction:column;overflow:hidden';
+
+  const hdr=dv('');hdr.style.cssText='background:#1e3a5f;color:#fff;padding:12px 18px;display:flex;justify-content:space-between;align-items:center;flex-shrink:0';
+  hdr.innerHTML='<span style="font-weight:800;font-size:14px">⚙ Grupuri Workcentere</span>';
+  const cls=el('button');cls.textContent='✕';cls.style.cssText='border:none;background:rgba(255,255,255,.2);color:#fff;width:28px;height:28px;border-radius:4px;cursor:pointer;font-size:14px';
+  cls.addEventListener('click',()=>{ov.remove();onClose?.();});
+  hdr.appendChild(cls);modal.appendChild(hdr);
+
+  const body=dv('');body.style.cssText='flex:1;overflow-y:auto;padding:14px 18px';
+  // Instructions
+  const inst=dv('');inst.style.cssText='font-size:11px;color:var(--text3);margin-bottom:10px;line-height:1.5';
+  inst.textContent='Adăugați grupuri de workcentere (secții). WC-urile dintr-un grup se sumează într-o singură linie. Ordinea: unul per rând, separate prin virgulă.';
+  body.appendChild(inst);
+
+  // Get all WC names from BOW data
+  const allWCs=new Set();
+  if(S.bowData){for(const r of S.bowData){const wn=str(r['Ope name']||r['Ope descr']||'').trim();if(wn)allWCs.add(wn);}}
+
+  const groupsWrap=dv('');body.appendChild(groupsWrap);
+
+  const renderGroups=()=>{
+    groupsWrap.innerHTML='';
+    (S.perfWcGroups.length?S.perfWcGroups:[{groupName:'',wcs:[]}]).forEach((g,gi)=>{
+      const gRow=dv('');gRow.style.cssText='display:flex;gap:6px;align-items:flex-start;margin-bottom:10px;padding:8px;background:#f8fafc;border-radius:6px;border:1px solid #e2e8f0';
+      const nameInp=el('input');nameInp.placeholder='Nume grup (ex: Debitare)';nameInp.value=g.groupName||'';
+      nameInp.style.cssText='width:150px;height:32px;padding:0 8px;border:1px solid var(--border);border-radius:4px;font-size:12px;font-weight:700';
+      nameInp.addEventListener('input',()=>{if(S.perfWcGroups[gi])S.perfWcGroups[gi].groupName=nameInp.value;});
+      const wcTa=el('textarea');wcTa.placeholder='Laser, Shear, CNC Punching';
+      wcTa.value=(g.wcs||[]).join(', ');
+      wcTa.style.cssText='flex:1;height:60px;padding:6px 8px;border:1px solid var(--border);border-radius:4px;font-size:11px;resize:vertical';
+      wcTa.addEventListener('input',()=>{if(S.perfWcGroups[gi])S.perfWcGroups[gi].wcs=wcTa.value.split(',').map(s=>s.trim()).filter(Boolean);});
+      const delBtn=el('button');delBtn.textContent='✕';delBtn.style.cssText='width:26px;height:26px;border:1px solid #fca5a5;background:#fef2f2;color:#dc2626;border-radius:4px;cursor:pointer;flex-shrink:0;font-size:12px';
+      delBtn.addEventListener('click',()=>{S.perfWcGroups.splice(gi,1);renderGroups();});
+      gRow.appendChild(nameInp);gRow.appendChild(wcTa);gRow.appendChild(delBtn);
+      groupsWrap.appendChild(gRow);
+    });
+    if(!S.perfWcGroups.length)S.perfWcGroups.push({groupName:'',wcs:[]});
+  };
+  renderGroups();
+
+  const addBtn=el('button','tbtn');addBtn.textContent='+ Adaugă grup';
+  addBtn.addEventListener('click',()=>{S.perfWcGroups.push({groupName:'',wcs:[]});renderGroups();});
+  body.appendChild(addBtn);
+
+  // WC list hint
+  if(allWCs.size){
+    const hint=dv('');hint.style.cssText='margin-top:12px;font-size:10px;color:var(--text3)';
+    hint.innerHTML='<b>WC-uri disponibile:</b> '+[...allWCs].sort().join(', ');
+    body.appendChild(hint);
+  }
+  modal.appendChild(body);
+
+  const foot=dv('');foot.style.cssText='padding:10px 18px;border-top:1px solid var(--border);display:flex;justify-content:flex-end;gap:8px;flex-shrink:0';
+  const saveBtn=el('button','tbtn');saveBtn.textContent='✓ Salvează & Aplică';saveBtn.style.cssText='background:#eff6ff;border-color:var(--accent);color:var(--accent);font-weight:700';
+  saveBtn.addEventListener('click',()=>{
+    S.perfWcGroups=S.perfWcGroups.filter(g=>g.groupName&&g.wcs?.length);
+    ov.remove();onClose?.();
+  });
+  foot.appendChild(saveBtn);modal.appendChild(foot);
+  ov.appendChild(modal);ov.addEventListener('click',e=>{if(e.target===ov){ov.remove();onClose?.();}});
+  document.body.appendChild(ov);
+}
+
+function exportPerfExcel(effPct,unitHours){
+  if(!S.perfData){alert('Nu există date de exportat.');return;}
+  const matrix=computePerfMatrix(effPct);
+  if(!matrix){alert('Nu s-au calculat date.');return;}
+  const finalMatrix=applyPerfGroups(matrix,S.perfWcGroups);
+  const months=S.perfData.months;
+  const wcs=[...finalMatrix.keys()].sort();
+  const unit=unitHours?'Ore':'Minute';
+  const div=unitHours?60:1;
+
+  const wsData=[[`Performanță Timp Normat [${unit}] — Eficiență: ${effPct}%`, ...months.map(perfFmtPeriod),'TOTAL']];
+  const colTotals=new Array(months.length).fill(0);
+  wcs.forEach(wc=>{
+    const wcMap=finalMatrix.get(wc);
+    let rowTot=0;
+    const row=[wc,...months.map((m,mi)=>{const v=(wcMap.get(m)||0)/div;colTotals[mi]+=v;rowTot+=v;return +v.toFixed(2)||0;}),+rowTot.toFixed(2)];
+    wsData.push(row);
+  });
+  wsData.push(['TOTAL',...colTotals.map(v=>+v.toFixed(2)),+colTotals.reduce((s,v)=>s+v,0).toFixed(2)]);
+
+  const wb=XLSX.utils.book_new();
+  const ws=XLSX.utils.aoa_to_sheet(wsData);
+  ws['!cols']=[{wch:28},...months.map(()=>({wch:12})),{wch:12}];
+  XLSX.utils.book_append_sheet(wb,ws,'Performanta');
+
+  // Sheet 2: Detaliu produs × lună
+  const ws2Data=[['Item','Denumire',...months.map(perfFmtPeriod),'Total']];
+  const itemMonthQty=new Map();
+  for(const {period,item,name,qty} of S.perfData.rows){
+    const k=item;
+    if(!itemMonthQty.has(k))itemMonthQty.set(k,{name,months:new Map()});
+    const e=itemMonthQty.get(k);
+    e.months.set(period,(e.months.get(period)||0)+qty);
+  }
+  for(const [item,{name,months:mmap}] of [...itemMonthQty.entries()].sort()){
+    let tot=0;
+    const row=[item,name,...months.map(m=>{const v=mmap.get(m)||0;tot+=v;return v||0;})];
+    row.push(tot);ws2Data.push(row);
+  }
+  const ws2=XLSX.utils.aoa_to_sheet(ws2Data);
+  ws2['!cols']=[{wch:20},{wch:28},...months.map(()=>({wch:10})),{wch:10}];
+  XLSX.utils.book_append_sheet(wb,ws2,'Livrari Detaliu');
+
+  XLSX.writeFile(wb,`Performanta_${new Date().toISOString().slice(0,10)}.xlsx`);
+}
+
 function renderDctrTab(){
   const page=dv('dctr-page');
   if(!S.dctrData){
