@@ -4613,14 +4613,14 @@ if(!S.dctrReport) S.dctrReport={
 };
 
 if(!S.scanReport) S.scanReport={
-  month:null,          // 'YYYYMM' or null (auto last month)
-  year:null,           // 'YYYY' or null (auto last year)
-  day:null,            // 'YYYYMMDD' or 'all' or null (auto last date)
+  month:null, year:null, day:null,
   colFilters:{},
-  colOrder:null,       // null = default order
+  colOrder:null,
   hiddenCols:new Set(),
   sortCol:'tdt',sortDir:1,
   zoom:100,
+  hideShortTimes:false,  // hide rows where Timp Real < 1 min
+  hideMedii:false,       // hide rows where Employee = MEDIE or MO starts with MEDIE
 };
 
 
@@ -6054,6 +6054,23 @@ function getScanRows(){
       return sv.toLowerCase().includes(fl);
     });
   }
+  // ── Extra filters ──
+  if(rs.hideShortTimes){
+    rows=rows.filter(r=>{
+      const ms=r['Used_tm_MS'];
+      if(ms==null||ms===''||ms===0) return false;
+      // Used_tm_MS: milliseconds → filter < 60 000 ms (1 min)
+      const val=typeof ms==='number'?ms:parseFloat(String(ms).replace(/[^0-9.]/g,''))||0;
+      return val>=60000;
+    });
+  }
+  if(rs.hideMedii){
+    rows=rows.filter(r=>{
+      const emp=str(r['Employee name']||'').toUpperCase();
+      const mo=str(r['MO']||'').toUpperCase();
+      return !emp.includes('MEDIE')&&!mo.includes('MEDIE');
+    });
+  }
   // Sort
   rows=[...rows].sort((a,b)=>{
     const dir=rs.sortDir;
@@ -6315,6 +6332,21 @@ function renderScanariTab(){
     setTimeout(()=>document.addEventListener('mousedown',close),50);
   });
   g2.appendChild(colBtn);tb.appendChild(g2);
+
+  // Group 2b: Quick-filter checkboxes
+  const g2b=dv('scan-toolbar-group');
+  g2b.style.cssText='display:flex;align-items:center;gap:10px;flex-wrap:wrap';
+  const mkCheckFilter=(label,key,onChange)=>{
+    const lbl=el('label');lbl.style.cssText='display:flex;align-items:center;gap:5px;cursor:pointer;font-size:11px;font-weight:600;color:var(--text2);user-select:none;white-space:nowrap';
+    const cb=el('input');cb.type='checkbox';cb.checked=!!rs[key];
+    cb.style.cssText='width:14px;height:14px;cursor:pointer;accent-color:var(--accent)';
+    cb.addEventListener('change',()=>{rs[key]=cb.checked;rebuildScanBody(tableWrap);updateScanInfo();onChange&&onChange(cb.checked);});
+    lbl.appendChild(cb);lbl.appendChild(document.createTextNode(label));
+    return lbl;
+  };
+  g2b.appendChild(mkCheckFilter('Ascunde < 1 min','hideShortTimes'));
+  g2b.appendChild(mkCheckFilter('Ascunde Medii','hideMedii'));
+  tb.appendChild(g2b);
 
   // Group 3: Export
   const g3=dv('scan-toolbar-group');
