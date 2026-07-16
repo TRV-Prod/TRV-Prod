@@ -6056,12 +6056,10 @@ function getScanRows(){
   }
   // ── Extra filters ──
   if(rs.hideShortTimes){
+    // Used_tm_MS is an Excel time fraction (days) or Date — use scanTimeToMin()
     rows=rows.filter(r=>{
-      const ms=r['Used_tm_MS'];
-      if(ms==null||ms===''||ms===0) return false;
-      // Used_tm_MS: milliseconds → filter < 60 000 ms (1 min)
-      const val=typeof ms==='number'?ms:parseFloat(String(ms).replace(/[^0-9.]/g,''))||0;
-      return val>=60000;
+      const mins=scanTimeToMin(r['Used_tm_MS']);
+      return mins>1;  // keep only > 1 minute
     });
   }
   if(rs.hideMedii){
