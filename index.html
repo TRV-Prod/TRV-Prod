@@ -6993,7 +6993,15 @@ function applyLivrari(rows){
   const months=new Set(), items=new Map();
   let skipped=0;
   for(const r of rows){
-    const period=String(r[colPeriod]??'').trim().replace(/[^0-9]/g,'').slice(0,6);
+    // Period can be '202607', number 202607, or formatted string
+    let rawPeriod=r[colPeriod];
+    let period='';
+    if(rawPeriod instanceof Date){
+      // If XLSX converts to Date despite raw:false, extract YYYYMM
+      period=String(rawPeriod.getFullYear())+String(rawPeriod.getMonth()+1).padStart(2,'0');
+    } else {
+      period=String(rawPeriod??'').trim().replace(/[^0-9]/g,'').slice(0,6);
+    }
     const item=String(r[colItem]??'').trim();
     const qty=parseFloat(r[colQty])||0;
     const name=String(r[colName]??'').trim();
@@ -7085,9 +7093,9 @@ function renderPerformanta(){
     impBtn.textContent='Se procesează...';impBtn.disabled=true;
     try{
       const ab=await fileIn.files[0].arrayBuffer();
-      const wb=XLSX.read(ab,{type:'array',cellDates:true});
+      const wb=XLSX.read(ab,{type:'array',cellDates:false,raw:false});
       const ws=wb.Sheets[wb.SheetNames[0]];
-      const rows=XLSX.utils.sheet_to_json(ws,{defval:''});
+      const rows=XLSX.utils.sheet_to_json(ws,{defval:'',raw:false});
       applyLivrari(rows);
       rebuild();
     }catch(e){showToast('Eroare import: '+e.message,'err',4000);}
