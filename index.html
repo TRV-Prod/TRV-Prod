@@ -7024,19 +7024,27 @@ function applyLivrari(rows){
 // ── Core computation: minutes per WC per period ──
 // Returns Map<wcName, Map<period, minutes>>
 function computePerfMatrix(effPct){
-  if(!S.perfData||!S.bowIdx||!S.bomIdx) return null;
-  const eff=(effPct||100)/100;
+  if(!S.perfData) return null;
+  if(!S.bowIdx||!S.bowData){
+    showToast('Fișierul BOW nu este încărcat. Mergeți la Fisiere și încărcați BOW.','err',5000);
+    return null;
+  }
+  const eff=Math.max(0.01,(effPct||100)/100);
   const result=new Map(); // wcName → Map<period,min>
   const prevIgnore=S.structIgnoreStock;
-  S.structIgnoreStock=true; // always start from 0
+  S.structIgnoreStock=true; // always from 0
 
+  let processed=0, noData=0;
   for(const {period,item,qty} of S.perfData.rows){
-    // Use calcExecTime with stock=0
+    if(!item||qty<=0){noData++;continue;}
     const needs=calcNeeds(item,qty);
     const exec=calcExecTime(item,qty,needs);
-    if(!exec) continue;
+    // exec.byWC: Map<wcName,{runMin,setupMin,needingQty}>
+    if(!exec?.byWC?.size){noData++;continue;}
+    processed++;
     for(const [wcName,data] of exec.byWC){
-      const rawMin=(data.runTime||0)/eff;
+      // Total normed minutes = (runMin + setupMin) / efficiency
+      const rawMin=((data.runMin||0)+(data.setupMin||0))/eff;
       if(rawMin<=0)continue;
       if(!result.has(wcName))result.set(wcName,new Map());
       const wcMap=result.get(wcName);
@@ -7044,6 +7052,10 @@ function computePerfMatrix(effPct){
     }
   }
   S.structIgnoreStock=prevIgnore;
+  console.log('[Perf] computePerfMatrix: processed='+processed+' noData='+noData+' WCs='+result.size);
+  if(!result.size && noData>0){
+    showToast(`Calcul: ${noData} produse fără date BOW/BOM. Verificați că fișierele sunt încărcate.`,'err',5000);
+  }
   return result;
 }
 
