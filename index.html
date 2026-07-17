@@ -8706,6 +8706,21 @@ function openPV2FpPopup(r, anchorEl){
   const close=ev=>{if(!pop.contains(ev.target)&&ev.target!==anchorEl){pop.remove();document.removeEventListener('mousedown',close);}};
   setTimeout(()=>document.addEventListener('mousedown',close),10);
 }
+
+function applyRowFilter(rows){
+  const cf=S.planV2State?.colFilters||{};
+  if(!Object.values(cf).some(v=>v))return rows;
+  const chk=(v,fv)=>!fv||String(v||'').toLowerCase().includes(fv.toLowerCase());
+  return rows.filter(r=>{
+    if(!chk(r.fpItemNo,cf.fpItemNo))return false;
+    if(!chk(r.matNo,cf.matNo))return false;
+    if(!chk(r.matDrawing,cf.matDrawing))return false;
+    if(!chk(r.fpCustomer,cf.fpCustomer))return false;
+    if(cf.subcoText&&!r.wcOps?.some(op=>String(op.subcoText||'').toLowerCase().includes(cf.subcoText.toLowerCase())))return false;
+    if(cf.subcoSupplier&&!r.wcOps?.some(op=>String(op.supplier||'').toLowerCase().includes(cf.subcoSupplier.toLowerCase())))return false;
+    return true;
+  });
+}
 function renderPlanV2(){
   try{
     initPlanV2State();
@@ -8888,25 +8903,12 @@ function renderPlanV2(){
     page.appendChild(tabsBar);
 
     const contentArea=dv('');contentArea.id='pv2-content';
-    contentArea.style.cssText='flex:1;overflow:auto;padding:14px 16px';
+    contentArea.style.cssText='flex:1;overflow:auto;padding:14px 16px;scroll-behavior:smooth';
     page.appendChild(contentArea);
 
     let allComponents=[];
 
-    function applyRowFilter(rows){
-      const cf=st.colFilters||{};
-      if(!Object.values(cf).some(v=>v))return rows;
-      const chk=(v,fv)=>!fv||String(v||'').toLowerCase().includes(fv.toLowerCase());
-      return rows.filter(r=>{
-        if(!chk(r.fpItemNo,cf.fpItemNo))return false;
-        if(!chk(r.matNo,cf.matNo))return false;
-        if(!chk(r.matDrawing,cf.matDrawing))return false;
-        if(!chk(r.fpCustomer,cf.fpCustomer))return false;
-        if(cf.subcoText&&!r.wcOps?.some(op=>String(op.subcoText||'').toLowerCase().includes(cf.subcoText.toLowerCase())))return false;
-        if(cf.subcoSupplier&&!r.wcOps?.some(op=>String(op.supplier||'').toLowerCase().includes(cf.subcoSupplier.toLowerCase())))return false;
-        return true;
-      });
-    }
+    // applyRowFilter is defined globally below
 
     function rebuildAllTbodies(){
       // Don't destroy inputs while user is editing priority/obs/qty fields
@@ -9241,7 +9243,12 @@ function renderPlanV2(){
         const totalProd=rows.reduce((s,r)=>s+r.toProduceQty,0);
         const wcCard=dv('pv2-wc-card');wcCard.style.cssText='background:#fff;border:1px solid var(--border);border-radius:8px;margin-bottom:12px;overflow:hidden;box-shadow:0 1px 4px rgba(0,0,0,.06)';
         const wcHdrDiv=dv('pv2-wc-sticky-hdr');
-        wcHdrDiv.innerHTML=`<span style="font-size:13px;font-weight:800">⚙ ${wc}${wcType?' <span style="font-size:9px;opacity:.7;margin-left:6px">['+wcType+']</span>':''}${isSubcoWC?' <span style="background:#f59e0b;color:#fff;font-size:9px;border-radius:3px;padding:1px 5px;margin-left:6px">SUBCO</span>':''}</span><span style="font-size:10px;opacity:.8">${rows.length} comp · ${fmtN(totalProd)} buc · ${totalH.toFixed(1)}h</span>`;
+        wcHdrDiv.innerHTML=`<span style="font-size:13px;font-weight:800">⚙ ${wc}${wcType?' <span style="font-size:9px;opacity:.7;margin-left:6px">['+wcType+']</span>':''}${isSubcoWC?' <span style="background:#f59e0b;color:#fff;font-size:9px;border-radius:3px;padding:1px 5px;margin-left:6px">SUBCO</span>':''}</span>
+          <span style="display:flex;align-items:center;gap:10px;font-size:10px;opacity:.9">
+            <span>📦 <b>${rows.length}</b> comp.</span>
+            <span>🔢 <b>${fmtN(totalProd)}</b> buc total</span>
+            <span>⏱ <b>${totalH.toFixed(1)}h</b></span>
+          </span>`;
         wcCard.appendChild(wcHdrDiv);
 
         const tbl=el('table');tbl.id='pv2-tbl-'+wc.replace(/\s+/g,'_');
@@ -9390,6 +9397,20 @@ function renderPlanV2(){
           });
           tbody.appendChild(tr);
         });
+        // Subtotal row at bottom of each WC table
+        const totRow=el('tr');totRow.style.cssText='background:#1e3a5f;color:#fff;font-weight:700';
+        const totCols=visCols.map((c,i)=>{
+          const td=el('td');
+          if(i===0){td.style.cssText='padding:5px 8px;font-size:10px;font-weight:800;text-transform:uppercase;letter-spacing:.05em;border-top:2px solid #2d4e7a';td.textContent='SUBTOTAL '+wc;}
+          else if(c.key==='toProduceQty'){td.style.cssText='padding:5px 8px;text-align:right;font-weight:800;font-size:12px;border-top:2px solid #2d4e7a';
+            td.textContent=fmtN(filteredForWC.reduce((s,r)=>{const eq=r.obKey+'__'+r.matNo;const q=(st.qtyEdits&&st.qtyEdits[eq]!=null)?st.qtyEdits[eq]:(r.wcToProduceQty??r.toProduceQty);return s+(+q||0);},0));}
+          else if(c.key==='wcMinutes'){td.style.cssText='padding:5px 8px;text-align:right;font-weight:800;font-size:11px;border-top:2px solid #2d4e7a;color:#93c5fd';
+            td.textContent=fmtBowTime(filteredForWC.reduce((s,r)=>s+(r.wcMinutes||0),0));}
+          else{td.style.cssText='padding:5px 8px;border-top:2px solid #2d4e7a';td.textContent='';}
+          return td;
+        });
+        totCols.forEach(td=>totRow.appendChild(td));
+        tbody.appendChild(totRow);
         tbl.appendChild(tbody);wcCard.appendChild(tbl);contentArea.appendChild(wcCard);
       });
     }
@@ -9480,7 +9501,8 @@ function exportPV2Excel(st){
     XLSX.utils.book_append_sheet(wb,ws,sheetName);
   });
   if(!wb.SheetNames.length){alert('Nu există date vizibile.');return;}
-  XLSX.writeFile(wb,`PlanificareV2_${new Date().toISOString().slice(0,10)}.xlsx`);
+  const wcLabel_=st.selectedWC&&st.selectedWC!=='all'?st.selectedWC:(st.selectedWCType&&st.selectedWCType!=='Toate tipurile'?st.selectedWCType:'Toate WC');
+  XLSX.writeFile(wb,`Plan_lucru_${wcLabel_.replace(/[^a-zA-Z0-9]/g,'_')}_${new Date().toISOString().slice(0,10)}.xlsx`);
 }
 
 function printPV2(st){
@@ -9552,7 +9574,8 @@ function printPV2(st){
   if(!html){alert('Nu există date de printat.');return;}
 
   const tabLabel=st.selectedWk==='current'?`0Late+W${curKey.split('-')[1]}`:st.selectedWk;
-  const titleLine=`Planificare V2 — ${tabLabel} · ${wcTitle}`;
+  const workshopLabel=st.selectedWC&&st.selectedWC!=='all'?st.selectedWC:(st.selectedWCType&&st.selectedWCType!=='Toate tipurile'?st.selectedWCType:'Toate Workcenters');
+  const titleLine=`Plan de lucru pentru workshop: ${workshopLabel} — ${tabLabel}`;
   const subLine=`Transport: ${st.transportDays}z · Producție: ${st.prodDays}z · Eficiență: ${st.efficiency}% · Zoom: ${zoom}% · ${new Date().toLocaleDateString('ro-RO')}`;
   const filters=Object.entries(st.colFilters||{}).filter(([,v])=>v).map(([k,v])=>`${k}="${v}"`).join(' · ');
 
