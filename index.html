@@ -9264,19 +9264,23 @@ function renderPlanV2(){
               td.appendChild(inp);
             }
             else if(c.key==='paintMatNo'){
-              const isPaintFn=(name)=>{const n=(name||'').toLowerCase();return n.includes('paint')||n.includes('powder')||n.includes('primer');};
-              const isP=r.wcOps?.some(op=>isPaintFn(op.wcName));
+              const _pf=(n)=>{const s=(n||'').toLowerCase();return s.includes('paint')||s.includes('powder')||s.includes('primer');};
+              // Show for all rows in paint WC cards - check current wc param
+              const isP=_pf(wc)||r.wcOps?.some(op=>_pf(op.wcName));
               const v=r.paintMatNo||'';
-              td.textContent=isP?(v||'—'):'';
-              if(v&&isP){td.style.color='#0369a1';td.style.fontFamily='monospace';td.style.fontWeight='600';td.title=v;}
-              else td.style.color='#9ca3af';
+              td.textContent=v||'—';
+              if(v){td.style.color='#0369a1';td.style.fontFamily='monospace';td.style.fontWeight='700';td.title=v;}
+              else{td.style.color='#9ca3af';td.style.fontSize='10px';}
+              if(!isP){td.style.opacity='0.3';}
             }
             else if(c.key==='paintMatDesc'){
-              const isP2=r.wcOps?.some(op=>{const n=(op.wcName||'').toLowerCase();return n.includes('paint')||n.includes('powder')||n.includes('primer');});
+              const _pf2=(n)=>{const s=(n||'').toLowerCase();return s.includes('paint')||s.includes('powder')||s.includes('primer');};
+              const isP2=_pf2(wc)||r.wcOps?.some(op=>_pf2(op.wcName));
               const v2=r.paintMatDesc||'';
-              td.textContent=isP2?(v2||'—'):'';
-              if(v2&&isP2){td.style.color='#374151';td.title=v2;}
-              else td.style.color='#9ca3af';
+              td.textContent=v2||'—';
+              if(v2){td.style.color='#374151';td.title=v2;}
+              else{td.style.color='#9ca3af';td.style.fontSize='10px';}
+              if(!isP2){td.style.opacity='0.3';}
             }
             else if(c.key==='obs'){td.style.overflow='visible';td.style.padding='2px 4px';const inp=el('input');inp.type='text';inp.value=S.planV2Meta?.observations?.[r.obKey]||'';inp.placeholder='Observații...';inp.style.cssText='width:100%;min-width:150px;height:24px;padding:0 6px;border:1px solid var(--border);border-radius:3px;font-size:11px';inp.addEventListener('blur',async()=>{if(!S.planV2Meta)S.planV2Meta={priorities:{},observations:{}};if(inp.value.trim())S.planV2Meta.observations[r.obKey]=inp.value.trim();else delete S.planV2Meta.observations[r.obKey];await savePlanV2Meta();});td.appendChild(inp);}
             else td.textContent=val;
@@ -9318,8 +9322,27 @@ function renderPlanV2(){
         // Sortable header
         const thead=el('thead');const hr=el('tr');hr.style.background='#f0f4fa';
         // Build visCols from colOrder (respecting order + hidden)
+        const _isPaintWCCard=(name)=>{const n=(name||'').toLowerCase();return n.includes('paint')||n.includes('powder')||n.includes('primer');};
         const visCols=(st.colOrder||colDefs.map(c=>c.key))
-          .map(k=>colDefs.find(c=>c.key===k)).filter(c=>c&&!st.hiddenCols.has(c.key));
+          .map(k=>colDefs.find(c=>c.key===k)).filter(c=>{
+            if(!c)return false;
+            if(st.hiddenCols.has(c.key)){
+              // Never hide paint cols when we have paint WCs visible
+              if((c.key==='paintMatNo'||c.key==='paintMatDesc')&&[...wcGroups.keys()].some(w=>_isPaintWCCard(w))) return true;
+              return false;
+            }
+            return true;
+          });
+        // Ensure paint cols always appended for paint WC context
+        const _hasPaintCard=[...wcGroups.keys()].some(w=>_isPaintWCCard(w));
+        if(_hasPaintCard){
+          ['paintMatNo','paintMatDesc'].forEach(key=>{
+            if(!visCols.find(c=>c.key===key)){
+              const def=colDefs.find(c=>c.key===key);
+              if(def)visCols.push(def);
+            }
+          });
+        }
         visCols.forEach(c=>{
           const cw=(st.colWidths&&st.colWidths[c.key])||c.w;
           const th=el('th');th.setAttribute('data-pv2-th',c.key);th.style.cssText=`padding:5px 8px;text-align:${c.align};font-size:${st.zoom/100*9}px;font-weight:700;color:var(--text2);text-transform:uppercase;letter-spacing:.06em;white-space:nowrap;cursor:pointer;user-select:none;width:${cw}px;min-width:${cw}px;position:relative`;
