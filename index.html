@@ -9397,19 +9397,18 @@ function renderPlanV2(){
           });
           tbody.appendChild(tr);
         });
-        // Subtotal row at bottom of each WC table
+        // Subtotal row — use `rows` which is the filtered+sorted list for this WC
+        const _subRows=rows.filter(r=>(r.wcToProduceQty??r.toProduceQty)>0);
+        const _totProd=_subRows.reduce((s,r)=>{const eq=r.obKey+'__'+r.matNo;const q=(st.qtyEdits&&st.qtyEdits[eq]!=null)?st.qtyEdits[eq]:(r.wcToProduceQty??r.toProduceQty);return s+(+q||0);},0);
+        const _totMin=_subRows.reduce((s,r)=>s+(r.wcMinutes||0),0);
         const totRow=el('tr');totRow.style.cssText='background:#1e3a5f;color:#fff;font-weight:700';
-        const totCols=visCols.map((c,i)=>{
-          const td=el('td');
-          if(i===0){td.style.cssText='padding:5px 8px;font-size:10px;font-weight:800;text-transform:uppercase;letter-spacing:.05em;border-top:2px solid #2d4e7a';td.textContent='SUBTOTAL '+wc;}
-          else if(c.key==='toProduceQty'){td.style.cssText='padding:5px 8px;text-align:right;font-weight:800;font-size:12px;border-top:2px solid #2d4e7a';
-            td.textContent=fmtN(filteredForWC.reduce((s,r)=>{const eq=r.obKey+'__'+r.matNo;const q=(st.qtyEdits&&st.qtyEdits[eq]!=null)?st.qtyEdits[eq]:(r.wcToProduceQty??r.toProduceQty);return s+(+q||0);},0));}
-          else if(c.key==='wcMinutes'){td.style.cssText='padding:5px 8px;text-align:right;font-weight:800;font-size:11px;border-top:2px solid #2d4e7a;color:#93c5fd';
-            td.textContent=fmtBowTime(filteredForWC.reduce((s,r)=>s+(r.wcMinutes||0),0));}
-          else{td.style.cssText='padding:5px 8px;border-top:2px solid #2d4e7a';td.textContent='';}
-          return td;
+        visCols.forEach((c,i)=>{
+          const td=el('td');td.style.cssText='padding:5px 8px;border-top:2px solid #2d4e7a';
+          if(i===0){td.style.cssText+='font-size:10px;font-weight:800;text-transform:uppercase;letter-spacing:.05em';td.textContent='SUBTOTAL '+wc;}
+          else if(c.key==='toProduceQty'){td.style.cssText+='text-align:right;font-weight:800;font-size:12px';td.textContent=fmtN(_totProd);}
+          else if(c.key==='wcMinutes'){td.style.cssText+='text-align:right;font-size:11px;color:#93c5fd;font-weight:800';td.textContent=fmtBowTime(_totMin);}
+          totRow.appendChild(td);
         });
-        totCols.forEach(td=>totRow.appendChild(td));
         tbody.appendChild(totRow);
         tbl.appendChild(tbody);wcCard.appendChild(tbl);contentArea.appendChild(wcCard);
       });
