@@ -8491,15 +8491,22 @@ function _pushComponentRow(fpItemNo,matNo,fpCustomer,fd,unitsNeeded,obRows,
   const matDrawing=str(bomRow?.['Mat. drawing']||'').trim();
 
   // ── Paint material lookup from BOM children ──
-  const _paintWCnames=new Set(['painting with primer','wet paint','powder paint']);
-  const _hasPaintWC=wcOps.some(op=>_paintWCnames.has(op.wcName.toLowerCase()));
+  const _isPaintWC=(name)=>{const n=(name||'').toLowerCase();return n.includes('paint')||n.includes('powder')||n.includes('primer');};
+  const _hasPaintWC=wcOps.some(op=>_isPaintWC(op.wcName));
   let paintMatNo='', paintMatDesc='';
   if(_hasPaintWC&&S.bomIdx){
-    const childRows=S.bomIdx.get(`${fpItemNo}__${matNo}`)||[];
-    const paints=childRows.map(br=>({
+    // Try component's own children first, then FP-level children
+    const childRows=[...(S.bomIdx.get(`${fpItemNo}__${matNo}`)||[])];
+    // If no children found at component level, component itself may be the paint component
+    // In that case show its own code/name
+    let paints=childRows.map(br=>({
       n:str(br['Material no']||'').trim(),
       d:str(br['Mat. name']||br['Mat desc']||'').trim(),
     })).filter(m=>m.n);
+    if(!paints.length&&matNo){
+      // Fallback: show the component itself as paint material
+      paints=[{n:matNo,d:matName||''}];
+    }
     paintMatNo=paints.map(m=>m.n).join(', ');
     paintMatDesc=paints.map(m=>m.d).join(', ');
   }
@@ -8839,6 +8846,8 @@ function renderPlanV2(){
     if(!st.colOrder)st.colOrder=ALL_PV2_COLS.map(c=>c.key);
     if(st.colOrder[0]!=='priority'){st.colOrder=st.colOrder.filter(k=>k!=='priority');st.colOrder.unshift('priority');}
     if(!st.colOrder.includes('matDrawing')){const mi=st.colOrder.indexOf('matNo');st.colOrder.splice(mi<0?1:mi+1,0,'matDrawing');}
+    if(!st.colOrder.includes('paintMatNo')){st.colOrder.push('paintMatNo');}
+    if(!st.colOrder.includes('paintMatDesc')){st.colOrder.push('paintMatDesc');}
 
     const gCols=dv('');gCols.style.cssText='display:flex;align-items:center;gap:5px;padding-right:12px;border-right:1px solid #e2e8f0';
     const colPickBtn=el('button','tbtn');colPickBtn.innerHTML='⚙ Coloane';
@@ -9255,14 +9264,15 @@ function renderPlanV2(){
               td.appendChild(inp);
             }
             else if(c.key==='paintMatNo'){
-              const isP=r.wcOps?.some(op=>['painting with primer','wet paint','powder paint'].includes(op.wcName.toLowerCase()));
+              const isPaintFn=(name)=>{const n=(name||'').toLowerCase();return n.includes('paint')||n.includes('powder')||n.includes('primer');};
+              const isP=r.wcOps?.some(op=>isPaintFn(op.wcName));
               const v=r.paintMatNo||'';
               td.textContent=isP?(v||'—'):'';
               if(v&&isP){td.style.color='#0369a1';td.style.fontFamily='monospace';td.style.fontWeight='600';td.title=v;}
               else td.style.color='#9ca3af';
             }
             else if(c.key==='paintMatDesc'){
-              const isP2=r.wcOps?.some(op=>['painting with primer','wet paint','powder paint'].includes(op.wcName.toLowerCase()));
+              const isP2=r.wcOps?.some(op=>{const n=(op.wcName||'').toLowerCase();return n.includes('paint')||n.includes('powder')||n.includes('primer');});
               const v2=r.paintMatDesc||'';
               td.textContent=isP2?(v2||'—'):'';
               if(v2&&isP2){td.style.color='#374151';td.title=v2;}
