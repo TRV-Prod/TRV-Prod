@@ -8490,18 +8490,32 @@ function _pushComponentRow(fpItemNo,matNo,fpCustomer,fd,unitsNeeded,obRows,
   const matName=str(stock.name||bomRow?.['Mat. name']||'');
   const matDrawing=str(bomRow?.['Mat. drawing']||'').trim();
 
+  // ── Paint material lookup from BOM children ──
+  const _paintWCnames=new Set(['painting with primer','wet paint','powder paint']);
+  const _hasPaintWC=wcOps.some(op=>_paintWCnames.has(op.wcName.toLowerCase()));
+  let paintMatNo='', paintMatDesc='';
+  if(_hasPaintWC&&S.bomIdx){
+    const childRows=S.bomIdx.get(`${fpItemNo}__${matNo}`)||[];
+    const paints=childRows.map(br=>({
+      n:str(br['Material no']||'').trim(),
+      d:str(br['Mat. name']||br['Mat desc']||'').trim(),
+    })).filter(m=>m.n);
+    paintMatNo=paints.map(m=>m.n).join(', ');
+    paintMatDesc=paints.map(m=>m.d).join(', ');
+  }
+
   result.push({
     fpItemNo,fpCustomer,fpConfirmDt,fpConfirmWk:obRows[0]?.confirmWk||'',
     obKey:obRows.map(r=>r.obKey).join(','),
     fpQty:fd.totalQty,
-    _obRows:obRows, // for popup
+    _obRows:obRows,
     matNo,matName,matDrawing,matType:'MAKE',matQtyMult:1,
     neededQty:unitsNeeded,
     onHandQty:onHand,
     wipQty:Math.max(0,stock.totalWIP||0),
     toProduceQty:Math.max(0,unitsNeeded-onHand-(wipAtIdx.size>0?[...wipAtIdx.values()].reduce((s,v)=>s+v,0):0)),
     compSubcoDays,compStartDate,compStartWk,
-    wcOps
+    wcOps,paintMatNo,paintMatDesc,
   });
 }
 
@@ -8735,6 +8749,8 @@ function applyRowFilter(rows){
     if(!chk(r.fpCustomer,cf.fpCustomer))return false;
     if(cf.subcoText&&!r.wcOps?.some(op=>String(op.subcoText||'').toLowerCase().includes(cf.subcoText.toLowerCase())))return false;
     if(cf.subcoSupplier&&!r.wcOps?.some(op=>String(op.supplier||'').toLowerCase().includes(cf.subcoSupplier.toLowerCase())))return false;
+    if(cf.paintMatNo&&!String(r.paintMatNo||'').toLowerCase().includes(cf.paintMatNo.toLowerCase()))return false;
+    if(cf.paintMatDesc&&!String(r.paintMatDesc||'').toLowerCase().includes(cf.paintMatDesc.toLowerCase()))return false;
     return true;
   });
 }
@@ -9065,6 +9081,8 @@ function renderPlanV2(){
         {key:'fpConfirmDt',label:'Livrare',         w:90,align:'center'},
         {key:'priority',   label:'Prioritate',      w:75,align:'center'},
         {key:'obs',        label:'Observații',      w:170,align:'left'},
+        {key:'paintMatNo',  label:'Cod Vopsea',       w:140,align:'left'},
+        {key:'paintMatDesc',label:'Den. Vopsea',       w:180,align:'left'},
       ];
 
       _currentWcGroups=wcGroups;_currentAllRows=filteredComps;
@@ -9083,6 +9101,8 @@ function renderPlanV2(){
           {key:'fpCustomer',label:'Client',w:110},
           {key:'subcoText',label:'Tip Subco',w:110},
           {key:'subcoSupplier',label:'Furnizor',w:110},
+          {key:'paintMatNo',label:'Cod Vopsea',w:110},
+          {key:'paintMatDesc',label:'Den. Vopsea',w:130},
         ];
         filterCols.forEach(fc=>{
           const wrap=dv('');wrap.style.cssText='display:flex;align-items:center;gap:3px';
@@ -9141,7 +9161,7 @@ function renderPlanV2(){
             compStartDate:_fmtDt(r.compStartDate)||'URGENT',
             wcMinutes:r.wcMinutes>0?fmtBowTime(r.wcMinutes):'—',
             fpConfirmDt:_fmtDt(r.fpConfirmDt)||r.fpConfirmWk,
-            priority:'',obs:'',
+            priority:'',obs:'',paintMatNo:r.paintMatNo||'',paintMatDesc:r.paintMatDesc||'',
           };
           (visCols_||visCols).forEach(c=>{
             const td=el('td');
@@ -9233,6 +9253,20 @@ function renderPlanV2(){
                 }
               });
               td.appendChild(inp);
+            }
+            else if(c.key==='paintMatNo'){
+              const isP=r.wcOps?.some(op=>['painting with primer','wet paint','powder paint'].includes(op.wcName.toLowerCase()));
+              const v=r.paintMatNo||'';
+              td.textContent=isP?(v||'—'):'';
+              if(v&&isP){td.style.color='#0369a1';td.style.fontFamily='monospace';td.style.fontWeight='600';td.title=v;}
+              else td.style.color='#9ca3af';
+            }
+            else if(c.key==='paintMatDesc'){
+              const isP2=r.wcOps?.some(op=>['painting with primer','wet paint','powder paint'].includes(op.wcName.toLowerCase()));
+              const v2=r.paintMatDesc||'';
+              td.textContent=isP2?(v2||'—'):'';
+              if(v2&&isP2){td.style.color='#374151';td.title=v2;}
+              else td.style.color='#9ca3af';
             }
             else if(c.key==='obs'){td.style.overflow='visible';td.style.padding='2px 4px';const inp=el('input');inp.type='text';inp.value=S.planV2Meta?.observations?.[r.obKey]||'';inp.placeholder='Observații...';inp.style.cssText='width:100%;min-width:150px;height:24px;padding:0 6px;border:1px solid var(--border);border-radius:3px;font-size:11px';inp.addEventListener('blur',async()=>{if(!S.planV2Meta)S.planV2Meta={priorities:{},observations:{}};if(inp.value.trim())S.planV2Meta.observations[r.obKey]=inp.value.trim();else delete S.planV2Meta.observations[r.obKey];await savePlanV2Meta();});td.appendChild(inp);}
             else td.textContent=val;
