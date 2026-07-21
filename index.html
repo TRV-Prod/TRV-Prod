@@ -1192,6 +1192,23 @@ button { font-family: var(--sans); }
 .scan-plan-fp{font-size:17px;font-weight:800;font-family:Arial,monospace;color:#1e3a5f}
 .scan-plan-detail{font-size:13px;color:#475569}
 .scan-plan-qty{font-size:20px;font-weight:900;color:#dc2626}
+
+/* ── PV2 Print Overlay ── */
+@media print {
+  body > *:not(#pv2-print-overlay) { display:none!important; }
+  #pv2-print-overlay { display:block!important; position:static!important; padding:0!important; }
+}
+#pv2-print-overlay {
+  display:none;
+  position:fixed;inset:0;z-index:99999;background:#fff;overflow:auto;padding:10mm;font-family:Arial,sans-serif;
+}
+#pv2-print-overlay .po-close {
+  position:fixed;top:10px;right:14px;z-index:100000;height:32px;padding:0 14px;
+  border:1px solid #e2e8f0;border-radius:4px;background:#fff;cursor:pointer;font-size:12px;font-weight:600;
+  display:flex;align-items:center;gap:6px;box-shadow:0 2px 8px rgba(0,0,0,.15);
+}
+#pv2-print-overlay .po-close:hover{background:#f1f5f9}
+@media print{ #pv2-print-overlay .po-close{display:none!important} }
 </style>
 </head>
 <body>
@@ -9509,17 +9526,11 @@ function printPV2(st){
   const wcTypeMap=new Map();(S.wcSetupData||[]).forEach(r=>{const wn=str(r['Workcenter name']||'').trim();const wt=str(r['Workcenter Type']||'').trim();if(wn&&wt)wcTypeMap.set(wn,wt);});
   const wcSortFn=(a,b)=>{const ta=wcTypeMap.get(a)||'ZZZ';const tb=wcTypeMap.get(b)||'ZZZ';if(ta!==tb)return ta.localeCompare(tb);return a.localeCompare(b);};
   const curKey=_currentWkKey();
-  // Determine WC list for title
-  const wcNames=[..._currentWcGroups.keys()].filter(wc=>{
-    if(st.selectedWCType!=='Toate tipurile'&&(wcTypeMap.get(wc)||'')!==st.selectedWCType)return false;
-    if(st.selectedWC!=='all'&&wc!==st.selectedWC)return false;
-    return true;
-  });
-  const wcTitle=wcNames.length<=3?wcNames.join(', '):(wcNames.length+' WC selectate');
   const zoom=st.zoom||100;
-  const fs=Math.round(7*(zoom/100));  // Scale font with zoom
+  const fs=Math.round(7*(zoom/100));
+  const workshopLabel=st.selectedWC&&st.selectedWC!=='all'?st.selectedWC:(st.selectedWCType&&st.selectedWCType!=='Toate tipurile'?st.selectedWCType:'Toate Workcenters');
+  const tabLabel=st.selectedWk==='current'?`0Late+W${curKey.split('-')[1]}`:st.selectedWk;
 
-  const w=window.open('','_blank','width=1400,height=900');if(!w){alert('Permite popup-urile.');return;}
   let html='';
   [..._currentWcGroups.entries()]
     .filter(([wc])=>{
@@ -9538,6 +9549,7 @@ function printPV2(st){
       });
       const wcType=wcTypeMap.get(wc)||'';
       const totalH=rows.reduce((s,r)=>s+(r.wcMinutes||0),0)/60;
+      const totalProd=rows.reduce((s,r)=>{const eq=r.obKey+'__'+r.matNo;const q=(st.qtyEdits&&st.qtyEdits[eq]!=null)?st.qtyEdits[eq]:(r.wcToProduceQty??r.toProduceQty);return s+(+q||0);},0);
       const visCols=(st.colOrder||[]).filter(k=>!st.hiddenCols?.has(k));
       const colLabels={priority:'Prio',fpItemNo:'Produs Final',fpQty:'Qty',matNo:'MOVEX',matDrawing:'Cod ext',fpCustomer:'Client',neededQty:'Nec.',onHandQty:'OH',wipQty:'WIP',toProduceQty:'De prod',compSubcoDays:'Sub(z)',subcoText:'Tip Sub',subcoSupplier:'Furnizor',compStartDate:'Start',wcMinutes:'BOW',fpConfirmDt:'Livrare',obs:'Obs'};
       const thead=visCols.map(k=>`<th>${colLabels[k]||k}</th>`).join('');
@@ -9568,201 +9580,52 @@ function printPV2(st){
         }).join('');
         return `<tr style="${i%2?'background:#f8fafc':''}">${cells}</tr>`;
       }).join('');
-      html+=`<div class="wc-block"><div class="wc-hdr">⚙ ${wc}${wcType?' ['+wcType+']':''} — ${rows.length} comp · ${totalH.toFixed(1)}h</div><table><thead><tr>${thead}</tr></thead><tbody>${rowsHtml}</tbody></table></div>`;
+      const subtotalRow=`<tr style="background:#1e3a5f;color:#fff;font-weight:800">
+        <td colspan="${visCols.length-2}" style="padding:4px 6px;font-size:${fs}pt">SUBTOTAL — ${wc}</td>
+        ${visCols.some(c=>c==='toProduceQty')?`<td style="text-align:right;padding:4px 6px">${fmtN(totalProd)} buc</td>`:''}
+        ${visCols.some(c=>c==='wcMinutes')?`<td style="text-align:right;padding:4px 6px;color:#93c5fd">${fmtBowTime(rows.reduce((s,r)=>s+(r.wcMinutes||0),0))}</td>`:''}
+      </tr>`;
+      html+=`<div style="margin-bottom:16px;page-break-inside:avoid">
+        <div style="background:#1e3a5f;color:#fff;padding:6px 10px;font-size:${fs+1}pt;font-weight:800;border-radius:4px 4px 0 0">
+          ⚙ ${wc}${wcType?' ['+wcType+']':''} · <b>${rows.length} comp</b> · <b>${fmtN(totalProd)} buc</b> · <b>${totalH.toFixed(1)}h</b>
+        </div>
+        <table style="width:100%;border-collapse:collapse;font-size:${fs}pt">
+          <thead><tr style="background:#f0f4fa">${thead}</tr></thead>
+          <tbody>${rowsHtml}${subtotalRow}</tbody>
+        </table>
+      </div>`;
     });
+
   if(!html){alert('Nu există date de printat.');return;}
 
-  const tabLabel=st.selectedWk==='current'?`0Late+W${curKey.split('-')[1]}`:st.selectedWk;
-  const workshopLabel=st.selectedWC&&st.selectedWC!=='all'?st.selectedWC:(st.selectedWCType&&st.selectedWCType!=='Toate tipurile'?st.selectedWCType:'Toate Workcenters');
-  const titleLine=`Plan de lucru pentru workshop: ${workshopLabel} — ${tabLabel}`;
-  const subLine=`Transport: ${st.transportDays}z · Producție: ${st.prodDays}z · Eficiență: ${st.efficiency}% · Zoom: ${zoom}% · ${new Date().toLocaleDateString('ro-RO')}`;
-  const filters=Object.entries(st.colFilters||{}).filter(([,v])=>v).map(([k,v])=>`${k}="${v}"`).join(' · ');
+  // ── Use print overlay on current page (avoids popup blocker) ──
+  let overlay=document.getElementById('pv2-print-overlay');
+  if(!overlay){overlay=dv('');overlay.id='pv2-print-overlay';document.body.appendChild(overlay);}
 
-  w.document.write(`<!DOCTYPE html><html><head><meta charset="UTF-8"><title>${titleLine}</title>
-<style>
-*{box-sizing:border-box;margin:0;padding:0}
-body{font-family:Arial;font-size:${fs}pt;padding:6mm}
-.title-block{margin-bottom:6px}
-h2{font-size:${Math.round(10*(zoom/100))}pt;font-weight:800;margin:0 0 2px 0;display:inline}
-p.sub{font-size:${Math.round(7*(zoom/100))}pt;color:#555;margin:1px 0}
-.wc-block{margin-bottom:8px}
-.wc-hdr{background:#1e293b;color:#fff;padding:3px 7px;font-size:${Math.round(8*(zoom/100))}pt;font-weight:700}
-table{width:100%;border-collapse:collapse;margin-top:0}
-th{background:#334155;color:#fff;padding:2px 4px;font-size:${Math.round(6.5*(zoom/100))}pt;font-weight:700;text-align:left;border:1px solid #0f172a}
-td{padding:2px 4px;border:1px solid #e2e8f0;font-size:${fs}pt;vertical-align:middle}
-tr:nth-child(even) td{background:#f8fafc}
-@page{size:A3 landscape;margin:6mm}
-</style></head><body>
-<div class="title-block"><h2>${titleLine}</h2><br><p class="sub">${subLine}${filters?' · Filtre: '+filters:''}</p></div>
-${html}</body></html>`);
-  w.document.close();setTimeout(()=>w.print(),600);
+  const closeBtn=el('button','po-close');closeBtn.innerHTML='✕ Închide previzualizare';
+  closeBtn.addEventListener('click',()=>{overlay.style.display='none';overlay.innerHTML='';});
+  const printBtn2=el('button','po-close');printBtn2.style.cssText='position:fixed;top:10px;right:220px;z-index:100000;height:32px;padding:0 14px;border:1.5px solid #0369a1;border-radius:4px;background:#eff6ff;cursor:pointer;font-size:12px;font-weight:700;color:#0369a1;display:flex;align-items:center;gap:6px;box-shadow:0 2px 8px rgba(0,0,0,.15)';
+  printBtn2.innerHTML='🖨 Printează / Save PDF';
+  printBtn2.addEventListener('click',()=>window.print());
+
+  const filterInfo=Object.entries(st.colFilters||{}).filter(([,v])=>v).map(([k,v])=>`${k}="${v}"`).join(' · ');
+  overlay.innerHTML=`
+    <style>
+      #pv2-print-overlay table{width:100%;border-collapse:collapse}
+      #pv2-print-overlay th{background:#334155;color:#fff;padding:3px 6px;font-size:${fs}pt;font-weight:700;text-align:left;border:1px solid #0f172a}
+      #pv2-print-overlay td{padding:2px 6px;border:1px solid #e2e8f0;font-size:${fs}pt;vertical-align:middle}
+      @page{size:A3 landscape;margin:7mm}
+      @media print{#pv2-print-overlay{padding:0!important}}
+    </style>
+    <h2 style="font-size:${fs+5}pt;margin-bottom:3px">Plan de lucru pentru workshop: ${workshopLabel}</h2>
+    <p style="font-size:${fs-1}pt;color:#555;margin-bottom:10px">${tabLabel} · Transport: ${st.transportDays}z · Producție: ${st.prodDays}z · Eficiență: ${st.efficiency}% · Zoom: ${zoom}% · ${new Date().toLocaleDateString('ro-RO')}${filterInfo?' · Filtre: '+filterInfo:''}</p>
+    ${html}`;
+  overlay.prepend(closeBtn);overlay.prepend(printBtn2);
+  overlay.style.display='block';
+  setTimeout(()=>overlay.scrollTo(0,0),50);
 }
 
 
-
-function getMatQtyInFP(fpCode, matNo){
-  // Find matQty for matNo within fpCode BOM
-  if(!S.bomIdx) return 1;
-  for(const [key, rows] of S.bomIdx){
-    if(!key.startsWith(fpCode+'__')) continue;
-    const row=rows.find(r=>str(r['Material no'])===matNo);
-    if(row) return parseFloat(String(row['Material qty']||'1').replace(',','.'))||1;
-  }
-  return 1;
-}
-
-function openScanBalloon(title, bodyFn){
-  document.getElementById('scan-balloon-overlay')?.remove();
-  const ov=dv('scan-balloon-overlay');ov.id='scan-balloon-overlay';
-  const bl=dv('scan-balloon');
-  const hdr=dv('scan-balloon-hdr');
-  const ttl=dv('scan-balloon-title');ttl.textContent=title;
-  const cls=el('button','scan-balloon-close');cls.innerHTML='✕';
-  cls.addEventListener('click',()=>ov.remove());
-  hdr.appendChild(ttl);hdr.appendChild(cls);bl.appendChild(hdr);
-  const body=dv('scan-balloon-body');bodyFn(body);
-  bl.appendChild(body);ov.appendChild(bl);
-  ov.addEventListener('click',e=>{if(e.target===ov)ov.remove();});
-  document.body.appendChild(ov);
-}
-
-function openBomBalloon(fpCode, fpName){
-  openScanBalloon('🌳 Structura BOM — '+fpCode, body=>{
-    if(!S.bomIdx||!S.bowIdx){body.innerHTML='<p style="color:var(--text3);text-align:center;padding:20px">Fișierele BOM/BOW nu sunt încărcate.</p>';return;}
-    // Save/restore current FP state
-    const prevFP=S.selFP, prevQty=S.qtyInput;
-    S.selFP=fpCode; S.qtyInput=1;
-    const needs=S.stockIdx?calcNeeds(fpCode,1):null;
-    const treeData=buildTree(fpCode,fpCode);
-    // Render simplified tree into balloon
-    function renderNode(node, depth){
-      const wrap=dv('');
-      const row=dv('');row.style.cssText=`display:flex;align-items:flex-start;padding:4px 0;padding-left:${depth*16}px;border-bottom:1px solid #f8fafc`;
-      const connector=depth>0?`<span style="color:#d1d5db;margin-right:4px;font-family:monospace">${'│  '.repeat(depth-1)}└─</span>`:'';
-      const isMake=node.isMake;
-      const need=needs?.get(node.matNo);
-      const stock=S.stockIdx?.get(node.matNo);
-      const oh=stock?.onHand??'—';const wip=stock?.totalWIP??'—';
-      row.innerHTML=`${connector}
-        <span style="font-family:monospace;font-weight:700;font-size:13px;color:${isMake?'#6d28d9':'#065f46'}">${node.matNo}</span>
-        ${node.matDraw?`<span style="color:#9ca3af;font-size:11px;margin-left:5px">⇒${node.matDraw}</span>`:''}
-        ${node.matName?`<span style="color:#6b7280;font-size:11px;margin-left:5px">${node.matName}</span>`:''}
-        ${node.qty!=null?`<span style="color:#dc2626;font-size:11px;margin-left:6px;font-style:italic">${fmtQty(node.qty,node.unit)}</span>`:''}
-        ${need?`<span style="margin-left:8px;padding:1px 5px;border-radius:2px;font-size:9.5px;font-weight:600;background:${need.net===0?'#dcfce7':'#fee2e2'};color:${need.net===0?'#14532d':'#7f1d1d'}">${need.net===0?'✓ OK':'⚠ Lipsă '+fmtN(need.net)}</span>`:''}
-        ${stock?`<span style="margin-left:6px;font-size:9.5px;color:#475569">OH:${fmtN(oh)} WIP:${fmtN(wip)}</span>`:''}
-      `;
-      wrap.appendChild(row);
-      node.children.forEach(ch=>wrap.appendChild(renderNode(ch,depth+1)));
-      return wrap;
-    }
-    if(!treeData.length){body.innerHTML='<p style="color:var(--text3);padding:16px;text-align:center">Nicio componentă BOM găsită.</p>';return;}
-    treeData.forEach(n=>body.appendChild(renderNode(n,0)));
-    S.selFP=prevFP;S.qtyInput=prevQty;
-  });
-}
-
-function openStocBalloon(fpCode){
-  openScanBalloon('📦 Stocuri subcomponente — '+fpCode, body=>{
-    if(!S.stockIdx||!S.bomIdx){body.innerHTML='<p style="color:var(--text3);padding:16px;text-align:center">Fișierele nu sunt încărcate.</p>';return;}
-    const treeData=buildTree(fpCode,fpCode);
-    function collectAll(nodes,out){nodes.forEach(n=>{out.push(n);collectAll(n.children,out);});}
-    const allNodes=[];collectAll(treeData,allNodes);
-    if(!allNodes.length){body.innerHTML='<p style="color:var(--text3);padding:16px;text-align:center">Nicio componentă.</p>';return;}
-    const planQ=planQty(fpCode);
-    let currentFilter='all';
-
-    // ── Filter bar ──
-    const filterBar=dv('');filterBar.style.cssText='display:flex;gap:6px;margin-bottom:10px;flex-wrap:wrap;align-items:center';
-    const mkFilterBtn=(label,val,color)=>{
-      const b=el('button');b.textContent=label;b.setAttribute('data-fval',val);b.setAttribute('data-fcol',color);
-      b.style.cssText=`height:30px;padding:0 14px;border-radius:20px;border:1.5px solid ${color};font-size:12px;font-weight:700;cursor:pointer;background:${val==='all'?color:'#fff'};color:${val==='all'?'#fff':color};transition:all .15s`;
-      b.addEventListener('click',()=>{
-        currentFilter=val;
-        filterBar.querySelectorAll('button').forEach(b2=>{
-          const bv=b2.getAttribute('data-fval'),bc=b2.getAttribute('data-fcol');
-          b2.style.background=bv===val?bc:'#fff';b2.style.color=bv===val?'#fff':bc;
-        });
-        renderTable();
-      });
-      return b;
-    };
-    filterBar.appendChild(mkFilterBtn('Toate','all','#475569'));
-    filterBar.appendChild(mkFilterBtn('MAKE','MAKE','#6d28d9'));
-    filterBar.appendChild(mkFilterBtn('Purchase','BUY','#065f46'));
-    // Insufficient only toggle
-    let showOnlyInsuf=false;
-    const insufBtn=el('button');insufBtn.textContent='⚠ Doar insuficiente';
-    insufBtn.style.cssText='height:30px;padding:0 12px;border-radius:20px;border:1.5px solid #dc2626;font-size:12px;font-weight:700;cursor:pointer;background:#fff;color:#dc2626;margin-left:auto;transition:all .15s';
-    insufBtn.addEventListener('click',()=>{showOnlyInsuf=!showOnlyInsuf;insufBtn.style.background=showOnlyInsuf?'#dc2626':'#fff';insufBtn.style.color=showOnlyInsuf?'#fff':'#dc2626';renderTable();});
-    filterBar.appendChild(insufBtn);
-    body.appendChild(filterBar);
-
-    // ── TABLE: single <table> so columns always align ──
-    const tableWrap=dv('');tableWrap.id='stoc-balloon-table';body.appendChild(tableWrap);
-
-    function renderTable(){
-      tableWrap.innerHTML='';
-      const filtered=allNodes.filter(n=>{
-        const tv=n.isMake?'MAKE':'BUY';
-        if(currentFilter!=='all'&&tv!==currentFilter)return false;
-        if(showOnlyInsuf){
-          const st=S.stockIdx.get(n.matNo)||{onHand:0,totalWIP:0};
-          const avail=Math.max(0,st.onHand)+Math.max(0,st.totalWIP);
-          if(avail>=(n.qty??1)*planQ)return false;
-        }
-        return true;
-      });
-      if(!filtered.length){
-        tableWrap.innerHTML='<p style="text-align:center;color:var(--text3);padding:20px;font-size:13px">Niciun element conform filtrului.</p>';return;
-      }
-      const tbl=el('table');
-      tbl.style.cssText='width:100%;border-collapse:collapse;font-size:12px';
-      const thead=el('thead');
-      const hrow=el('tr');hrow.style.cssText='background:#f8fafc;border-bottom:2px solid #e2e8f0';
-      [{l:'Item',c:'#94a3b8',a:'left',w:''},{l:'Necesar',c:'#dc2626',a:'right',w:'80px'},{l:'On Hand',c:'#15803d',a:'right',w:'72px'},{l:'WIP',c:'#7c3aed',a:'right',w:'72px'}]
-      .forEach(({l,c,a,w})=>{const th=el('th');th.style.cssText=`padding:7px 6px;text-align:${a};font-size:9.5px;font-weight:700;color:${c};text-transform:uppercase;letter-spacing:.05em;${w?'width:'+w+';min-width:'+w:''}`;th.textContent=l;hrow.appendChild(th);});
-      thead.appendChild(hrow);tbl.appendChild(thead);
-      const tbody=el('tbody');
-      filtered.forEach((n,i)=>{
-        const st=S.stockIdx.get(n.matNo)||{onHand:0,totalWIP:0};
-        const matQty=n.qty??1;
-        const necesarPlan=Math.round(matQty*planQ*10)/10;
-        const avail=Math.max(0,st.onHand)+Math.max(0,st.totalWIP);
-        const insufficient=planQ>0&&avail<necesarPlan;
-        const isMake=n.isMake;
-        const tr=el('tr');
-        // Row highlight for insufficient
-        if(insufficient){
-          tr.style.cssText='background:#fef2f2;border-left:3px solid #dc2626';
-        } else {
-          tr.style.cssText=`background:${i%2?'#f8fafc':'#fff'}`;
-        }
-        tr.innerHTML=`
-          <td style="padding:8px 6px;border-bottom:1px solid #f1f5f9;vertical-align:middle">
-            <div style="font-family:monospace;font-weight:700;font-size:12px;color:${isMake?'#6d28d9':'#065f46'};${insufficient?'color:#dc2626':''}">${n.matNo}</div>
-            ${n.matName?`<div style="font-size:10px;color:#6b7280;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${n.matName}</div>`:''}
-            <span style="display:inline-block;padding:0 4px;border-radius:2px;font-size:8px;font-weight:700;background:${isMake?'rgba(109,40,217,.1)':'rgba(6,95,70,.1)'};color:${isMake?'#6d28d9':'#065f46'};border:1px solid ${isMake?'rgba(109,40,217,.2)':'rgba(6,95,70,.2)'}">${isMake?'MAKE':'BUY'}</span>
-            ${insufficient?`<span style="display:inline-block;margin-left:4px;padding:0 4px;border-radius:2px;font-size:8px;font-weight:700;background:#fee2e2;color:#dc2626;border:1px solid #fca5a5">⚠ INSUF.</span>`:''}
-          </td>
-          <td style="padding:8px 6px;text-align:right;border-bottom:1px solid #f1f5f9;vertical-align:middle;white-space:nowrap">
-            ${planQ>0
-              ?`<div style="font-size:15px;font-weight:900;color:${insufficient?'#dc2626':'#374151'}">${fmtN(necesarPlan)}</div>
-                 <div style="font-size:9px;color:#94a3b8">${fmtN(matQty)}/FP</div>`
-              :'<div style="font-size:13px;color:#94a3b8">—</div>'}
-          </td>
-          <td style="padding:8px 6px;text-align:right;border-bottom:1px solid #f1f5f9;vertical-align:middle;white-space:nowrap">
-            <div style="font-size:15px;font-weight:800;color:${st.onHand>0?'#15803d':st.onHand<0?'#dc2626':'#94a3b8'}">${fmtN(st.onHand)}</div>
-          </td>
-          <td style="padding:8px 6px;text-align:right;border-bottom:1px solid #f1f5f9;vertical-align:middle;white-space:nowrap">
-            <div style="font-size:15px;font-weight:800;color:${st.totalWIP>0?'#7c3aed':'#94a3b8'}">${st.totalWIP?fmtN(st.totalWIP):'—'}</div>
-          </td>`;
-        tbody.appendChild(tr);
-      });
-      tbl.appendChild(tbody);tableWrap.appendChild(tbl);
-    }
-    renderTable();
-  });
-}
 function renderScanner(){
   const page=dv('scanner-page');
 
