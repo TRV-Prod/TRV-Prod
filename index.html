@@ -1242,6 +1242,8 @@ const S={
   structIgnoreStock:false,
   perfData:null,
   perfWcGroups:[],
+  normCfg:{wcs:[],orders:[]},
+  normSessions:[],
   perfData:null,  // {rows:[{period,item,name,qty}], months:[...], items:{item→{name}}}
   perfWcGroups:[],  // [{groupName, wcs:[wcName,...]}]
   efficienta:100,
@@ -3287,6 +3289,7 @@ function render(){
     {id:'scanari',label:'Raport Scanari'},
     {id:'scanner',label:'📷 Scanner'},
   ];
+  tabs.push({id:'normare',label:'⏱ Normare'});
   if(S.session.role==='admin') tabs.push({id:'dctr',label:'Disciplina CTR'});
   if(S.session.role==='admin') tabs.push({id:'performanta',label:'Performanță'});
   if(S.session.role==='admin') tabs.push({id:'utilizatori',label:'Utilizatori'});
@@ -3389,6 +3392,7 @@ function render(){
   else if(S.tab==='planificare')body.appendChild(renderPlanificare());
   else if(S.tab==='planv2')body.appendChild(renderPlanV2());
   else if(S.tab==='pwc')body.appendChild(renderPwcTab());
+  else if(S.tab==='normare')body.appendChild(renderNormare());
   else if(S.tab==='dctr')body.appendChild(renderDctrTab());
   else if(S.tab==='performanta')body.appendChild(renderPerformanta());
   else if(S.tab==='scanari')body.appendChild(renderScanariTab());
@@ -7380,6 +7384,596 @@ function exportPerfExcel(effPct,unitHours){
   XLSX.utils.book_append_sheet(wb,ws2,'Livrari Detaliu');
 
   XLSX.writeFile(wb,`Performanta_${new Date().toISOString().slice(0,10)}.xlsx`);
+}
+
+/* ═══════════════════════════════════════════════════════════════════════
+   MODUL NORMARE — Time study pentru operatori
+═══════════════════════════════════════════════════════════════════════ */
+
+// ── Supabase persistence ──
+async function saveNormCfg(){
+  if(!S.sbCfg)return;
+  await sbUpload(S.sbCfg,'data-normare-config.json',S.normCfg);
+}
+async function loadNormCfg(){
+  if(!S.sbCfg)return;
+  const d=await sbDownload(S.sbCfg,'data-normare-config.json');
+  if(d)S.normCfg=d;
+}
+async function saveNormSession(sess){
+  if(!S.sbCfg)return;
+  if(!S.normSessions)S.normSessions=[];
+  S.normSessions.unshift(sess);
+  await sbUpload(S.sbCfg,'data-normare-sessions.json',S.normSessions.slice(0,500));
+}
+async function loadNormSessions(){
+  if(!S.sbCfg)return;
+  const d=await sbDownload(S.sbCfg,'data-normare-sessions.json');
+  if(Array.isArray(d))S.normSessions=d;
+}
+
+function fmtMs(ms){
+  if(!ms||ms<0)return '0:00:00';
+  const s=Math.floor(ms/1000),h=Math.floor(s/3600),m=Math.floor((s%3600)/60),sec=s%60;
+  return `${h}:${String(m).padStart(2,'0')}:${String(sec).padStart(2,'0')}`;
+}
+
+const NORM_EVENTS=[
+  {id:'setup',    label:'⚙ Setup scule/disp./mașină', color:'#7c3aed',bg:'#ede9fe'},
+  {id:'deburr',   label:'🔩 Debavurare',               color:'#0369a1',bg:'#e0f2fe'},
+  {id:'pickup',   label:'↕ Preluare/Evacuare piese',   color:'#0f766e',bg:'#ccfbf1'},
+  {id:'ctc',      label:'✓ Validare CTC',               color:'#b45309',bg:'#fef3c7'},
+  {id:'run',      label:'▶ RUN (producție serie)',       color:'#15803d',bg:'#dcfce7'},
+  {id:'other',    label:'✎ Altele',                     color:'#6b7280',bg:'#f3f4f6'},
+];
+
+function renderNormare(){
+  const page=dv('');page.style.cssText='display:flex;flex-direction:column;height:100%;overflow:hidden;background:#f8f9fb';
+
+  // ── Tabs ──
+  const tabBar=dv('');tabBar.style.cssText='display:flex;gap:0;border-bottom:2px solid var(--border);background:#fff;flex-shrink:0';
+  let activeTab='operator';
+
+  const tabContent=dv('');tabContent.style.cssText='flex:1;overflow:auto';
+
+  const showTab=(id)=>{
+    activeTab=id;
+    tabBar.querySelectorAll('.norm-tab').forEach(t=>{
+      const active=t.dataset.tab===id;
+      t.style.cssText=`padding:10px 20px;cursor:pointer;font-size:12px;font-weight:700;border-bottom:${active?'3px solid #1e3a5f':'3px solid transparent'};color:${active?'#1e3a5f':'var(--text3)'};background:none;border-left:none;border-right:none;border-top:none;transition:all .15s`;
+    });
+    tabContent.innerHTML='';
+    if(id==='operator')tabContent.appendChild(renderNormOperator());
+    else if(id==='config')tabContent.appendChild(renderNormConfig());
+    else if(id==='history')tabContent.appendChild(renderNormHistory());
+  };
+
+  [
+    {id:'operator',label:'⏱ Normare Operator'},
+    {id:'config',  label:'⚙ Configurare'},
+    {id:'history', label:'📋 Istoric Normare'},
+  ].forEach(t=>{
+    const btn=el('button','norm-tab');btn.textContent=t.label;btn.dataset.tab=t.id;
+    btn.addEventListener('click',()=>showTab(t.id));
+    tabBar.appendChild(btn);
+  });
+
+  page.appendChild(tabBar);page.appendChild(tabContent);
+  loadNormCfg().then(()=>{ loadNormSessions().then(()=>showTab('operator')); });
+  return page;
+}
+
+/* ─── OPERATOR INTERFACE ─── */
+function renderNormOperator(){
+  const wrap=dv('');wrap.style.cssText='display:flex;flex-direction:column;height:100%;padding:0';
+
+  let sessionActive=false;
+  let sessionStart=null;
+  let currentEventId='run'; // default: run mode when no interruption
+  let eventStart=null;
+  let eventTotals={setup:0,deburr:0,pickup:0,ctc:0,run:0,other:0};
+  let rafId=null;
+  let selectedOrder=null;
+  let drawingUrl=null;
+  let otherLabel='';
+  let quantity=1;
+
+  // ── Top bar ──
+  const topBar=dv('');topBar.style.cssText='display:flex;align-items:center;gap:10px;padding:10px 16px;background:#fff;border-bottom:1px solid var(--border);flex-shrink:0;flex-wrap:wrap';
+
+  // Order selector
+  const orderSel=el('select');orderSel.style.cssText='height:34px;padding:0 8px;border:1.5px solid var(--border);border-radius:5px;font-size:12px;font-weight:600;min-width:200px;background:#fff';
+  const refreshOrders=()=>{
+    orderSel.innerHTML='<option value="">-- Selectați comanda --</option>';
+    (S.normCfg?.orders||[]).forEach(o=>{
+      const opt=el('option');opt.value=o.id;opt.textContent=`${o.product}${o.drawing?' / '+o.drawing:''} — ${o.wc}${o.machine?' / '+o.machine:''}`;
+      orderSel.appendChild(opt);
+    });
+  };
+  refreshOrders();
+  orderSel.addEventListener('change',()=>{
+    selectedOrder=(S.normCfg?.orders||[]).find(o=>o.id===orderSel.value)||null;
+    updateOrderInfo();
+  });
+  topBar.appendChild(orderSel);
+
+  // Operator input
+  const opInp=el('input');opInp.placeholder='Operator (min. 5 caractere)';opInp.maxLength=60;
+  opInp.style.cssText='height:34px;padding:0 10px;border:1.5px solid var(--border);border-radius:5px;font-size:12px;min-width:180px';
+  opInp.value=S.session?.name||'';
+  topBar.appendChild(opInp);
+
+  // Qty
+  const qtyWrap=dv('');qtyWrap.style.cssText='display:flex;align-items:center;gap:5px';
+  qtyWrap.innerHTML='<span style="font-size:11px;color:var(--text3);font-weight:700">Buc:</span>';
+  const qtyInp=el('input');qtyInp.type='number';qtyInp.min=1;qtyInp.value=1;
+  qtyInp.style.cssText='height:34px;width:70px;padding:0 8px;border:1.5px solid var(--border);border-radius:5px;font-size:13px;font-weight:700;text-align:center';
+  qtyInp.addEventListener('input',()=>quantity=parseInt(qtyInp.value)||1);
+  qtyWrap.appendChild(qtyInp);topBar.appendChild(qtyWrap);
+
+  // START/STOP button
+  const startBtn=el('button');startBtn.textContent='▶ START NORMARE';
+  startBtn.style.cssText='height:40px;padding:0 20px;border:none;border-radius:6px;background:#15803d;color:#fff;font-size:14px;font-weight:800;cursor:pointer;transition:all .2s;margin-left:8px';
+  startBtn.addEventListener('click',()=>{
+    if(!sessionActive){
+      if((opInp.value||'').trim().length<5){
+        opInp.style.borderColor='#dc2626';opInp.focus();
+        showToast('Introduceți numele operatorului (min. 5 caractere)','err',2500);return;
+      }
+      opInp.style.borderColor='';
+      if(!selectedOrder){showToast('Selectați o comandă de normare','err',2500);return;}
+      // START
+      sessionActive=true;sessionStart=Date.now();
+      eventStart=Date.now();currentEventId='run';
+      eventTotals={setup:0,deburr:0,pickup:0,ctc:0,run:0,other:0};
+      quantity=parseInt(qtyInp.value)||1;
+      startBtn.textContent='⏹ STOP NORMARE';startBtn.style.background='#dc2626';
+      opInp.disabled=true;orderSel.disabled=true;qtyInp.disabled=true;
+      updateEventBtns();startTicker();
+    } else {
+      // STOP
+      stopSession();
+    }
+  });
+  topBar.appendChild(startBtn);
+
+  // Main timer display
+  const mainTimer=dv('');mainTimer.style.cssText='margin-left:auto;font-size:24px;font-weight:900;font-family:monospace;color:#1e3a5f;background:#f0f4fa;padding:6px 16px;border-radius:6px;letter-spacing:2px';
+  mainTimer.textContent='0:00:00';topBar.appendChild(mainTimer);
+
+  wrap.appendChild(topBar);
+
+  // ── Product info strip ──
+  const infoStrip=dv('');infoStrip.style.cssText='background:#fff;border-bottom:1px solid var(--border);padding:8px 16px;font-size:11.5px;color:var(--text2);display:flex;gap:16px;flex-wrap:wrap;align-items:center;flex-shrink:0';
+  infoStrip.id='norm-info-strip';wrap.appendChild(infoStrip);
+
+  // ── Main content (drawing + events side by side) ──
+  const main=dv('');main.style.cssText='display:flex;flex:1;overflow:hidden;gap:0';
+
+  // Left: Drawing viewer
+  const drawPane=dv('');drawPane.style.cssText='width:50%;min-width:200px;border-right:2px solid var(--border);display:flex;flex-direction:column;overflow:hidden;background:#1a1a2e;position:relative';
+  const drawHdr=dv('');drawHdr.style.cssText='padding:6px 10px;background:#0f172a;color:#94a3b8;font-size:10px;font-weight:700;text-transform:uppercase;display:flex;justify-content:space-between;align-items:center;flex-shrink:0';
+  drawHdr.innerHTML='<span>📐 Desen tehnic</span>';
+  const drawUpload=el('button');drawUpload.textContent='📂 Încarcă desen';
+  drawUpload.style.cssText='height:24px;padding:0 8px;border:1px solid #334155;border-radius:3px;background:#1e293b;color:#94a3b8;cursor:pointer;font-size:10px';
+  const drawFile=el('input');drawFile.type='file';drawFile.accept='image/*,.pdf';drawFile.style.display='none';
+  drawFile.addEventListener('change',()=>{
+    const f=drawFile.files[0];if(!f)return;
+    const url=URL.createObjectURL(f);drawingUrl=url;
+    renderDrawing(url,f.type);
+  });
+  drawUpload.addEventListener('click',()=>drawFile.click());
+  drawHdr.appendChild(drawUpload);drawHdr.appendChild(drawFile);drawPane.appendChild(drawHdr);
+
+  const drawViewer=dv('');drawViewer.id='norm-draw-viewer';
+  drawViewer.style.cssText='flex:1;overflow:auto;display:flex;align-items:center;justify-content:center;color:#475569;font-size:13px;text-align:center;padding:20px';
+  drawViewer.textContent='Niciun desen încărcat.';
+  drawPane.appendChild(drawViewer);
+
+  let drawZoom=1;
+  const zoomBar=dv('');zoomBar.style.cssText='display:flex;align-items:center;gap:6px;padding:5px 10px;background:#0f172a;border-top:1px solid #1e293b;flex-shrink:0';
+  const zmOut=el('button');zmOut.textContent='−';zmOut.style.cssText='width:28px;height:28px;border:1px solid #334155;background:#1e293b;color:#94a3b8;border-radius:4px;cursor:pointer;font-size:16px;font-weight:700';
+  const zmIn=el('button');zmIn.textContent='+';zmIn.style.cssText='width:28px;height:28px;border:1px solid #334155;background:#1e293b;color:#94a3b8;border-radius:4px;cursor:pointer;font-size:16px;font-weight:700';
+  const zmLbl=dv('');zmLbl.textContent='100%';zmLbl.style.cssText='color:#94a3b8;font-size:10px;font-weight:700;min-width:36px;text-align:center';
+  const zmFit=el('button');zmFit.textContent='Fit';zmFit.style.cssText='height:28px;padding:0 8px;border:1px solid #334155;background:#1e293b;color:#94a3b8;border-radius:4px;cursor:pointer;font-size:10px;margin-left:4px';
+  const applyZoom=(z)=>{
+    drawZoom=Math.max(0.1,Math.min(5,z));
+    zmLbl.textContent=Math.round(drawZoom*100)+'%';
+    const img=drawViewer.querySelector('img');
+    if(img){img.style.transform=`scale(${drawZoom})`;img.style.transformOrigin='top left';}
+  };
+  zmOut.addEventListener('click',()=>applyZoom(drawZoom-0.25));
+  zmIn.addEventListener('click',()=>applyZoom(drawZoom+0.25));
+  zmFit.addEventListener('click',()=>applyZoom(1));
+  zoomBar.appendChild(zmOut);zoomBar.appendChild(zmLbl);zoomBar.appendChild(zmIn);zoomBar.appendChild(zmFit);
+  drawPane.appendChild(zoomBar);
+
+  const renderDrawing=(url,type)=>{
+    drawViewer.innerHTML='';
+    if(type&&type.includes('pdf')){
+      const fr=el('iframe');fr.src=url;fr.style.cssText='width:100%;height:100%;border:none;background:#fff';
+      drawViewer.style.padding='0';drawViewer.appendChild(fr);
+    } else {
+      const imgWrap=dv('');imgWrap.style.cssText='cursor:grab;overflow:visible;width:max-content';
+      const img=el('img');img.src=url;img.style.cssText='max-width:none;display:block;user-select:none;transform-origin:top left';
+      img.addEventListener('load',()=>applyZoom(1));
+      imgWrap.appendChild(img);drawViewer.style.padding='10px';
+      drawViewer.appendChild(imgWrap);
+      // Pan support
+      let pan=false,px=0,py=0,sx=0,sy=0;
+      imgWrap.addEventListener('mousedown',e=>{pan=true;px=e.clientX;py=e.clientY;sx=drawViewer.scrollLeft;sy=drawViewer.scrollTop;imgWrap.style.cursor='grabbing';});
+      window.addEventListener('mouseup',()=>{pan=false;imgWrap.style.cursor='grab';});
+      window.addEventListener('mousemove',e=>{if(!pan)return;drawViewer.scrollLeft=sx-(e.clientX-px);drawViewer.scrollTop=sy-(e.clientY-py);});
+      drawViewer.addEventListener('wheel',e=>{e.preventDefault();applyZoom(drawZoom+(e.deltaY<0?0.1:-0.1));},{passive:false});
+    }
+  };
+  main.appendChild(drawPane);
+
+  // Right: Events + BOW
+  const rightPane=dv('');rightPane.style.cssText='flex:1;display:flex;flex-direction:column;overflow:hidden';
+
+  // BOW info table
+  const bowPanel=dv('');bowPanel.style.cssText='padding:10px 14px;border-bottom:1px solid var(--border);background:#fff;flex-shrink:0';
+  bowPanel.id='norm-bow-panel';bowPanel.innerHTML='<span style="font-size:11px;color:var(--text3)">Selectați o comandă pentru a vedea datele BOW.</span>';
+  rightPane.appendChild(bowPanel);
+
+  // Events
+  const evtPanel=dv('');evtPanel.style.cssText='flex:1;overflow-y:auto;padding:14px;background:#f8f9fb;display:flex;flex-direction:column;gap:10px';
+
+  const otherInp=el('input');otherInp.placeholder='Descrieți evenimentul...';
+  otherInp.style.cssText='display:none;height:32px;padding:0 10px;border:1.5px solid #6b7280;border-radius:5px;font-size:12px;width:100%;margin-top:6px';
+  otherInp.addEventListener('input',()=>otherLabel=otherInp.value.trim());
+
+  const evtBtns=new Map();
+  const evtTimers=new Map(); // eventId → display span
+
+  NORM_EVENTS.forEach(evt=>{
+    const card=dv('');card.style.cssText=`border:2.5px solid ${evt.color};border-radius:10px;background:#fff;overflow:hidden;transition:all .2s`;
+    const btn=el('button');
+    btn.style.cssText=`width:100%;padding:14px 18px;border:none;background:transparent;cursor:pointer;display:flex;align-items:center;justify-content:space-between;font-size:14px;font-weight:700;color:${evt.color};text-align:left`;
+    btn.innerHTML=`<span>${evt.label}</span><span class="norm-evt-timer" data-eid="${evt.id}" style="font-family:monospace;font-size:16px;font-weight:900;background:${evt.bg};padding:4px 12px;border-radius:6px;color:${evt.color}">0:00:00</span>`;
+    btn.disabled=true;
+    btn.addEventListener('click',()=>{
+      if(!sessionActive)return;
+      if(evt.id==='other'&&!otherLabel&&!otherInp.value.trim()){
+        otherInp.style.display='block';otherInp.focus();return;
+      }
+      switchEvent(evt.id);
+    });
+    card.appendChild(btn);
+    if(evt.id==='other')card.appendChild(otherInp);
+    evtBtns.set(evt.id,{card,btn});
+    evtPanel.appendChild(card);
+  });
+  rightPane.appendChild(evtPanel);
+  main.appendChild(rightPane);
+  wrap.appendChild(main);
+
+  // ── Update functions ──
+  const updateOrderInfo=()=>{
+    infoStrip.innerHTML='';
+    bowPanel.innerHTML='';
+    if(!selectedOrder){
+      infoStrip.innerHTML='<span style="color:var(--text3)">Nicio comandă selectată</span>';
+      bowPanel.innerHTML='<span style="font-size:11px;color:var(--text3)">Selectați o comandă pentru a vedea datele BOW.</span>';
+      return;
+    }
+    const o=selectedOrder;
+    [{l:'Produs',v:o.product},{l:'Desen',v:o.drawing||'—'},{l:'WC',v:o.wc},{l:'Mașină',v:o.machine||'—'},{l:'Operator',v:o.operator||'—'}]
+    .forEach(({l,v})=>{const span=dv('');span.innerHTML=`<span style="font-weight:700;color:var(--text2)">${l}:</span> <span style="color:var(--text)">${v}</span>`;infoStrip.appendChild(span);});
+
+    // BOW lookup
+    const bowRows=[];
+    if(S.bowIdx){
+      const code=o.bowCode||o.product;
+      // Try direct BOW lookup for this component
+      for(const [key,rows] of S.bowIdx){
+        if(key.endsWith('__'+code)||key==='__'+code){
+          rows.forEach(r=>bowRows.push(r));break;
+        }
+      }
+    }
+    if(bowRows.length){
+      bowPanel.innerHTML=`<div style="font-size:10px;font-weight:700;color:var(--text3);text-transform:uppercase;margin-bottom:6px">📊 Date BOW — ${o.product}</div>`;
+      const tbl=el('table');tbl.style.cssText='width:100%;border-collapse:collapse;font-size:11px';
+      tbl.innerHTML='<thead><tr style="background:#f0f4fa"><th style="padding:4px 8px;text-align:left">Op.</th><th style="padding:4px 8px;text-align:left">Workcenter</th><th style="padding:4px 8px;text-align:right">Run Time</th><th style="padding:4px 8px;text-align:right">Setup</th></tr></thead>';
+      const tbody_=el('tbody');
+      bowRows.slice(0,10).forEach((r,i)=>{
+        const tr=el('tr');tr.style.background=i%2?'#f8fafc':'#fff';
+        tr.innerHTML=`<td style="padding:3px 8px;font-family:monospace">${str(r['Ope seq']||'')}</td>
+          <td style="padding:3px 8px">${str(r['Ope name']||r['Ope descr']||'')}</td>
+          <td style="padding:3px 8px;text-align:right;font-weight:700;color:#1d4ed8">${str(r['Run time']||'—')}</td>
+          <td style="padding:3px 8px;text-align:right;color:#7c3aed">${str(r['Setup time']||'—')}</td>`;
+        tbody_.appendChild(tr);
+      });
+      tbl.appendChild(tbody_);bowPanel.appendChild(tbl);
+    } else {
+      bowPanel.innerHTML=`<div style="font-size:10px;font-weight:700;color:var(--text3);text-transform:uppercase;margin-bottom:4px">📊 Date BOW</div><span style="font-size:11px;color:var(--text3)">Nu s-au găsit date BOW pentru ${o.product}.</span>`;
+    }
+  };
+
+  const updateEventBtns=()=>{
+    NORM_EVENTS.forEach(evt=>{
+      const {card,btn}=evtBtns.get(evt.id);
+      btn.disabled=!sessionActive;
+      const active=sessionActive&&currentEventId===evt.id;
+      card.style.background=active?evt.bg:'#fff';
+      card.style.borderColor=active?evt.color:evt.color+'66';
+      card.style.transform=active?'scale(1.02)':'scale(1)';
+      card.style.boxShadow=active?`0 4px 16px ${evt.color}44`:'none';
+    });
+    if(currentEventId==='other'&&sessionActive){otherInp.style.display='block';}
+    else{otherInp.style.display='none';}
+  };
+
+  const switchEvent=(newId)=>{
+    if(!sessionActive)return;
+    const now=Date.now();
+    if(currentEventId&&eventStart){
+      eventTotals[currentEventId]=(eventTotals[currentEventId]||0)+(now-eventStart);
+    }
+    currentEventId=newId;eventStart=now;
+    updateEventBtns();
+  };
+
+  const startTicker=()=>{
+    if(rafId)cancelAnimationFrame(rafId);
+    const tick=()=>{
+      if(!sessionActive)return;
+      const now=Date.now();
+      mainTimer.textContent=fmtMs(now-sessionStart);
+      // Update current event display timer
+      NORM_EVENTS.forEach(evt=>{
+        const el2=evtPanel.querySelector(`.norm-evt-timer[data-eid="${evt.id}"]`);
+        if(!el2)return;
+        const t=(eventTotals[evt.id]||0)+(evt.id===currentEventId&&eventStart?(now-eventStart):0);
+        el2.textContent=fmtMs(t);
+      });
+      rafId=requestAnimationFrame(tick);
+    };
+    rafId=requestAnimationFrame(tick);
+  };
+
+  const stopSession=()=>{
+    if(rafId){cancelAnimationFrame(rafId);rafId=null;}
+    const now=Date.now();
+    if(currentEventId&&eventStart){
+      eventTotals[currentEventId]=(eventTotals[currentEventId]||0)+(now-eventStart);
+    }
+    sessionActive=false;
+    startBtn.textContent='▶ START NORMARE';startBtn.style.background='#15803d';
+    opInp.disabled=false;orderSel.disabled=false;qtyInp.disabled=false;
+    updateEventBtns();
+
+    const totalMs=now-sessionStart;
+    const sess={
+      id:`NS_${Date.now()}`,
+      ts:new Date().toISOString(),
+      operator:(opInp.value||'').trim(),
+      product:selectedOrder?.product||'',
+      drawing:selectedOrder?.drawing||'',
+      wc:selectedOrder?.wc||'',
+      machine:selectedOrder?.machine||'',
+      quantity,
+      totalMs,
+      totalFmt:fmtMs(totalMs),
+      events:Object.fromEntries(Object.entries(eventTotals).map(([k,v])=>[k,{ms:v,fmt:fmtMs(v)}])),
+      otherLabel,
+    };
+    saveNormSession(sess).then(()=>showToast('✓ Sesiune de normare salvată','ok',3000));
+    showSessionSummary(sess);
+    // Reset
+    sessionStart=null;eventStart=null;currentEventId='run';
+    eventTotals={setup:0,deburr:0,pickup:0,ctc:0,run:0,other:0};
+    mainTimer.textContent='0:00:00';
+    NORM_EVENTS.forEach(evt=>{
+      const el2=evtPanel.querySelector(`.norm-evt-timer[data-eid="${evt.id}"]`);
+      if(el2)el2.textContent='0:00:00';
+    });
+  };
+
+  const showSessionSummary=(sess)=>{
+    document.getElementById('norm-summary-overlay')?.remove();
+    const ov=dv('');ov.id='norm-summary-overlay';
+    ov.style.cssText='position:fixed;inset:0;background:rgba(0,0,0,.5);z-index:9999;display:flex;align-items:center;justify-content:center;padding:16px';
+    const box=dv('');box.style.cssText='background:#fff;border-radius:12px;box-shadow:0 20px 60px rgba(0,0,0,.3);width:min(520px,95vw);overflow:hidden';
+    const hdr=dv('');hdr.style.cssText='background:#15803d;color:#fff;padding:14px 18px;font-size:14px;font-weight:800';
+    hdr.textContent='✓ Sesiune salvată — Rezumat Normare';
+    box.appendChild(hdr);
+    const body=dv('');body.style.cssText='padding:16px 20px';
+    body.innerHTML=`
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:12px">
+        <div><span style="font-size:10px;color:#6b7280;text-transform:uppercase">Produs</span><div style="font-weight:800;font-size:13px">${sess.product}</div></div>
+        <div><span style="font-size:10px;color:#6b7280;text-transform:uppercase">Operator</span><div style="font-weight:700">${sess.operator}</div></div>
+        <div><span style="font-size:10px;color:#6b7280;text-transform:uppercase">WC / Mașină</span><div style="font-weight:700">${sess.wc}${sess.machine?' / '+sess.machine:''}</div></div>
+        <div><span style="font-size:10px;color:#6b7280;text-transform:uppercase">Cantitate</span><div style="font-weight:800;color:#1d4ed8;font-size:16px">${sess.quantity} buc</div></div>
+      </div>
+      <div style="background:#f0fdf4;border:2px solid #86efac;border-radius:8px;padding:10px 14px;margin-bottom:12px;text-align:center">
+        <div style="font-size:10px;color:#15803d;font-weight:700;text-transform:uppercase">Timp Total</div>
+        <div style="font-size:28px;font-weight:900;font-family:monospace;color:#15803d">${sess.totalFmt}</div>
+      </div>
+      <table style="width:100%;border-collapse:collapse;font-size:12px">
+        ${NORM_EVENTS.map(e=>{const t=sess.events[e.id];return t&&t.ms>0?`<tr style="border-bottom:1px solid #f1f5f9"><td style="padding:5px 6px;color:${e.color};font-weight:700">${e.label}${e.id==='other'&&sess.otherLabel?' ('+sess.otherLabel+')':''}</td><td style="padding:5px 6px;text-align:right;font-family:monospace;font-weight:800">${t.fmt}</td><td style="padding:5px 6px;text-align:right;color:#94a3b8;font-size:10px">${Math.round(t.ms/sess.totalMs*100)}%</td></tr>`:''}).join('')}
+      </table>`;
+    box.appendChild(body);
+    const foot=dv('');foot.style.cssText='padding:10px 20px;border-top:1px solid var(--border);display:flex;justify-content:flex-end;gap:8px';
+    const closeB=el('button');closeB.textContent='✓ OK';closeB.style.cssText='height:36px;padding:0 24px;border:none;border-radius:6px;background:#15803d;color:#fff;font-size:13px;font-weight:700;cursor:pointer';
+    closeB.addEventListener('click',()=>ov.remove());foot.appendChild(closeB);box.appendChild(foot);
+    ov.appendChild(box);ov.addEventListener('click',e=>{if(e.target===ov)ov.remove();});
+    document.body.appendChild(ov);
+  };
+
+  updateOrderInfo();
+  return wrap;
+}
+
+/* ─── CONFIGURATION ─── */
+function renderNormConfig(){
+  const wrap=dv('');wrap.style.cssText='padding:16px;max-width:900px;margin:0 auto';
+
+  const renderAll=()=>{
+    wrap.innerHTML='';
+
+    // ── WC & Machines ──
+    const wcSection=dv('');
+    const h1=dv('');h1.style.cssText='font-size:14px;font-weight:800;color:#1e3a5f;margin-bottom:10px;display:flex;align-items:center;gap:8px';
+    h1.innerHTML='⚙ Workcentere și Mașini <button id="add-wc-btn" style="height:26px;padding:0 10px;border:1.5px solid var(--accent);color:var(--accent);background:#eff6ff;border-radius:4px;cursor:pointer;font-size:11px;font-weight:700">+ Adaugă WC</button>';
+    wcSection.appendChild(h1);
+    wrap.appendChild(wcSection);
+    wcSection.querySelector('#add-wc-btn')?.addEventListener('click',()=>{
+      if(!S.normCfg.wcs)S.normCfg.wcs=[];
+      S.normCfg.wcs.push({id:'wc_'+Date.now(),name:'',machines:[]});
+      saveNormCfg();renderAll();
+    });
+
+    (S.normCfg?.wcs||[]).forEach((wc,wi)=>{
+      const card=dv('');card.style.cssText='background:#fff;border:1px solid var(--border);border-radius:8px;padding:12px 16px;margin-bottom:8px';
+      const row=dv('');row.style.cssText='display:flex;gap:8px;align-items:center;margin-bottom:8px';
+      const nameInp=el('input');nameInp.value=wc.name||'';nameInp.placeholder='Denumire Workcenter';
+      nameInp.style.cssText='flex:1;height:32px;padding:0 10px;border:1.5px solid var(--border);border-radius:5px;font-size:13px;font-weight:700';
+      nameInp.addEventListener('change',()=>{S.normCfg.wcs[wi].name=nameInp.value.trim();saveNormCfg();});
+      const delBtn=el('button');delBtn.textContent='🗑';delBtn.style.cssText='width:32px;height:32px;border:1px solid #fca5a5;background:#fef2f2;color:#dc2626;border-radius:4px;cursor:pointer';
+      delBtn.addEventListener('click',()=>{S.normCfg.wcs.splice(wi,1);saveNormCfg();renderAll();});
+      row.appendChild(nameInp);row.appendChild(delBtn);card.appendChild(row);
+
+      // Machines list
+      const machRow=dv('');machRow.style.cssText='display:flex;flex-wrap:wrap;gap:6px;align-items:center';
+      (wc.machines||[]).forEach((m,mi)=>{
+        const mInp=el('input');mInp.value=m;mInp.placeholder='Mașină';
+        mInp.style.cssText='height:28px;padding:0 8px;border:1px solid var(--border);border-radius:4px;font-size:11px;min-width:120px;max-width:180px';
+        mInp.addEventListener('change',()=>{S.normCfg.wcs[wi].machines[mi]=mInp.value.trim();saveNormCfg();});
+        const rmM=el('button');rmM.textContent='✕';rmM.style.cssText='width:22px;height:22px;border:1px solid #e2e8f0;border-radius:3px;background:#f8f9fb;cursor:pointer;font-size:10px;color:#6b7280';
+        rmM.addEventListener('click',()=>{S.normCfg.wcs[wi].machines.splice(mi,1);saveNormCfg();renderAll();});
+        const mWrap=dv('');mWrap.style.cssText='display:flex;align-items:center;gap:2px';
+        mWrap.appendChild(mInp);mWrap.appendChild(rmM);machRow.appendChild(mWrap);
+      });
+      const addM=el('button');addM.textContent='+ Mașină';addM.style.cssText='height:28px;padding:0 8px;border:1px dashed #94a3b8;border-radius:4px;background:#f8f9fb;cursor:pointer;font-size:11px;color:#6b7280';
+      addM.addEventListener('click',()=>{if(!S.normCfg.wcs[wi].machines)S.normCfg.wcs[wi].machines=[];S.normCfg.wcs[wi].machines.push('');saveNormCfg();renderAll();});
+      machRow.appendChild(addM);card.appendChild(machRow);
+      wcSection.appendChild(card);
+    });
+
+    // ── Orders ──
+    const ordSection=dv('');ordSection.style.cssText='margin-top:20px';
+    const h2=dv('');h2.style.cssText='font-size:14px;font-weight:800;color:#1e3a5f;margin-bottom:10px;display:flex;align-items:center;gap:8px';
+    h2.innerHTML='📋 Comenzi Normare <button id="add-ord-btn" style="height:26px;padding:0 10px;border:1.5px solid #15803d;color:#15803d;background:#f0fdf4;border-radius:4px;cursor:pointer;font-size:11px;font-weight:700">+ Adaugă Comandă</button>';
+    ordSection.appendChild(h2);
+    wrap.appendChild(ordSection);
+    ordSection.querySelector('#add-ord-btn')?.addEventListener('click',()=>{
+      if(!S.normCfg.orders)S.normCfg.orders=[];
+      S.normCfg.orders.push({id:'ord_'+Date.now(),product:'',drawing:'',wc:'',machine:'',operator:''});
+      saveNormCfg();renderAll();
+    });
+
+    const allWCs=(S.normCfg?.wcs||[]).map(w=>w.name).filter(Boolean);
+    (S.normCfg?.orders||[]).forEach((ord,oi)=>{
+      const card=dv('');card.style.cssText='background:#fff;border:1px solid var(--border);border-radius:8px;padding:12px 16px;margin-bottom:8px';
+      const grid=dv('');grid.style.cssText='display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;align-items:end';
+
+      const mkFld=(label,key,type='text',opts)=>{
+        const wrap2=dv('');
+        const lbl=dv('');lbl.style.cssText='font-size:9px;font-weight:700;color:#94a3b8;text-transform:uppercase;margin-bottom:3px';lbl.textContent=label;
+        let inp;
+        if(type==='select'){
+          inp=el('select');inp.style.cssText='width:100%;height:32px;padding:0 8px;border:1.5px solid var(--border);border-radius:5px;font-size:12px;background:#fff';
+          inp.innerHTML='<option value="">—</option>'+(opts||[]).map(o=>`<option value="${o}" ${ord[key]===o?'selected':''}>${o}</option>`).join('');
+          inp.addEventListener('change',()=>{S.normCfg.orders[oi][key]=inp.value;
+            if(key==='wc'){const wcs_=S.normCfg.wcs.find(w=>w.name===inp.value);S.normCfg.orders[oi].machines=wcs_?.machines||[];}
+            saveNormCfg();renderAll();});
+        } else {
+          inp=el('input');inp.type=type;inp.value=ord[key]||'';inp.placeholder=label;
+          inp.style.cssText='width:100%;height:32px;padding:0 10px;border:1.5px solid var(--border);border-radius:5px;font-size:12px';
+          inp.addEventListener('change',()=>{S.normCfg.orders[oi][key]=inp.value.trim();saveNormCfg();});
+        }
+        wrap2.appendChild(lbl);wrap2.appendChild(inp);return wrap2;
+      };
+
+      const wcObj=allWCs.length?(S.normCfg.wcs.find(w=>w.name===ord.wc)):null;
+      const machList=wcObj?.machines||[];
+
+      grid.appendChild(mkFld('Produs / Componentă','product'));
+      grid.appendChild(mkFld('Nr. Desen','drawing'));
+      grid.appendChild(mkFld('BOW Code (dacă diferit)','bowCode'));
+      grid.appendChild(mkFld('Workcenter','wc','select',allWCs));
+      grid.appendChild(mkFld('Mașină','machine','select',machList));
+      grid.appendChild(mkFld('Operator (opțional)','operator'));
+
+      const delRow=dv('');delRow.style.cssText='grid-column:span 3;display:flex;justify-content:flex-end;margin-top:4px';
+      const delB=el('button');delB.textContent='🗑 Șterge comandă';delB.style.cssText='height:28px;padding:0 10px;border:1px solid #fca5a5;background:#fef2f2;color:#dc2626;border-radius:4px;cursor:pointer;font-size:11px';
+      delB.addEventListener('click',()=>{S.normCfg.orders.splice(oi,1);saveNormCfg();renderAll();});
+      delRow.appendChild(delB);grid.appendChild(delRow);
+      card.appendChild(grid);ordSection.appendChild(card);
+    });
+  };
+  renderAll();
+  return wrap;
+}
+
+/* ─── HISTORY ─── */
+function renderNormHistory(){
+  const wrap=dv('');wrap.style.cssText='padding:16px;overflow:auto;height:100%';
+  const sessions=S.normSessions||[];
+  if(!sessions.length){wrap.innerHTML='<div style="text-align:center;padding:40px;color:var(--text3)">Nu există sesiuni de normare salvate.</div>';return wrap;}
+  const tbl=el('table');tbl.style.cssText='width:100%;border-collapse:collapse;font-size:11.5px';
+  tbl.innerHTML=`<thead><tr style="background:#1e3a5f;color:#fff">
+    <th style="padding:8px 10px;text-align:left">Data</th>
+    <th style="padding:8px 10px;text-align:left">Produs</th>
+    <th style="padding:8px 10px;text-align:left">Operator</th>
+    <th style="padding:8px 10px;text-align:left">WC / Mașină</th>
+    <th style="padding:8px 10px;text-align:right">Buc</th>
+    <th style="padding:8px 10px;text-align:right">Total</th>
+    <th style="padding:8px 10px;text-align:right">Setup</th>
+    <th style="padding:8px 10px;text-align:right">RUN</th>
+    <th style="padding:8px 10px;text-align:right">Debavurare</th>
+    <th style="padding:8px 10px;text-align:right">Altele</th>
+  </tr></thead>`;
+  const tbody_=el('tbody');
+  sessions.forEach((s,i)=>{
+    const tr=el('tr');tr.style.background=i%2?'#f8fafc':'#fff';tr.style.cursor='pointer';
+    tr.addEventListener('click',()=>showSessionDetail(s));
+    const dt=new Date(s.ts).toLocaleString('ro-RO');
+    tr.innerHTML=`<td style="padding:6px 10px;color:#6b7280">${dt}</td>
+      <td style="padding:6px 10px;font-weight:700;font-family:monospace">${s.product}</td>
+      <td style="padding:6px 10px">${s.operator}</td>
+      <td style="padding:6px 10px">${s.wc}${s.machine?' / '+s.machine:''}</td>
+      <td style="padding:6px 10px;text-align:right;font-weight:800;color:#1d4ed8">${s.quantity}</td>
+      <td style="padding:6px 10px;text-align:right;font-weight:900;font-family:monospace;color:#15803d">${s.totalFmt}</td>
+      <td style="padding:6px 10px;text-align:right;font-family:monospace">${s.events?.setup?.fmt||'—'}</td>
+      <td style="padding:6px 10px;text-align:right;font-family:monospace;font-weight:700;color:#15803d">${s.events?.run?.fmt||'—'}</td>
+      <td style="padding:6px 10px;text-align:right;font-family:monospace">${s.events?.deburr?.fmt||'—'}</td>
+      <td style="padding:6px 10px;text-align:right;font-family:monospace;color:#6b7280">${s.events?.other?.ms>0?(s.events.other.fmt+(s.otherLabel?' ('+s.otherLabel+')':'')):'—'}</td>`;
+    tbody_.appendChild(tr);
+  });
+  tbl.appendChild(tbody_);wrap.appendChild(tbl);
+  return wrap;
+}
+
+function showSessionDetail(s){
+  document.getElementById('norm-detail-overlay')?.remove();
+  const ov=dv('');ov.id='norm-detail-overlay';ov.style.cssText='position:fixed;inset:0;background:rgba(0,0,0,.5);z-index:9999;display:flex;align-items:center;justify-content:center;padding:16px';
+  const box=dv('');box.style.cssText='background:#fff;border-radius:10px;box-shadow:0 20px 60px rgba(0,0,0,.3);width:min(480px,95vw);overflow:hidden';
+  const hdr=dv('');hdr.style.cssText='background:#1e3a5f;color:#fff;padding:12px 18px;font-size:13px;font-weight:800;display:flex;justify-content:space-between;align-items:center';
+  hdr.innerHTML=`<span>Detalii sesiune — ${s.product}</span>`;
+  const cls=el('button');cls.textContent='✕';cls.style.cssText='border:none;background:rgba(255,255,255,.2);color:#fff;width:24px;height:24px;border-radius:4px;cursor:pointer';
+  cls.addEventListener('click',()=>ov.remove());hdr.appendChild(cls);box.appendChild(hdr);
+  const body=dv('');body.style.cssText='padding:16px 20px';
+  body.innerHTML=`
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:12px;font-size:12px">
+      <div><b>Produs:</b> ${s.product}</div><div><b>Desen:</b> ${s.drawing||'—'}</div>
+      <div><b>Operator:</b> ${s.operator}</div><div><b>WC / Mașină:</b> ${s.wc}${s.machine?' / '+s.machine:''}</div>
+      <div><b>Cantitate:</b> <span style="font-weight:800;color:#1d4ed8">${s.quantity} buc</span></div>
+      <div><b>Data:</b> ${new Date(s.ts).toLocaleString('ro-RO')}</div>
+    </div>
+    <div style="background:#f0fdf4;border:2px solid #86efac;border-radius:6px;padding:8px 14px;margin-bottom:10px;text-align:center">
+      <div style="font-size:9px;color:#15803d;font-weight:700;text-transform:uppercase">Timp Total</div>
+      <div style="font-size:24px;font-weight:900;font-family:monospace;color:#15803d">${s.totalFmt}</div>
+    </div>
+    <table style="width:100%;border-collapse:collapse;font-size:11.5px">
+      ${NORM_EVENTS.map(e=>{const t=s.events?.[e.id];const pct=t&&s.totalMs?Math.round(t.ms/s.totalMs*100):0;return t&&t.ms>0?`<tr style="border-bottom:1px solid #f1f5f9"><td style="padding:5px 6px;color:${e.color};font-weight:700">${e.label}${e.id==='other'&&s.otherLabel?' ('+s.otherLabel+')':''}</td><td style="padding:5px 6px;text-align:right;font-family:monospace;font-weight:800">${t.fmt}</td><td style="padding:5px 6px;text-align:right"><div style="background:#e5e7eb;border-radius:9px;height:8px;width:80px;display:inline-block;vertical-align:middle"><div style="background:${e.color};height:100%;width:${pct}%;border-radius:9px"></div></div> <span style="font-size:10px;color:#6b7280">${pct}%</span></td></tr>`:''}).join('')}
+    </table>`;
+  box.appendChild(body);
+  ov.appendChild(box);ov.addEventListener('click',e=>{if(e.target===ov)ov.remove();});
+  document.body.appendChild(ov);
 }
 
 function renderDctrTab(){
