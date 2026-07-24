@@ -1209,6 +1209,15 @@ button { font-family: var(--sans); }
 }
 #pv2-print-overlay .po-close:hover{background:#f1f5f9}
 @media print{ #pv2-print-overlay .po-close{display:none!important} }
+
+/* Fullscreen + PWA */
+html,body{height:100%;overflow:hidden}
+#fs-btn{position:fixed;bottom:16px;right:16px;z-index:99998;width:44px;height:44px;
+  border:none;border-radius:50%;background:rgba(30,58,95,.85);color:#fff;font-size:20px;
+  cursor:pointer;box-shadow:0 4px 16px rgba(0,0,0,.3);display:flex;align-items:center;
+  justify-content:center;transition:opacity .3s;opacity:.7}
+#fs-btn:hover{opacity:1}
+#fs-btn.hidden{display:none}
 </style>
 </head>
 <body>
@@ -12571,6 +12580,37 @@ function mkEmpty(h,p,showLeg){
 }
 
 autoLoad();
+
+// ── Fullscreen handler ──
+(function(){
+  const enterFS=()=>{
+    const el2=document.documentElement;
+    const fn=el2.requestFullscreen||el2.webkitRequestFullscreen||el2.mozRequestFullScreen||el2.msRequestFullscreen;
+    if(fn){fn.call(el2).catch(()=>{});}
+  };
+  const exitFS=()=>{
+    const fn=document.exitFullscreen||document.webkitExitFullscreen||document.mozCancelFullScreen||document.msExitFullscreen;
+    if(fn)fn.call(document);
+  };
+  const isFS=()=>!!(document.fullscreenElement||document.webkitFullscreenElement||document.mozFullScreenElement||document.msFullscreenElement);
+  const updateBtn=(btn)=>{btn.textContent=isFS()?'⊡':'⊞';btn.title=isFS()?'Ieșire fullscreen':'Fullscreen';};
+
+  // Inject button into DOM after load
+  const mkBtn=()=>{
+    if(document.getElementById('fs-btn'))return;
+    const btn=document.createElement('button');btn.id='fs-btn';btn.textContent='⊞';btn.title='Fullscreen';
+    btn.addEventListener('click',()=>{isFS()?exitFS():enterFS();});
+    ['fullscreenchange','webkitfullscreenchange','mozfullscreenchange'].forEach(ev=>
+      document.addEventListener(ev,()=>updateBtn(btn)));
+    document.body.appendChild(btn);
+    // Try auto-fullscreen on first touch/click (tablets require user gesture)
+    const autoFS=()=>{if(!isFS()){enterFS();}document.removeEventListener('touchstart',autoFS);document.removeEventListener('click',autoFS);};
+    document.addEventListener('touchstart',autoFS,{once:true,passive:true});
+    document.addEventListener('click',autoFS,{once:true});
+  };
+  if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',mkBtn);
+  else mkBtn();
+})();
 </script>
 </body>
 </html>
