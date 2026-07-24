@@ -7571,16 +7571,47 @@ function renderNormOperator(){
   mkResizer(handle1,leftPanel,drawPanel);
   wrap.appendChild(leftPanel);wrap.appendChild(handle1);wrap.appendChild(drawPanel);
 
+  // Convert base64 data URL to Blob URL for cross-platform support (Android fix)
+  const dataUrlToBlob=(dataUrl)=>{
+    const [header,b64]=dataUrl.split(',');
+    const mime=(header.match(/:(.*?);/)||[])[1]||'application/octet-stream';
+    const bytes=atob(b64);const arr=new Uint8Array(bytes.length);
+    for(let i=0;i<bytes.length;i++)arr[i]=bytes.charCodeAt(i);
+    return {url:URL.createObjectURL(new Blob([arr],{type:mime})),mime};
+  };
+  let _blobUrl=null;
   const renderDrawing=(dataUrl,mimeType)=>{
     drawViewer.innerHTML='';drawViewer.style.alignItems='flex-start';drawViewer.style.justifyContent='flex-start';
-    if(mimeType==='application/pdf'||(dataUrl&&dataUrl.startsWith('data:application/pdf'))){
-      const fr=el('iframe');fr.src=dataUrl;fr.className='draw-scalable';
-      fr.style.cssText='width:297mm;height:210mm;border:none;transform-origin:top left;display:block;background:#fff';
-      drawViewer.appendChild(fr);applyZoom(1);
+    if(_blobUrl){try{URL.revokeObjectURL(_blobUrl);}catch(_){}_blobUrl=null;}
+    const isPDF=mimeType==='application/pdf'||(dataUrl&&dataUrl.startsWith('data:application/pdf'));
+    if(isPDF){
+      // Convert to blob URL — works on all platforms including Android
+      let blobUrl;
+      try{const r=dataUrlToBlob(dataUrl);blobUrl=r.url;_blobUrl=blobUrl;}
+      catch(_){blobUrl=dataUrl;} // fallback to data URL
+      // Use <embed> — better cross-platform than <iframe> for PDFs
+      const em=el('embed');em.className='draw-scalable';
+      em.setAttribute('type','application/pdf');em.src=blobUrl;
+      em.style.cssText='width:297mm;height:210mm;border:none;transform-origin:top left;display:block;background:#fff;max-width:none';
+      drawViewer.appendChild(em);
+      // Fallback: if embed doesn't render (Android WebView), show open-in-tab button
+      setTimeout(()=>{
+        if(em.offsetHeight<10||!em.clientHeight){
+          drawViewer.innerHTML='';
+          const fb=dv('');fb.style.cssText='width:100%;height:100%;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:12px;color:#94a3b8;text-align:center';
+          fb.innerHTML='<div style="font-size:40px">📄</div><div style="font-size:13px;font-weight:700;color:#cbd5e1">PDF detectat</div><div style="font-size:11px">Browserul nu poate afișa PDF-ul inline.</div>';
+          const openBtn=el('button');openBtn.textContent='🔗 Deschide PDF în tab nou';
+          openBtn.style.cssText='height:40px;padding:0 20px;border:none;border-radius:8px;background:#0369a1;color:#fff;font-size:13px;font-weight:700;cursor:pointer';
+          openBtn.addEventListener('click',()=>window.open(blobUrl,'_blank'));
+          fb.appendChild(openBtn);drawViewer.appendChild(fb);
+        }
+      },800);
+      applyZoom(1);
     } else {
       const imgWrap=dv('');imgWrap.style.cssText='transform-origin:top left;display:block';imgWrap.className='draw-scalable';
       const img=el('img');img.src=dataUrl;img.style.cssText='display:block;max-width:none;user-select:none';
       img.addEventListener('load',()=>applyZoom(Math.min(drawViewer.clientWidth/img.naturalWidth,drawViewer.clientHeight/img.naturalHeight)*0.95));
+      img.addEventListener('error',()=>{drawViewer.innerHTML='<div style="color:#dc2626;padding:20px">Eroare la încărcarea imaginii.</div>';});
       imgWrap.appendChild(img);drawViewer.appendChild(imgWrap);
     }
   };
