@@ -1251,6 +1251,7 @@ const S={
   structIgnoreStock:false,
   perfData:null,
   perfWcGroups:[],
+  perfLivrari:[],  // raw rows saved to Supabase
   normCfg:{wcs:[],orders:[]},
   normSessions:[],
   perfData:null,  // {rows:[{period,item,name,qty}], months:[...], items:{item→{name}}}
@@ -7001,7 +7002,7 @@ function perfFmtPeriod(p){
 }
 
 // ── Parse uploaded Livrari Excel rows ──
-function applyLivrari(rows){
+function applyLivrari(rows, skipSave=false){
   if(!rows||!rows.length){showToast('Fișier gol sau format necunoscut','err',3000);return;}
   // Detect column names robustly (case-insensitive, trim)
   const sampleKeys=Object.keys(rows[0]||{});
@@ -7047,8 +7048,29 @@ function applyLivrari(rows){
     showToast(`Import eșuat: 0 linii valide (${rows.length} rânduri citite, ${skipped} omise). Verificați coloanele: Period, Item, Quantity`,'err',5000);
     return;
   }
-  S.perfData={rows:[...agg.values()],months:[...months].sort(),items};
-  showToast(`✓ Livrări: ${agg.size} intrări, ${months.size} luni, ${items.size} produse`,'ok',3000);
+  if(skipSave){
+    // Just rebuild from saved rows — no merge needed
+    S.perfData={rows:[...agg.values()],months:[...months].sort(),items};
+    return;
+  }
+  // ── Merge with existing saved rows (deduplication) ──
+  const existingRows=S.perfLivrari||[];
+  const existingKeys=new Set(existingRows.map(r=>_livKey(r)));
+  const newRows=rows.filter(r=>{
+    const period=String(r[colPeriod]??'').trim().replace(/[^0-9]/g,'').slice(0,6);
+    const item=String(r[colItem]??'').trim();
+    const qty=parseFloat(r[colQty])||0;
+    if(!period||period.length!==6||!item||qty<=0)return false;
+    return !existingKeys.has(_livKey({Period:period,Item:item,Date:String(r['Date']??''),Quantity:qty}));
+  });
+  const mergedRows=[...existingRows,...newRows];
+  S.perfLivrari=mergedRows;
+  // Re-apply all merged rows
+  applyLivrari(mergedRows,true);
+  // Save to Supabase
+  savePerfLivrari().then(()=>
+    showToast(`✓ ${newRows.length} linii noi adăugate (${rows.length-newRows.length-skipped} duplicate omise, ${skipped} invalide). Total BD: ${mergedRows.length} rânduri`,'ok',4000)
+  );
 }
 
 // ── Core computation: minutes per WC per period ──
@@ -7114,6 +7136,23 @@ function applyPerfGroups(matrix, groups){
   return grouped;
 }
 
+async function savePerfLivrari(){
+  if(!S.sbCfg)return;
+  await sbUpload(S.sbCfg,'data-perf-livrari.json',S.perfLivrari||[]);
+}
+async function loadPerfLivrari(){
+  if(!S.sbCfg)return;
+  const d=await sbDownload(S.sbCfg,'data-perf-livrari.json');
+  if(Array.isArray(d)){S.perfLivrari=d;applyLivrari(d,true);}
+}
+// Unique row key for deduplication
+function _livKey(r){
+  const period=String(r['Period']??'').trim().replace(/[^0-9]/g,'').slice(0,6);
+  const item=String(r['Item']??'').trim();
+  const date=String(r['Date']??r['date']??'').trim().replace(/[^0-9]/g,'').slice(0,8);
+  const qty=parseFloat(r['Quantity']||r['qty']||0);
+  return `${period}|${item}|${date}|${qty}`;
+}
 function renderPerformanta(){
   const page=dv('');page.style.cssText='display:flex;flex-direction:column;height:100%;overflow:hidden;background:#f8f9fb';
 
@@ -7168,7 +7207,15 @@ function renderPerformanta(){
   tb.appendChild(unitBtn);
 
   // Export
-  const excelBtn=el('button','tbtn');excelBtn.style.cssText='border-color:#16a34a;color:#15803d;background:#f0fdf4;margin-left:auto';
+  const clearLivBtn=el('button','tbtn');clearLivBtn.style.cssText='border-color:#dc2626;color:#dc2626;margin-left:auto';
+  clearLivBtn.innerHTML='🗑 Golește BD Livrări';
+  clearLivBtn.addEventListener('click',()=>{
+    if(!confirm('Ștergi TOATE livrările din baza de date? Acțiunea este ireversibilă!'))return;
+    S.perfLivrari=[];S.perfData=null;
+    savePerfLivrari().then(()=>{showToast('✓ Baza de date livrări goală','ok',2000);rebuild();});
+  });
+  tb.appendChild(clearLivBtn);
+  const excelBtn=el('button','tbtn');excelBtn.style.cssText='border-color:#16a34a;color:#15803d;background:#f0fdf4';
   excelBtn.innerHTML='⬇ Export Excel';
   excelBtn.addEventListener('click',()=>exportPerfExcel(effPct,unitHours));
   tb.appendChild(excelBtn);
@@ -7178,10 +7225,13 @@ function renderPerformanta(){
   const content=dv('');content.id='perf-content';content.style.cssText='flex:1;overflow:auto;padding:14px 16px';
   page.appendChild(content);
 
+  // Load saved livrari on first open
+  if(!S._perfLoaded){S._perfLoaded=true;loadPerfLivrari().then(()=>rebuild());}
+
   function rebuild(){
     content.innerHTML='';
     if(!S.perfData){
-      content.innerHTML='<div style="padding:40px;text-align:center;color:var(--text3);font-size:13px">📂 Importați un fișier Livrări pentru a genera raportul.</div>';
+      content.innerHTML='<div style="padding:40px;text-align:center;color:var(--text3);font-size:13px">📂 Importați un fișier Livrări pentru a genera raportul.<br><span style="font-size:11px;color:#94a3b8;margin-top:6px;display:block">Datele anterioare se încarcă din baza de date...</span></div>';
       return;
     }
     content.innerHTML='<div style="padding:20px;text-align:center;color:var(--text3)">⏳ Se calculează...</div>';
