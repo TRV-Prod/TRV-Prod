@@ -7551,6 +7551,18 @@ function renderNormOperator(){
   window.addEventListener('mouseup',()=>{panActive=false;drawViewer.style.cursor='default';});
   window.addEventListener('mousemove',e=>{if(!panActive)return;drawViewer.scrollLeft=panSX-(e.clientX-panX);drawViewer.scrollTop=panSY-(e.clientY-panY);});
   drawViewer.addEventListener('wheel',e=>{e.preventDefault();applyZoom(drawZoom+(e.deltaY<0?0.15:-0.15));},{passive:false});
+  // Pinch-to-zoom (touch devices)
+  let _pt1=null,_pt2=null,_pinchDist=0;
+  drawViewer.addEventListener('touchstart',e=>{
+    if(e.touches.length===2){e.preventDefault();_pt1=e.touches[0];_pt2=e.touches[1];_pinchDist=Math.hypot(_pt2.clientX-_pt1.clientX,_pt2.clientY-_pt1.clientY);}
+  },{passive:false});
+  drawViewer.addEventListener('touchmove',e=>{
+    if(e.touches.length===2){e.preventDefault();
+      const d=Math.hypot(e.touches[1].clientX-e.touches[0].clientX,e.touches[1].clientY-e.touches[0].clientY);
+      if(_pinchDist>0){const ratio=d/_pinchDist;applyZoom(drawZoom*ratio);_pinchDist=d;}
+    }
+  },{passive:false});
+  drawViewer.addEventListener('touchend',e=>{if(e.touches.length<2){_pt1=null;_pt2=null;_pinchDist=0;}});
 
   drawPanel.appendChild(drawViewer);
   // Draggable resize handle between left and draw
@@ -7718,6 +7730,9 @@ function renderNormOperator(){
       if((opInp.value||'').trim().length<5){opInp.style.borderColor='#dc2626';opInp.focus();showToast('Introduceți operatorul (min. 5 caractere)','err',2500);return;}
       opInp.style.borderColor='';
       sessionActive=true;sessionStart=Date.now();eventStart=Date.now();currentEventId='run';
+      // Auto-hide order list panel
+      leftPanel.style.width='0';leftPanel.style.minWidth='0';leftPanel.style.overflow='hidden';
+      leftPanel.style.transition='width .3s ease';
       eventTotals={setup:0,deburr:0,pickup:0,ctc:0,run:0,other:0};
       quantity=parseInt(qtyInp.value)||1;
       startBtn.textContent='⏹ STOP';startBtn.style.background='#dc2626';
@@ -7748,7 +7763,7 @@ function renderNormOperator(){
     const card=dv('');card.style.cssText=`border:2px solid ${evt.color}66;border-radius:7px;background:#fff;overflow:hidden;transition:all .15s`;
     const row=dv('');row.style.cssText='display:flex;align-items:center;gap:0';
     const btn=el('button');
-    btn.style.cssText=`flex:1;padding:8px 6px;border:none;background:transparent;cursor:pointer;font-size:10.5px;font-weight:700;color:${evt.color};text-align:left`;
+    btn.style.cssText=`flex:1;padding:14px 8px;border:none;background:transparent;cursor:pointer;font-size:11px;font-weight:700;color:${evt.color};text-align:left;min-height:52px;word-break:break-word;white-space:normal;line-height:1.3`;
     btn.textContent=evt.label;btn.disabled=true;
     btn.addEventListener('click',()=>{
       if(!sessionActive)return;
@@ -7831,6 +7846,8 @@ function renderNormOperator(){
     if(currentEventId&&eventStart)eventTotals[currentEventId]=(eventTotals[currentEventId]||0)+(now-eventStart);
     sessionActive=false;
     startBtn.textContent='▶ START NORMARE';startBtn.style.background='#15803d';
+    // Restore order list panel
+    leftPanel.style.width='10%';leftPanel.style.minWidth='130px';leftPanel.style.overflow='';leftPanel.style.transition='width .3s ease';
     opInp.disabled=false;orderSel2.disabled=false;qtyInp.disabled=false;
     updateEvtBtns();
     const totalMs=now-sessionStart;
@@ -7996,10 +8013,23 @@ function renderNormConfig(){
 /* ─── HISTORY ─── */
 function renderNormHistory(){
   const wrap=dv('');wrap.style.cssText='padding:16px;overflow:auto;height:100%';
+  const isAdmin=S.session?.role==='admin';
   const sessions=S.normSessions||[];
+  // Admin: delete all button
+  if(isAdmin&&sessions.length){
+    const delAllBtn=el('button');delAllBtn.textContent='🗑 Șterge toate înregistrările';
+    delAllBtn.style.cssText='height:30px;padding:0 12px;border:1px solid #fca5a5;background:#fef2f2;color:#dc2626;border-radius:4px;cursor:pointer;font-size:11px;font-weight:700;margin-bottom:10px';
+    delAllBtn.addEventListener('click',()=>{
+      if(!confirm('Ștergi TOATE sesiunile de normare? Acțiunea este ireversibilă!'))return;
+      S.normSessions=[];
+      sbUpload(S.sbCfg,'data-normare-sessions.json',[]).then(()=>{showToast('✓ Toate sesiunile șterse','ok',2000);wrap.innerHTML='';wrap.appendChild(renderNormHistory());});
+    });
+    wrap.appendChild(delAllBtn);
+  }
   if(!sessions.length){wrap.innerHTML='<div style="text-align:center;padding:40px;color:var(--text3)">Nu există sesiuni de normare salvate.</div>';return wrap;}
   const tbl=el('table');tbl.style.cssText='width:100%;border-collapse:collapse;font-size:11.5px';
   tbl.innerHTML=`<thead><tr style="background:#1e3a5f;color:#fff">
+    ${S.session?.role==='admin'?'<th style="padding:8px 10px;width:60px"></th>':''}
     <th style="padding:8px 10px;text-align:left">Data</th>
     <th style="padding:8px 10px;text-align:left">Produs</th>
     <th style="padding:8px 10px;text-align:left">Operator</th>
@@ -8017,7 +8047,19 @@ function renderNormHistory(){
     const tr=el('tr');tr.style.background=i%2?'#f8fafc':'#fff';tr.style.cursor='pointer';
     tr.addEventListener('click',()=>showSessionDetail(s));
     const dt=new Date(s.ts).toLocaleString('ro-RO');
-    tr.innerHTML=`<td style="padding:6px 10px;color:#6b7280">${dt}</td>
+    if(isAdmin){
+      const delTd=el('td');delTd.style.cssText='padding:4px 8px';
+      const delB2=el('button');delB2.textContent='🗑';delB2.title='Șterge această înregistrare';
+      delB2.style.cssText='width:28px;height:28px;border:1px solid #fca5a5;background:#fef2f2;color:#dc2626;border-radius:4px;cursor:pointer;font-size:13px';
+      delB2.addEventListener('click',e=>{e.stopPropagation();
+        if(!confirm('Ștergi această sesiune?'))return;
+        S.normSessions.splice(i,1);
+        sbUpload(S.sbCfg,'data-normare-sessions.json',S.normSessions).then(()=>{showToast('✓ Sesiune ștearsă','ok',2000);wrap.innerHTML='';wrap.appendChild(renderNormHistory());});
+      });
+      delTd.appendChild(delB2);tr.appendChild(delTd);
+    }
+    const dtTd=document.createElement('tr');
+    tr.innerHTML+=`<td style="padding:6px 10px;color:#6b7280">${dt}</td>
       <td style="padding:6px 10px;font-weight:700;font-family:monospace">${s.product}</td>
       <td style="padding:6px 10px">${s.operator}</td>
       <td style="padding:6px 10px;font-family:monospace;font-weight:700;color:#92400e">${s.opeNo||'—'}</td>
