@@ -7642,17 +7642,12 @@ function renderNormOperator(){
             renderPdfPage(canvas,doc,1,drawZoom*2);
           }
 
-          // Hook zoom into PDF re-render
-          const _origApplyZoom=applyZoom;
-          const pdfApplyZoom=(z)=>{
+          // Override applyZoom so toolbar zoom buttons trigger PDF re-render
+          applyZoom=(z)=>{
             drawZoom=Math.max(0.1,Math.min(8,z));
             zmLbl.textContent=Math.round(drawZoom*100)+'%';
             renderPdfPage(canvas,doc,_pdfPage,drawZoom*2);
           };
-          // Replace zoom function for PDF mode
-          zmOut.onclick=()=>pdfApplyZoom(drawZoom-0.25);
-          zmIn.onclick=()=>pdfApplyZoom(drawZoom+0.25);
-          zmFit.onclick=()=>pdfApplyZoom(1);
 
         }).catch(e=>{drawViewer.innerHTML=`<div style="color:#dc2626;padding:20px;text-align:center">Eroare PDF: ${e.message}</div>`;});
       });
@@ -7663,9 +7658,12 @@ function renderNormOperator(){
       img.addEventListener('error',()=>{drawViewer.innerHTML='<div style="color:#dc2626;padding:20px">Eroare la încărcarea imaginii.</div>';});
       imgWrap.appendChild(img);drawViewer.appendChild(imgWrap);
       // Restore default zoom handlers for images
-      zmOut.onclick=()=>applyZoom(drawZoom-0.25);
-      zmIn.onclick=()=>applyZoom(drawZoom+0.25);
-      zmFit.onclick=()=>applyZoom(1);
+      // Restore default applyZoom for images
+      applyZoom=(z)=>{
+        drawZoom=Math.max(0.1,Math.min(8,z));zmLbl.textContent=Math.round(drawZoom*100)+'%';
+        const el2=drawViewer.querySelector('.draw-scalable');
+        if(el2)el2.style.transform=`scale(${drawZoom})`;
+      };
     }
   };
 
