@@ -8047,29 +8047,32 @@ function renderNormHistory(){
     const tr=el('tr');tr.style.background=i%2?'#f8fafc':'#fff';tr.style.cursor='pointer';
     tr.addEventListener('click',()=>showSessionDetail(s));
     const dt=new Date(s.ts).toLocaleString('ro-RO');
+    // Build all cells via DOM (never use innerHTML+= after appending elements with listeners)
+    const mkTd=(html,css)=>{const td=el('td');td.style.cssText=css||'padding:6px 10px';td.innerHTML=html;return td;};
     if(isAdmin){
       const delTd=el('td');delTd.style.cssText='padding:4px 8px';
       const delB2=el('button');delB2.textContent='🗑';delB2.title='Șterge această înregistrare';
-      delB2.style.cssText='width:28px;height:28px;border:1px solid #fca5a5;background:#fef2f2;color:#dc2626;border-radius:4px;cursor:pointer;font-size:13px';
-      delB2.addEventListener('click',e=>{e.stopPropagation();
-        if(!confirm('Ștergi această sesiune?'))return;
+      delB2.style.cssText='width:32px;height:32px;border:1px solid #fca5a5;background:#fef2f2;color:#dc2626;border-radius:4px;cursor:pointer;font-size:15px';
+      delB2.addEventListener('click',e=>{
+        e.stopPropagation();
+        if(!confirm('Ștergi această sesiune de normare?'))return;
         S.normSessions.splice(i,1);
-        sbUpload(S.sbCfg,'data-normare-sessions.json',S.normSessions).then(()=>{showToast('✓ Sesiune ștearsă','ok',2000);wrap.innerHTML='';wrap.appendChild(renderNormHistory());});
+        sbUpload(S.sbCfg,'data-normare-sessions.json',S.normSessions)
+          .then(()=>{showToast('✓ Sesiune ștearsă','ok',2000);wrap.innerHTML='';wrap.appendChild(renderNormHistory());});
       });
       delTd.appendChild(delB2);tr.appendChild(delTd);
     }
-    const dtTd=document.createElement('tr');
-    tr.innerHTML+=`<td style="padding:6px 10px;color:#6b7280">${dt}</td>
-      <td style="padding:6px 10px;font-weight:700;font-family:monospace">${s.product}</td>
-      <td style="padding:6px 10px">${s.operator}</td>
-      <td style="padding:6px 10px;font-family:monospace;font-weight:700;color:#92400e">${s.opeNo||'—'}</td>
-      <td style="padding:6px 10px">${s.wc}${s.machine?' / '+s.machine:''}</td>
-      <td style="padding:6px 10px;text-align:right;font-weight:800;color:#1d4ed8">${s.quantity}</td>
-      <td style="padding:6px 10px;text-align:right;font-weight:900;font-family:monospace;color:#15803d">${s.totalFmt}</td>
-      <td style="padding:6px 10px;text-align:right;font-family:monospace">${s.events?.setup?.fmt||'—'}</td>
-      <td style="padding:6px 10px;text-align:right;font-family:monospace;font-weight:700;color:#15803d">${s.events?.run?.fmt||'—'}</td>
-      <td style="padding:6px 10px;text-align:right;font-family:monospace">${s.events?.deburr?.fmt||'—'}</td>
-      <td style="padding:6px 10px;text-align:right;font-family:monospace;color:#6b7280">${s.events?.other?.ms>0?(s.events.other.fmt+(s.otherLabel?' ('+s.otherLabel+')':'')):'—'}</td>`;
+    tr.appendChild(mkTd(dt,'padding:6px 10px;color:#6b7280'));
+    tr.appendChild(mkTd(`<b style="font-family:monospace">${s.product}</b>`));
+    tr.appendChild(mkTd(s.operator));
+    tr.appendChild(mkTd(s.opeNo||'—','padding:6px 10px;font-family:monospace;font-weight:700;color:#92400e'));
+    tr.appendChild(mkTd(`${s.wc||''}${s.machine?' / '+s.machine:''}`));
+    tr.appendChild(mkTd(s.quantity,'padding:6px 10px;text-align:right;font-weight:800;color:#1d4ed8'));
+    tr.appendChild(mkTd(s.totalFmt,'padding:6px 10px;text-align:right;font-weight:900;font-family:monospace;color:#15803d'));
+    tr.appendChild(mkTd(s.events?.setup?.fmt||'—','padding:6px 10px;text-align:right;font-family:monospace'));
+    tr.appendChild(mkTd(s.events?.run?.fmt||'—','padding:6px 10px;text-align:right;font-family:monospace;font-weight:700;color:#15803d'));
+    tr.appendChild(mkTd(s.events?.deburr?.fmt||'—','padding:6px 10px;text-align:right;font-family:monospace'));
+    tr.appendChild(mkTd(s.events?.other?.ms>0?(s.events.other.fmt+(s.otherLabel?' ('+s.otherLabel+')':'')):'—','padding:6px 10px;text-align:right;font-family:monospace;color:#6b7280'));
     tbody_.appendChild(tr);
   });
   tbl.appendChild(tbody_);wrap.appendChild(tbl);
