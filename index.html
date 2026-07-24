@@ -7571,48 +7571,101 @@ function renderNormOperator(){
   mkResizer(handle1,leftPanel,drawPanel);
   wrap.appendChild(leftPanel);wrap.appendChild(handle1);wrap.appendChild(drawPanel);
 
-  // Convert base64 data URL to Blob URL for cross-platform support (Android fix)
-  const dataUrlToBlob=(dataUrl)=>{
-    const [header,b64]=dataUrl.split(',');
-    const mime=(header.match(/:(.*?);/)||[])[1]||'application/octet-stream';
-    const bytes=atob(b64);const arr=new Uint8Array(bytes.length);
-    for(let i=0;i<bytes.length;i++)arr[i]=bytes.charCodeAt(i);
-    return {url:URL.createObjectURL(new Blob([arr],{type:mime})),mime};
+  // ── PDF.js renderer (works on ALL platforms incl. Android) ──
+  let _pdfjsLib=null;
+  let _pdfDoc=null;
+  let _pdfPage=1;
+  let _pdfTotalPages=1;
+
+  const loadPdfJs=(cb)=>{
+    if(_pdfjsLib){cb(_pdfjsLib);return;}
+    const s=document.createElement('script');
+    s.src='https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js';
+    s.onload=()=>{
+      _pdfjsLib=window.pdfjsLib;
+      _pdfjsLib.GlobalWorkerOptions.workerSrc='https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
+      cb(_pdfjsLib);
+    };
+    s.onerror=()=>cb(null);
+    document.head.appendChild(s);
   };
-  let _blobUrl=null;
+
+  const renderPdfPage=(canvas,doc,pageNum,scale)=>{
+    return doc.getPage(pageNum).then(page=>{
+      const vp=page.getViewport({scale});
+      canvas.width=vp.width;canvas.height=vp.height;
+      return page.render({canvasContext:canvas.getContext('2d'),viewport:vp}).promise;
+    });
+  };
+
   const renderDrawing=(dataUrl,mimeType)=>{
     drawViewer.innerHTML='';drawViewer.style.alignItems='flex-start';drawViewer.style.justifyContent='flex-start';
-    if(_blobUrl){try{URL.revokeObjectURL(_blobUrl);}catch(_){}_blobUrl=null;}
     const isPDF=mimeType==='application/pdf'||(dataUrl&&dataUrl.startsWith('data:application/pdf'));
+
     if(isPDF){
-      // Convert to blob URL — works on all platforms including Android
-      let blobUrl;
-      try{const r=dataUrlToBlob(dataUrl);blobUrl=r.url;_blobUrl=blobUrl;}
-      catch(_){blobUrl=dataUrl;} // fallback to data URL
-      // Use <embed> — better cross-platform than <iframe> for PDFs
-      const em=el('embed');em.className='draw-scalable';
-      em.setAttribute('type','application/pdf');em.src=blobUrl;
-      em.style.cssText='width:297mm;height:210mm;border:none;transform-origin:top left;display:block;background:#fff;max-width:none';
-      drawViewer.appendChild(em);
-      // Fallback: if embed doesn't render (Android WebView), show open-in-tab button
-      setTimeout(()=>{
-        if(em.offsetHeight<10||!em.clientHeight){
-          drawViewer.innerHTML='';
-          const fb=dv('');fb.style.cssText='width:100%;height:100%;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:12px;color:#94a3b8;text-align:center';
-          fb.innerHTML='<div style="font-size:40px">📄</div><div style="font-size:13px;font-weight:700;color:#cbd5e1">PDF detectat</div><div style="font-size:11px">Browserul nu poate afișa PDF-ul inline.</div>';
-          const openBtn=el('button');openBtn.textContent='🔗 Deschide PDF în tab nou';
-          openBtn.style.cssText='height:40px;padding:0 20px;border:none;border-radius:8px;background:#0369a1;color:#fff;font-size:13px;font-weight:700;cursor:pointer';
-          openBtn.addEventListener('click',()=>window.open(blobUrl,'_blank'));
-          fb.appendChild(openBtn);drawViewer.appendChild(fb);
+      // Show loading
+      drawViewer.innerHTML=`<div style="width:100%;height:100%;display:flex;align-items:center;justify-content:center;flex-direction:column;gap:10px;color:#64748b">
+        <div style="font-size:30px">⏳</div><div style="font-size:13px">Se încarcă PDF-ul...</div></div>`;
+
+      loadPdfJs(lib=>{
+        if(!lib){
+          drawViewer.innerHTML='<div style="color:#dc2626;padding:20px;text-align:center">PDF.js nu a putut fi încărcat. Verificați conexiunea.</div>';return;
         }
-      },800);
-      applyZoom(1);
+        // Convert data URL to Uint8Array for PDF.js
+        const b64=dataUrl.split(',')[1];
+        const bin=atob(b64);const arr=new Uint8Array(bin.length);
+        for(let i=0;i<bin.length;i++)arr[i]=bin.charCodeAt(i);
+
+        lib.getDocument({data:arr}).promise.then(doc=>{
+          _pdfDoc=doc;_pdfTotalPages=doc.numPages;_pdfPage=1;
+          drawViewer.innerHTML='';
+
+          // Page container (scalable)
+          const canvasWrap=dv('');canvasWrap.className='draw-scalable';
+          canvasWrap.style.cssText='transform-origin:top left;display:inline-block;background:#fff;box-shadow:0 4px 24px rgba(0,0,0,.4)';
+          const canvas=document.createElement('canvas');
+          canvasWrap.appendChild(canvas);drawViewer.appendChild(canvasWrap);
+
+          // Page nav bar (only if multi-page)
+          if(_pdfTotalPages>1){
+            const nav=dv('');nav.style.cssText='position:sticky;top:0;left:0;z-index:10;display:flex;align-items:center;gap:8px;padding:5px 8px;background:rgba(15,23,42,.8);border-radius:0 0 6px 0;margin-bottom:6px;width:max-content';
+            const prev=el('button');prev.textContent='◀';prev.style.cssText='height:28px;padding:0 10px;border:1px solid #334155;background:#1e293b;color:#94a3b8;border-radius:4px;cursor:pointer;font-size:12px';
+            const next=el('button');next.textContent='▶';next.style.cssText='height:28px;padding:0 10px;border:1px solid #334155;background:#1e293b;color:#94a3b8;border-radius:4px;cursor:pointer;font-size:12px';
+            const pgLbl=dv('');pgLbl.style.cssText='color:#94a3b8;font-size:11px;font-weight:700;min-width:70px;text-align:center';
+            const updatePage=(p)=>{_pdfPage=Math.max(1,Math.min(_pdfTotalPages,p));pgLbl.textContent=`${_pdfPage} / ${_pdfTotalPages}`;renderPdfPage(canvas,doc,_pdfPage,drawZoom*2);};
+            prev.addEventListener('click',()=>updatePage(_pdfPage-1));
+            next.addEventListener('click',()=>updatePage(_pdfPage+1));
+            nav.appendChild(prev);nav.appendChild(pgLbl);nav.appendChild(next);
+            drawViewer.insertBefore(nav,canvasWrap);
+            updatePage(1);
+          } else {
+            renderPdfPage(canvas,doc,1,drawZoom*2);
+          }
+
+          // Hook zoom into PDF re-render
+          const _origApplyZoom=applyZoom;
+          const pdfApplyZoom=(z)=>{
+            drawZoom=Math.max(0.1,Math.min(8,z));
+            zmLbl.textContent=Math.round(drawZoom*100)+'%';
+            renderPdfPage(canvas,doc,_pdfPage,drawZoom*2);
+          };
+          // Replace zoom function for PDF mode
+          zmOut.onclick=()=>pdfApplyZoom(drawZoom-0.25);
+          zmIn.onclick=()=>pdfApplyZoom(drawZoom+0.25);
+          zmFit.onclick=()=>pdfApplyZoom(1);
+
+        }).catch(e=>{drawViewer.innerHTML=`<div style="color:#dc2626;padding:20px;text-align:center">Eroare PDF: ${e.message}</div>`;});
+      });
     } else {
       const imgWrap=dv('');imgWrap.style.cssText='transform-origin:top left;display:block';imgWrap.className='draw-scalable';
       const img=el('img');img.src=dataUrl;img.style.cssText='display:block;max-width:none;user-select:none';
       img.addEventListener('load',()=>applyZoom(Math.min(drawViewer.clientWidth/img.naturalWidth,drawViewer.clientHeight/img.naturalHeight)*0.95));
       img.addEventListener('error',()=>{drawViewer.innerHTML='<div style="color:#dc2626;padding:20px">Eroare la încărcarea imaginii.</div>';});
       imgWrap.appendChild(img);drawViewer.appendChild(imgWrap);
+      // Restore default zoom handlers for images
+      zmOut.onclick=()=>applyZoom(drawZoom-0.25);
+      zmIn.onclick=()=>applyZoom(drawZoom+0.25);
+      zmFit.onclick=()=>applyZoom(1);
     }
   };
 
