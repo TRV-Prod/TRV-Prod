@@ -7508,7 +7508,7 @@ function renderNormOperator(){
   let drawZoom=1;
   const mkZBtn=(txt,fn,style)=>{const b=el('button');b.textContent=txt;b.style.cssText=`height:30px;padding:0 10px;border:1px solid #334155;background:#1e293b;color:#94a3b8;border-radius:4px;cursor:pointer;font-size:13px;font-weight:700;${style||''}`;b.addEventListener('click',fn);return b;};
   const zmLbl=dv('');zmLbl.style.cssText='color:#64748b;font-size:10px;font-weight:700;min-width:38px;text-align:center';zmLbl.textContent='100%';
-  const applyZoom=(z)=>{
+  let applyZoom=(z)=>{
     drawZoom=Math.max(0.1,Math.min(8,z));zmLbl.textContent=Math.round(drawZoom*100)+'%';
     const el2=drawViewer.querySelector('.draw-scalable');
     if(el2)el2.style.transform=`scale(${drawZoom})`;
