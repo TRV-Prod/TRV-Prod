@@ -7544,7 +7544,32 @@ function renderNormOperator(){
   drawViewer.addEventListener('wheel',e=>{e.preventDefault();applyZoom(drawZoom+(e.deltaY<0?0.15:-0.15));},{passive:false});
 
   drawPanel.appendChild(drawViewer);
-  wrap.appendChild(leftPanel);wrap.appendChild(drawPanel);
+  // Draggable resize handle between left and draw
+  const handle1=dv('');handle1.style.cssText='width:5px;background:#e2e8f0;cursor:col-resize;flex-shrink:0;transition:background .15s;position:relative;z-index:10';
+  handle1.addEventListener('mouseenter',()=>handle1.style.background='#94a3b8');
+  handle1.addEventListener('mouseleave',()=>handle1.style.background='#e2e8f0');
+  let resizing=false,resizeTarget=null,resizeStart=0,leftW=0,rightW=0;
+  const mkResizer=(h,leftEl,rightEl)=>{
+    h.addEventListener('mousedown',e=>{
+      e.preventDefault();resizing=true;resizeTarget={h,leftEl,rightEl};
+      resizeStart=e.clientX;leftW=leftEl.offsetWidth;rightW=rightEl.offsetWidth;
+      document.body.style.cursor='col-resize';document.body.style.userSelect='none';
+    });
+  };
+  window.addEventListener('mousemove',e=>{
+    if(!resizing||!resizeTarget)return;
+    const total=resizeTarget.leftEl.offsetWidth+resizeTarget.rightEl.offsetWidth;
+    const dx=e.clientX-resizeStart;
+    const newLeft=Math.max(80,Math.min(total-80,leftW+dx));
+    const newRight=total-newLeft;
+    const pctL=newLeft/(wrap.offsetWidth||800)*100;
+    const pctR=newRight/(wrap.offsetWidth||800)*100;
+    resizeTarget.leftEl.style.width=pctL+'%';resizeTarget.leftEl.style.minWidth='';resizeTarget.leftEl.style.maxWidth='';
+    resizeTarget.rightEl.style.width=pctR+'%';resizeTarget.rightEl.style.minWidth='';resizeTarget.rightEl.style.maxWidth='';
+  });
+  window.addEventListener('mouseup',()=>{if(resizing){resizing=false;document.body.style.cursor='';document.body.style.userSelect='';resizeTarget=null;}});
+  mkResizer(handle1,leftPanel,drawPanel);
+  wrap.appendChild(leftPanel);wrap.appendChild(handle1);wrap.appendChild(drawPanel);
 
   const renderDrawing=(dataUrl,mimeType)=>{
     drawViewer.innerHTML='';drawViewer.style.alignItems='flex-start';drawViewer.style.justifyContent='flex-start';
@@ -7653,7 +7678,22 @@ function renderNormOperator(){
   const resultsStrip=dv('');resultsStrip.id='norm-results-strip';resultsStrip.style.cssText='padding:6px 8px;border-top:2px solid var(--border);background:#f0fdf4;font-size:10px;color:#15803d;flex-shrink:0;min-height:36px';
   resultsStrip.textContent='';
   rightPanel.appendChild(resultsStrip);
-  wrap.appendChild(rightPanel);
+  // Resize handle between draw and right panel
+  const handle2=dv('');handle2.style.cssText='width:5px;background:#e2e8f0;cursor:col-resize;flex-shrink:0;transition:background .15s;position:relative;z-index:10';
+  handle2.addEventListener('mouseenter',()=>handle2.style.background='#94a3b8');
+  handle2.addEventListener('mouseleave',()=>handle2.style.background='#e2e8f0');
+  mkResizer(handle2,drawPanel,rightPanel);
+  // Make drawPanel flex:1 initially so handles work by pixels then we swap to %
+  drawPanel.style.flex='';
+  const totalW=()=>wrap.offsetWidth||window.innerWidth;
+  const initPcts=()=>{
+    const tot=totalW();
+    leftPanel.style.width='10%';leftPanel.style.minWidth='';leftPanel.style.maxWidth='';
+    rightPanel.style.width='20%';rightPanel.style.minWidth='';rightPanel.style.maxWidth='';
+    drawPanel.style.width='calc(70% - 10px)';drawPanel.style.flex='';
+  };
+  setTimeout(initPcts,10);
+  wrap.appendChild(handle2);wrap.appendChild(rightPanel);
 
   // ── Logic functions ──
   const updateEvtBtns=()=>{
@@ -7707,6 +7747,7 @@ function renderNormOperator(){
       id:`NS_${Date.now()}`,ts:new Date().toISOString(),
       operator:(opInp.value||'').trim(),
       product:selectedOrder?.product||'',drawing:selectedOrder?.drawing||'',
+      opeNo:selectedOrder?.opeNo||'',
       wc:selectedOrder?.wc||'',machine:selectedOrder?.machine||'',
       quantity,totalMs,totalFmt:fmtMs(totalMs),
       events:Object.fromEntries(Object.entries(eventTotals).map(([k,v])=>[k,{ms:v,fmt:fmtMs(v)}])),
@@ -7809,6 +7850,7 @@ function renderNormConfig(){
       grid.appendChild(mkFld('BOW Code (dacă diferit)','bowCode'));
       grid.appendChild(mkFld('Workcenter','wc','select',allWCs));
       grid.appendChild(mkFld('Mașină','machine','select',machList));
+      grid.appendChild(mkFld('Ope No','opeNo'));
       grid.appendChild(mkFld('Operator (opțional)','operator'));
       card.appendChild(grid);
 
@@ -7870,6 +7912,7 @@ function renderNormHistory(){
     <th style="padding:8px 10px;text-align:left">Data</th>
     <th style="padding:8px 10px;text-align:left">Produs</th>
     <th style="padding:8px 10px;text-align:left">Operator</th>
+    <th style="padding:8px 10px;text-align:left">Ope No</th>
     <th style="padding:8px 10px;text-align:left">WC / Mașină</th>
     <th style="padding:8px 10px;text-align:right">Buc</th>
     <th style="padding:8px 10px;text-align:right">Total</th>
@@ -7886,6 +7929,7 @@ function renderNormHistory(){
     tr.innerHTML=`<td style="padding:6px 10px;color:#6b7280">${dt}</td>
       <td style="padding:6px 10px;font-weight:700;font-family:monospace">${s.product}</td>
       <td style="padding:6px 10px">${s.operator}</td>
+      <td style="padding:6px 10px;font-family:monospace;font-weight:700;color:#92400e">${s.opeNo||'—'}</td>
       <td style="padding:6px 10px">${s.wc}${s.machine?' / '+s.machine:''}</td>
       <td style="padding:6px 10px;text-align:right;font-weight:800;color:#1d4ed8">${s.quantity}</td>
       <td style="padding:6px 10px;text-align:right;font-weight:900;font-family:monospace;color:#15803d">${s.totalFmt}</td>
