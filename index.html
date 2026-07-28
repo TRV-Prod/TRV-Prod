@@ -5975,23 +5975,40 @@ function stopScanner(){
 }
 
 function lookupCode(code){
-  code=code.trim().toUpperCase();
-  if(!code) return null;
-  // Search in stockIdx (material codes)
-  if(S.stockIdx?.has(code)){
-    const st=S.stockIdx.get(code);
-    return{type:'material',code,name:st.name||'—',stock:st,fps:[...(st.fps||[])]};
+  const raw=code.trim();
+  if(!raw) return null;
+  const upper=raw.toUpperCase();
+
+  // Try exact match (original case first, then uppercase)
+  for(const tryCode of [raw, upper]){
+    if(S.stockIdx?.has(tryCode)){
+      const st=S.stockIdx.get(tryCode);
+      return{type:'material',code:tryCode,name:st.name||'—',stock:st,fps:[...(st.fps||[])]};
+    }
+    const fp=S.fps?.find(f=>f.code===tryCode);
+    if(fp){
+      const st=S.stockIdx?.get(tryCode)||{onHand:0,onMO:0,totalWIP:0,wipByWC:{}};
+      return{type:'fp',code:fp.code,name:fp.drawing||fp.name||'—',stock:st,fps:[fp.code]};
+    }
   }
-  // Search as FP code
-  const fp=S.fps?.find(f=>f.code===code||f.code.toUpperCase()===code);
-  if(fp){
-    const st=S.stockIdx?.get(code)||{onHand:0,onMO:0,totalWIP:0,wipByWC:{}};
-    return{type:'fp',code:fp.code,name:fp.drawing||fp.name||'—',stock:st,fps:[fp.code]};
-  }
-  // Fuzzy: partial match
+  // Case-insensitive match in stockIdx
   if(S.stockIdx){
     for(const[k,v] of S.stockIdx){
-      if(k.includes(code)||code.includes(k)){
+      if(k.toUpperCase()===upper){
+        return{type:'material',code:k,name:v.name||'—',stock:v,fps:[...(v.fps||[])]};
+      }
+    }
+  }
+  // Case-insensitive FP match
+  const fp2=S.fps?.find(f=>f.code.toUpperCase()===upper);
+  if(fp2){
+    const st=S.stockIdx?.get(fp2.code)||{onHand:0,onMO:0,totalWIP:0,wipByWC:{}};
+    return{type:'fp',code:fp2.code,name:fp2.drawing||fp2.name||'—',stock:st,fps:[fp2.code]};
+  }
+  // Partial / fuzzy match
+  if(S.stockIdx&&upper.length>=4){
+    for(const[k,v] of S.stockIdx){
+      if(k.toUpperCase().includes(upper)||upper.includes(k.toUpperCase())){
         return{type:'material',code:k,name:v.name||'—',stock:v,fps:[...(v.fps||[])]};
       }
     }
@@ -10735,12 +10752,24 @@ function showScanResult(rawCode,resultArea,histWrap){
   if(!result){
     const nf=dv('scan-not-found');
     nf.appendChild(sp('scan-product-code',code));
-    const msg=dv('');msg.style.cssText='font-size:12px;color:#dc2626;margin-top:6px';msg.textContent='Codul nu a fost gasit in BOM/Stocuri.';
-    nf.appendChild(msg);
-    if(S.bomData){
-      const tip=dv('');tip.style.cssText='font-size:11px;color:var(--text3);margin-top:8px';
-      tip.textContent='Verifica daca fisierele BOM si Planning Overview sunt incarcate.';nf.appendChild(tip);
+    const msg=dv('');msg.style.cssText='font-size:12px;color:#dc2626;margin-top:6px;font-weight:700';
+    msg.textContent='Codul "'+code+'" nu a fost găsit.';nf.appendChild(msg);
+    // Data status diagnostic
+    const statusDiv=dv('');statusDiv.style.cssText='margin-top:10px;background:#f8f9fb;border:1px solid #e2e8f0;border-radius:6px;padding:8px 12px;font-size:11px';
+    const items=[
+      {label:'Planning Overview (stocuri)',ok:!!S.stockIdx&&S.stockIdx.size>0,detail:S.stockIdx?S.stockIdx.size+' articole':''},
+      {label:'BOM',ok:!!S.bomData,detail:S.bomData?'încărcat':''},
+      {label:'Order Book',ok:!!S.obData&&S.obData.length>0,detail:S.obData?S.obData.length+' linii':''},
+    ];
+    statusDiv.innerHTML='<div style="font-weight:700;color:#475569;margin-bottom:5px">Status fișiere:</div>'+
+      items.map(i=>`<div style="display:flex;justify-content:space-between;gap:12px;padding:2px 0">
+        <span style="color:#6b7280">${i.label}</span>
+        <span style="font-weight:700;color:${i.ok?'#15803d':'#dc2626'}">${i.ok?'✓ '+i.detail:'✗ Neîncărcat'}</span>
+      </div>`).join('');
+    if(!S.stockIdx||S.stockIdx.size===0){
+      statusDiv.innerHTML+='<div style="margin-top:6px;color:#92400e;font-size:10px">⚠ Mergeți la <b>Fisiere</b> și încărcați <b>Planning Overview</b></div>';
     }
+    nf.appendChild(statusDiv);
     resultArea.appendChild(nf);
     // Not added to history — only found products are saved
   } else {
