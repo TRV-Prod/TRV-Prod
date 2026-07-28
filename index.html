@@ -10558,8 +10558,24 @@ function renderScanner(){
 
   const manualWrap=dv('scanner-manual');
   const inp=el('input','scanner-inp');inp.id='scanner-inp';inp.type='text';inp.placeholder='Cauta cod manual (ex: BTF.RERNWE0079)...';inp.autocomplete='off';
+  inp.autocorrect='off';inp.autocapitalize='off';inp.spellcheck=false;
   const searchBtn=el('button','scanner-search-btn');searchBtn.textContent='↵ Cauta';
   manualWrap.appendChild(inp);manualWrap.appendChild(searchBtn);
+  // Data status indicator
+  const statusBadge=dv('');statusBadge.style.cssText='display:flex;align-items:center;gap:5px;padding:3px 8px;border-radius:12px;font-size:10px;font-weight:700;flex-shrink:0';
+  const hasStock=S.stockIdx&&S.stockIdx.size>0;
+  statusBadge.style.background=hasStock?'#dcfce7':'#fee2e2';
+  statusBadge.style.color=hasStock?'#15803d':'#dc2626';
+  statusBadge.style.border=`1px solid ${hasStock?'#86efac':'#fca5a5'}`;
+  statusBadge.textContent=hasStock?`✓ ${S.stockIdx.size} art.`:'⚠ Fără date';
+  statusBadge.title=hasStock?`Planning Overview: ${S.stockIdx.size} articole
+BOM: ${S.bomData?'da':'nu'}
+Orderbook: ${S.obData?.length||0} linii`:'Mergeți la Fisiere și încărcați Planning Overview';
+  statusBadge.addEventListener('click',()=>{
+    const info='📦 Planning Overview: '+(S.stockIdx?.size||0)+' articole\n🌳 BOM: '+(S.bomData?.length||0)+' rânduri\n📋 Orderbook: '+(S.obData?.length||0)+' linii\n🔧 BOW: '+(S.bowData?.length||0)+' rânduri';
+    alert('Status date:\n\n'+info+'\n\n'+(hasStock?'Date OK.':'⚠ Planning Overview neincărcat! Mergeți la tab Fisiere.'));
+  });
+  ctrl.appendChild(statusBadge);
   // Zoom for result display
   const zoomWrap=dv('');zoomWrap.style.cssText='display:flex;align-items:center;gap:4px;padding:0 4px';
   const zm2=el('button');zm2.textContent='A−';zm2.style.cssText='height:36px;padding:0 10px;border:1px solid var(--border);border-radius:4px;font-size:14px;font-weight:700;background:#f8f9fb;cursor:pointer';
@@ -10575,6 +10591,7 @@ function renderScanner(){
 
   // Result area
   const resultArea=dv('');resultArea.id='scanner-result-area';
+  resultArea.style.cssText='min-height:60px;position:relative';
   const emptyMsg=dv('');emptyMsg.style.cssText='padding:24px;text-align:center;color:var(--text3);font-size:12px';
   emptyMsg.innerHTML='<div style="font-size:28px;margin-bottom:8px">📷</div>Porneste camera sau introdu un cod manual';
   resultArea.appendChild(emptyMsg);
@@ -10635,8 +10652,14 @@ function renderScanner(){
 
   // Manual search
   const doSearch=()=>{
-    const code=inp.value.trim();if(!code)return;
-    showScanResult(code,resultArea,histWrap);inp.select();
+    const rawVal=inp.value.trim();if(!rawVal)return;
+    // Force uppercase lookup attempt + show immediately
+    const code=rawVal;
+    console.log('[Scanner] doSearch:',code,'stockIdx size:',S.stockIdx?.size||0);
+    showScanResult(code,resultArea,histWrap);
+    // Scroll to result on mobile
+    setTimeout(()=>resultArea.scrollIntoView({behavior:'smooth',block:'start'}),100);
+    inp.select();
   };
   searchBtn.addEventListener('click',doSearch);
   inp.addEventListener('keydown',e=>{if(e.key==='Enter')doSearch();});
