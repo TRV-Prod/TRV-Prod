@@ -1849,11 +1849,11 @@ function applyPo(rows,ts){
         name:String(r['NAME']||'').trim(),
         type:String(r['M/B/D']||'').trim(),
         wipByWC,
-        fps: fp ? new Set([fp]) : new Set(),
+        fps: fp ? [fp] : [],  // Array (not Set) — JSON-serializable
       });
     } else {
       // Subsequent occurrence — just add the FP to the set
-      if(fp) idx.get(code).fps.add(fp);
+      if(fp&&!idx.get(code).fps.includes(fp)) idx.get(code).fps.push(fp);
     }
   }
   S.stockIdx=idx;
@@ -5995,7 +5995,7 @@ function lookupCode(code){
   if(S.stockIdx){
     for(const[k,v] of S.stockIdx){
       if(k.toUpperCase()===upper){
-        return{type:'material',code:k,name:v.name||'—',stock:v,fps:[...(v.fps||[])]};
+        const fps2=v.fps instanceof Set?[...v.fps]:Array.isArray(v.fps)?v.fps:Object.values(v.fps||{});return{type:'material',code:k,name:v.name||'—',stock:v,fps:fps2};
       }
     }
   }
@@ -6009,7 +6009,7 @@ function lookupCode(code){
   if(S.stockIdx&&upper.length>=4){
     for(const[k,v] of S.stockIdx){
       if(k.toUpperCase().includes(upper)||upper.includes(k.toUpperCase())){
-        return{type:'material',code:k,name:v.name||'—',stock:v,fps:[...(v.fps||[])]};
+        const fps3=v.fps instanceof Set?[...v.fps]:Array.isArray(v.fps)?v.fps:Object.values(v.fps||{});return{type:'material',code:k,name:v.name||'—',stock:v,fps:fps3};
       }
     }
   }
