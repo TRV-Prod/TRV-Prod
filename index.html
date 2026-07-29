@@ -10525,6 +10525,16 @@ function printPV2(st){
 }
 
 
+
+function getMatQtyInFP(fpCode, matNo){
+  if(!S.bomIdx) return 1;
+  for(const [key, rows] of S.bomIdx){
+    if(!key.startsWith(fpCode+'__')) continue;
+    const row=rows.find(r=>str(r['Material no'])===matNo);
+    if(row) return parseFloat(String(row['Material qty']||'1').replace(',','.'))||1;
+  }
+  return 1;
+}
 function renderScanner(){
   const page=dv('scanner-page');
 
