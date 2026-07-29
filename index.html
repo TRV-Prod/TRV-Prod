@@ -6939,12 +6939,24 @@ function getDctrRows(){
     });
   }
   // Sort
+  const _dctrDateCols=new Set(['entryDt','requestDt','confirmDt','savedAt']);
+  const _parseDctrSortDate=(v)=>{
+    if(!v||v==='—') return 0;
+    // DD.MM.YYYY
+    const m=String(v).match(/^(\d{1,2})\.(\d{1,2})\.(\d{4})$/);
+    if(m) return new Date(+m[3],+m[2]-1,+m[1]).getTime();
+    // ISO date or timestamp
+    const d=new Date(v);return isNaN(d)?0:d.getTime();
+  };
   rows.sort((a,b)=>{
     const dir=rs.sortDir;
     const va=a[rs.sortCol],vb=b[rs.sortCol];
     if(va==null&&vb==null) return 0;
     if(va==null) return dir;
     if(vb==null) return -dir;
+    if(_dctrDateCols.has(rs.sortCol)){
+      return dir*(_parseDctrSortDate(va)-_parseDctrSortDate(vb));
+    }
     if(typeof va==='number'&&typeof vb==='number') return dir*(va-vb);
     return dir*String(va).localeCompare(String(vb));
   });
