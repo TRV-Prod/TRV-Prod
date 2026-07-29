@@ -1485,6 +1485,8 @@ async function sbSaveData(key,rows,ts){
 async function sbLoadAllData(){
   const cfg=S.sbCfg;if(!cfg)return false;
   let loaded=false;
+
+  // ── FAZA 1: Fișiere critice (BOM, BOW, PO, OB, WCS, InTransit) ──
   for(const{k,label,apply} of [
     {k:'bom',label:'BOM',apply:(r,t)=>applyBom(r,t)},
     {k:'bow',label:'BOW',apply:(r,t)=>applyBow(r,t)},
@@ -1492,41 +1494,13 @@ async function sbLoadAllData(){
     {k:'ob', label:'Order Book',apply:(r,t)=>applyOb(r,t)},
     {k:'wcs',label:'Workcenter Setup',apply:(r,t)=>applyWcSetup(r,t)},
     {k:'intransit',label:'In Transit',apply:(r,t)=>applyInTransit(r,t)},
-    // molist handled separately below (binary XLSX, ~5-8MB JSON would exceed limit)
-    // scanari handled separately below (binary XLSX)
   ]){
     S.loadMsg=`Se incarca ${label}...`;setLoadMsg(S.loadMsg);await yieldFrame();
     const data=await sbDownload(cfg,`data-${k}.json`);
     if(data?.rows){apply(data.rows,data.ts);await dbSave(k,{rows:data.rows,ts:data.ts});loaded=true;}
   }
-  // scanari: download raw XLSX binary from Supabase
-  S.loadMsg='Se incarca Raport Scanari...';setLoadMsg(S.loadMsg);await yieldFrame();
-  try{
-    const scanSb=await sbDownloadScanariRaw(cfg);
-    if(scanSb?.rows?.length){
-      applyScanari(scanSb.rows,scanSb.ts);
-      await saveScanariToIDB(scanSb.rows,scanSb.ts);
-      loaded=true;
-    }
-  }catch(e){console.warn('Supabase scanari download:',e);}
 
-  // molist: binary XLSX download
-  S.loadMsg='Se incarca MO List...';setLoadMsg(S.loadMsg);await yieldFrame();
-  try{
-    const moMeta=await sbDownload(cfg,'data-molist-meta.json');
-    if(moMeta){
-      const moUrl=`${cfg.url}/storage/v1/object/${cfg.bucket}/data-molist.xlsx`;
-      const moR=await fetch(moUrl,{headers:{'Authorization':'Bearer '+cfg.key,'apikey':cfg.key}});
-      if(moR.ok){
-        const moBuf=await moR.arrayBuffer();
-        const moRows=parseBuffer(new Uint8Array(moBuf));
-        applyMoList(moRows,moMeta.ts);
-        await dbSave('molist',{rows:moRows,ts:moMeta.ts});
-        loaded=true;
-      }
-    }
-  }catch(e){console.warn('Supabase molist download:',e);}
-
+  // ── Plan data (needed for Planificare) — part of phase 1 ──
   const planData=await sbDownload(cfg,'data-plan.json');
   if(planData){
     if(planData.entries){S.planData=new Map(planData.entries);
@@ -1550,7 +1524,45 @@ async function sbLoadAllData(){
     if(planData.pwcScheduled)S.pwcState.scheduledByGroup=planData.pwcScheduled;
     if(planData.pwcNotes)S.pwcState.notes=planData.pwcNotes;
   }
+  // ── Render app immediately after phase 1 ──
+  // Phase 2 loads in background after render
+  setTimeout(()=>sbLoadSecondaryData(cfg),200);
+
   return loaded;
+}
+
+// ── FAZA 2: Fișiere secundare (Scanări + MO List) ── încărcate în fundal
+async function sbLoadSecondaryData(cfg){
+  if(!cfg)return;
+
+  // Scanări
+  S.loadMsg='Se incarca Raport Scanari (fundal)...';
+  try{
+    const scanSb=await sbDownloadScanariRaw(cfg);
+    if(scanSb?.rows?.length){
+      applyScanari(scanSb.rows,scanSb.ts);
+      await saveScanariToIDB(scanSb.rows,scanSb.ts);
+    }
+  }catch(e){console.warn('Supabase scanari:',e);}
+
+  // MO List
+  S.loadMsg='Se incarca MO List (fundal)...';
+  try{
+    const moMeta=await sbDownload(cfg,'data-molist-meta.json');
+    if(moMeta){
+      const moUrl=`${cfg.url}/storage/v1/object/${cfg.bucket}/data-molist.xlsx`;
+      const moR=await fetch(moUrl,{headers:{'Authorization':'Bearer '+cfg.key,'apikey':cfg.key}});
+      if(moR.ok){
+        const moBuf=await moR.arrayBuffer();
+        const moRows=parseBuffer(new Uint8Array(moBuf));
+        applyMoList(moRows,moMeta.ts);
+        await dbSave('molist',{rows:moRows,ts:moMeta.ts});
+      }
+    }
+  }catch(e){console.warn('Supabase molist:',e);}
+
+  S.loadMsg='';setLoadMsg('');
+  console.log('[App] Faza 2 incarcata: Scanari + MO List');
 }
 
 async function sbSavePlan(){
