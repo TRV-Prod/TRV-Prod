@@ -2301,32 +2301,31 @@ function exportStructuraPDF(){
   const zoomFactor=currentZoom/100;
   const fp=S.fps?.find(f=>f.code===S.selFP);
 
-  // Clone DOM — preserves expand/collapse state
+  // Clone DOM — preserves current expand/collapse state
   const cloned=treeEl.cloneNode(true);
   cloned.querySelectorAll('input,textarea').forEach(e=>e.remove());
   cloned.querySelectorAll('button').forEach(e=>{if(!e.classList.contains('n-tog'))e.remove();});
-  cloned.style.zoom='';  // will be set via html{zoom} in new document
-
-  // Serialize clone to HTML string
+  cloned.style.zoom='';
   const treeHtml=cloned.outerHTML;
 
-  // Extract tree CSS from main page stylesheets
-  let treeCss='';
+  // ── Extract tree CSS and SCALE all px values by zoomFactor ──
+  // This is the only method guaranteed to work in Chrome print dialog
+  let rawCss='';
   try{
     for(const ss of document.styleSheets){
       try{
         for(const rule of ss.cssRules){
           const txt=rule.cssText||'';
-          // Copy tree-relevant CSS rules (connector lines, badges, etc.)
-          if(txt.match(/\.(n-|bom-|op-|stk-|fp-hdr|wip-wc|stock-row|ops-|tree-scroll)/)){
-            treeCss+=txt+'\n';
+          if(txt.match(/\.(n-|bom-|op-|stk-|fp-hdr|wip-wc|stock-row|ops-|tree-scroll|scan-)/)){
+            rawCss+=txt+'\n';
           }
         }
       }catch(_){}
     }
   }catch(_){}
+  // Scale ALL px values: 18px → 32.4px at 180% zoom
+  const scaledCss=rawCss.replace(/(-?\d+(?:\.\d+)?)px/g,(_,n)=>(parseFloat(n)*zoomFactor).toFixed(2)+'px');
 
-  // Add CSS variables used by tree
   const varsCss=`:root{
     --border:#e2e5ea;--border2:#edf0f3;
     --text:#111827;--text2:#374151;--text3:#6b7280;--text4:#9ca3af;
@@ -2335,40 +2334,42 @@ function exportStructuraPDF(){
   }`;
 
   const titleLine=`Structura BOM — ${S.selFP}${fp?.name?' · '+fp.name:''}`;
-  const subLine=`Cantitate: ${fmtN(S.qtyInput)} buc · Eficiență: ${S.efficienta||100}%${S.structIgnoreStock?' · Stocuri ignorate':''} · Zoom: ${currentZoom}% · ${new Date().toLocaleDateString('ro-RO')}`;
+  const subLine=`${fmtN(S.qtyInput)} buc · Eficiență: ${S.efficienta||100}%${S.structIgnoreStock?' · Stocuri ignorate':''} · Zoom: ${currentZoom}% · ${new Date().toLocaleDateString('ro-RO')}`;
+  const baseFontPx=(13*zoomFactor).toFixed(2);
 
-  const fullHtml=`<!DOCTYPE html><html><head><meta charset="UTF-8"><title>${titleLine}</title>
+  const fullHtml=`<!DOCTYPE html><html><head><meta charset="UTF-8">
+<title>${titleLine}</title>
 <style>
 ${varsCss}
-/* Scale entire document by zoom factor — works in print dialog */
-html,body{zoom:${zoomFactor};margin:0;padding:0;font-family:Arial,sans-serif;}
-body{padding:10mm}
-h2{font-size:15px;margin:0 0 3px;color:#1e3a5f}
-p.sub{font-size:10px;color:#6b7280;margin:0 0 10px}
-${treeCss}
+/* Base font scaled — all em/rem values cascade from this */
+html,body{margin:0;padding:0;font-family:Arial,sans-serif;font-size:${baseFontPx}px}
+body{padding:${(8*zoomFactor).toFixed(0)}mm}
+h2{font-size:${(15*zoomFactor).toFixed(1)}px;margin:0 0 ${(3*zoomFactor).toFixed(0)}px;color:#1e3a5f}
+p.sub{font-size:${(10*zoomFactor).toFixed(1)}px;color:#6b7280;margin:0 0 ${(10*zoomFactor).toFixed(0)}px}
+/* All tree CSS with px values multiplied by ${zoomFactor} */
+${scaledCss}
 .tree-scroll{overflow:visible!important}
 .n-tog{display:none!important}
-@page{size:A3 landscape;margin:0}
+@page{size:A3 landscape;margin:${(6*zoomFactor).toFixed(0)}mm}
 *{-webkit-print-color-adjust:exact!important;print-color-adjust:exact!important}
 </style></head><body>
 <h2>${titleLine}</h2>
 <p class="sub">${subLine}</p>
 ${treeHtml}
+<script>setTimeout(()=>window.print(),600);<\/script>
 </body></html>`;
 
-  // Try new window (direct user gesture → popup allowed in Chrome/Edge)
   const w=window.open('','_blank');
   if(w){
     w.document.open();w.document.write(fullHtml);w.document.close();
-    setTimeout(()=>w.print(),700);
   } else {
-    // Fallback: Blob URL (bypasses some popup blockers)
+    // Fallback: Blob URL
     const blob=new Blob([fullHtml],{type:'text/html'});
     const url=URL.createObjectURL(blob);
     const a=document.createElement('a');a.href=url;a.target='_blank';
     a.style.display='none';document.body.appendChild(a);a.click();
     setTimeout(()=>{a.remove();URL.revokeObjectURL(url);},3000);
-    showToast('PDF deschis în tab nou — folosiți Ctrl+P / ⌘P pentru a printa','ok',4000);
+    showToast('PDF deschis în tab nou — Ctrl+P / ⌘P pentru print','ok',4000);
   }
 }
 
