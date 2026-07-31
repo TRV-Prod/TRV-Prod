@@ -2294,102 +2294,82 @@ function calcTotalExecTime(fpCode, inputQty){
 ═══════════════════════════════════════════════════════════════ */
 function exportStructuraPDF(){
   if(!S.selFP){alert('Selectați un produs final.');return;}
-
-  // Find the current tree container in the DOM
   const treeEl=document.getElementById('structura-tree-root');
-  if(!treeEl){alert('Arborele nu este vizibil. Deschideți tab-ul Structura.');return;}
+  if(!treeEl){alert('Deschideți tab-ul Structura mai întâi.');return;}
 
-  // Get current zoom from Structura
-  const currentZoom=S.structZoom||100;
+  const currentZoom=S.structZoom||S.zoom?.structura||100;
+  const zoomFactor=currentZoom/100;
   const fp=S.fps?.find(f=>f.code===S.selFP);
 
-  // ── Build overlay ──
-  document.getElementById('struct-print-overlay')?.remove();
-  const ov=dv('');ov.id='struct-print-overlay';
-
-  // Close + Print buttons
-  const btnBar=dv('');btnBar.className='spo-close';
-  btnBar.style.cssText='position:fixed;top:10px;right:14px;z-index:100000;display:flex;gap:8px';
-  const closeBtn=el('button');closeBtn.style.cssText='height:32px;padding:0 14px;border:1px solid #e2e8f0;border-radius:4px;background:#fff;cursor:pointer;font-size:12px;font-weight:600;box-shadow:0 2px 8px rgba(0,0,0,.12)';
-  closeBtn.textContent='✕ Închide';closeBtn.addEventListener('click',()=>{ov.style.display='none';ov.remove();});
-  const printBtn2=el('button');printBtn2.style.cssText='height:32px;padding:0 14px;border:1.5px solid #0369a1;border-radius:4px;background:#eff6ff;cursor:pointer;font-size:12px;font-weight:700;color:#0369a1;box-shadow:0 2px 8px rgba(0,0,0,.12)';
-  printBtn2.textContent='🖨 Printează / PDF';printBtn2.addEventListener('click',()=>window.print());
-  btnBar.appendChild(closeBtn);btnBar.appendChild(printBtn2);ov.appendChild(btnBar);
-
-  // Title + meta
-  const titleDiv=dv('');titleDiv.style.cssText='margin-bottom:10px;padding-bottom:8px;border-bottom:2px solid #e2e8f0';
-  titleDiv.innerHTML=`<div style="font-size:16px;font-weight:800;color:#1e3a5f">Structura BOM — ${S.selFP}${fp?.name?' · '+fp.name:''}</div>
-    <div style="font-size:10px;color:#6b7280;margin-top:3px">
-      Cantitate: ${fmtN(S.qtyInput)} buc · Eficiență: ${S.efficienta||100}%${S.structIgnoreStock?' · ⚠ Stocuri ignorate':''} · Zoom: ${currentZoom}% · ${new Date().toLocaleDateString('ro-RO')} ${new Date().toLocaleTimeString('ro-RO')}
-    </div>`;
-  ov.appendChild(titleDiv);
-
-  // Clone current tree DOM — preserves exact visual state (expand/collapse)
+  // Clone DOM — preserves expand/collapse state
   const cloned=treeEl.cloneNode(true);
-  cloned.querySelectorAll('input,textarea').forEach(el2=>el2.remove());
-  cloned.querySelectorAll('button').forEach(el2=>{if(!el2.classList.contains('n-tog'))el2.remove();});
-  cloned.querySelectorAll('[style*="cursor:pointer"],[style*="cursor: pointer"]').forEach(el2=>el2.style.cursor='default');
-  // Reset any existing zoom on clone
-  cloned.style.zoom='';
+  cloned.querySelectorAll('input,textarea').forEach(e=>e.remove());
+  cloned.querySelectorAll('button').forEach(e=>{if(!e.classList.contains('n-tog'))e.remove();});
+  cloned.style.zoom='';  // will be set via html{zoom} in new document
 
-  const zoomFactor=currentZoom/100;
+  // Serialize clone to HTML string
+  const treeHtml=cloned.outerHTML;
 
-  // Wrapper that scales with transform (works in @media print unlike CSS zoom)
-  // transform:scale doesn't affect layout, so we compensate with explicit dimensions
-  const scaleWrap=dv('');
-  scaleWrap.id='struct-scale-wrap';
-  scaleWrap.style.cssText=[
-    `transform:scale(${zoomFactor})`,
-    'transform-origin:top left',
-    `width:${100/zoomFactor}%`,         // compensate: at 180% scale, need 55.5% width so scaled = 100%
-    `height:${100/zoomFactor}%`,
-  ].join(';');
-  scaleWrap.appendChild(cloned);
-
-  // Container that reserves the correct scaled dimensions
-  const scaleContainer=dv('');
-  scaleContainer.style.cssText=[
-    'overflow:visible',
-    `width:100%`,
-    `min-height:${treeEl.scrollHeight*zoomFactor}px`,
-  ].join(';');
-  scaleContainer.appendChild(scaleWrap);
-  ov.appendChild(scaleContainer);
-
-  // Inject print-specific CSS that forces the scale transform in @media print
-  const styleEl2=document.createElement('style');
-  styleEl2.textContent=`
-    #struct-scale-wrap{
-      transform:scale(${zoomFactor}) !important;
-      transform-origin:top left !important;
-      width:${100/zoomFactor}% !important;
+  // Extract tree CSS from main page stylesheets
+  let treeCss='';
+  try{
+    for(const ss of document.styleSheets){
+      try{
+        for(const rule of ss.cssRules){
+          const txt=rule.cssText||'';
+          // Copy tree-relevant CSS rules (connector lines, badges, etc.)
+          if(txt.match(/\.(n-|bom-|op-|stk-|fp-hdr|wip-wc|stock-row|ops-|tree-scroll)/)){
+            treeCss+=txt+'\n';
+          }
+        }
+      }catch(_){}
     }
-    @media print{
-      #struct-scale-wrap{
-        transform:scale(${zoomFactor}) !important;
-        transform-origin:top left !important;
-        width:${100/zoomFactor}% !important;
-      }
-      #struct-print-overlay{padding:0 !important;}
-    }
-  `;
-  ov.appendChild(styleEl2);
+  }catch(_){}
 
-  // Print-specific styles injected into overlay
-  const styleEl=document.createElement('style');
-  styleEl.textContent=`
-    #struct-print-overlay .n-row{page-break-inside:avoid}
-    #struct-print-overlay .op-row{page-break-inside:avoid}
-    #struct-print-overlay .bom-node{page-break-inside:auto}
-    #struct-print-overlay .n-tog{display:none!important}
-    @page{size:A3 landscape;margin:8mm}
-    *{-webkit-print-color-adjust:exact!important;print-color-adjust:exact!important}
-  `;
-  ov.appendChild(styleEl);
+  // Add CSS variables used by tree
+  const varsCss=`:root{
+    --border:#e2e5ea;--border2:#edf0f3;
+    --text:#111827;--text2:#374151;--text3:#6b7280;--text4:#9ca3af;
+    --make:#6d28d9;--buy:#065f46;--op-red:#dc2626;
+    --sans:Arial,sans-serif;--mono:Arial,monospace;
+  }`;
 
-  document.body.appendChild(ov);
-  ov.style.display='block';
-  setTimeout(()=>ov.scrollTo(0,0),50);
+  const titleLine=`Structura BOM — ${S.selFP}${fp?.name?' · '+fp.name:''}`;
+  const subLine=`Cantitate: ${fmtN(S.qtyInput)} buc · Eficiență: ${S.efficienta||100}%${S.structIgnoreStock?' · Stocuri ignorate':''} · Zoom: ${currentZoom}% · ${new Date().toLocaleDateString('ro-RO')}`;
+
+  const fullHtml=`<!DOCTYPE html><html><head><meta charset="UTF-8"><title>${titleLine}</title>
+<style>
+${varsCss}
+/* Scale entire document by zoom factor — works in print dialog */
+html,body{zoom:${zoomFactor};margin:0;padding:0;font-family:Arial,sans-serif;}
+body{padding:10mm}
+h2{font-size:15px;margin:0 0 3px;color:#1e3a5f}
+p.sub{font-size:10px;color:#6b7280;margin:0 0 10px}
+${treeCss}
+.tree-scroll{overflow:visible!important}
+.n-tog{display:none!important}
+@page{size:A3 landscape;margin:0}
+*{-webkit-print-color-adjust:exact!important;print-color-adjust:exact!important}
+</style></head><body>
+<h2>${titleLine}</h2>
+<p class="sub">${subLine}</p>
+${treeHtml}
+</body></html>`;
+
+  // Try new window (direct user gesture → popup allowed in Chrome/Edge)
+  const w=window.open('','_blank');
+  if(w){
+    w.document.open();w.document.write(fullHtml);w.document.close();
+    setTimeout(()=>w.print(),700);
+  } else {
+    // Fallback: Blob URL (bypasses some popup blockers)
+    const blob=new Blob([fullHtml],{type:'text/html'});
+    const url=URL.createObjectURL(blob);
+    const a=document.createElement('a');a.href=url;a.target='_blank';
+    a.style.display='none';document.body.appendChild(a);a.click();
+    setTimeout(()=>{a.remove();URL.revokeObjectURL(url);},3000);
+    showToast('PDF deschis în tab nou — folosiți Ctrl+P / ⌘P pentru a printa','ok',4000);
+  }
 }
 
 /*
@@ -12794,10 +12774,7 @@ autoLoad();
     ['fullscreenchange','webkitfullscreenchange','mozfullscreenchange'].forEach(ev=>
       document.addEventListener(ev,()=>updateBtn(btn)));
     document.body.appendChild(btn);
-    // Try auto-fullscreen on first touch/click (tablets require user gesture)
-    const autoFS=()=>{if(!isFS()){enterFS();}document.removeEventListener('touchstart',autoFS);document.removeEventListener('click',autoFS);};
-    document.addEventListener('touchstart',autoFS,{once:true,passive:true});
-    document.addEventListener('click',autoFS,{once:true});
+    // Auto-fullscreen disabled — user presses ⊞ button manually
   };
   if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',mkBtn);
   else mkBtn();
