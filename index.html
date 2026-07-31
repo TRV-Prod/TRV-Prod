@@ -1197,8 +1197,15 @@ button { font-family: var(--sans); }
 @media print {
   body > *:not(#pv2-print-overlay):not(#struct-print-overlay) { display:none!important; }
   #pv2-print-overlay { display:block!important; position:static!important; padding:0!important; }
-  #struct-print-overlay { display:block!important; position:static!important; padding:0!important; overflow:visible!important; }
-  #struct-print-overlay .spo-close { display:none!important; }
+  #struct-print-overlay {
+    display:block!important;position:static!important;
+    padding:6mm!important;overflow:visible!important;
+    background:#fff!important;
+  }
+  #struct-print-overlay .spo-close,
+  #struct-print-overlay button { display:none!important; }
+  *{-webkit-print-color-adjust:exact!important;print-color-adjust:exact!important}
+  @page{size:A3 landscape;margin:6mm}
 }
 #struct-print-overlay {
   display:none;
@@ -2102,7 +2109,7 @@ function mkZoomCtrl(tabId){
 
 function applyZoom(tabId){
   const pct=S.zoom[tabId]||100;
-  const contentId = tabId==='structura'   ? 'bom-tree-content'
+  const contentId = tabId==='structura'   ? 'structura-tree-root'
                   : tabId==='stocuri'     ? 'stk-table-wrap'
                   : tabId==='orderbook'   ? 'ob-table-wrap'
                   : tabId==='rapoarte'    ? 'zoom-area-rapoarte'
@@ -2297,80 +2304,46 @@ function exportStructuraPDF(){
   const treeEl=document.getElementById('structura-tree-root');
   if(!treeEl){alert('Deschideți tab-ul Structura mai întâi.');return;}
 
-  const currentZoom=S.structZoom||S.zoom?.structura||100;
-  const zoomFactor=currentZoom/100;
   const fp=S.fps?.find(f=>f.code===S.selFP);
+  const titleLine=`Structura BOM — ${S.selFP}${fp?.name?' · '+fp.name:''}`;
+  const subLine=`${fmtN(S.qtyInput)} buc · Eficiență: ${S.efficienta||100}%${S.structIgnoreStock?' · Stocuri ignorate':''} · ${new Date().toLocaleDateString('ro-RO')}`;
 
-  // Clone DOM — preserves current expand/collapse state
+  // Clone current DOM — preserves expand/collapse state exactly as visible
   const cloned=treeEl.cloneNode(true);
   cloned.querySelectorAll('input,textarea').forEach(e=>e.remove());
   cloned.querySelectorAll('button').forEach(e=>{if(!e.classList.contains('n-tog'))e.remove();});
-  cloned.style.zoom='';
-  const treeHtml=cloned.outerHTML;
+  // Remove pointer cursors
+  cloned.querySelectorAll('[style*="cursor"]').forEach(e=>{e.style.cursor='default';});
+  // Keep existing zoom from tree element (CSS zoom property)
+  // Browser print dialog "Scale" option will let user adjust further
 
-  // ── Extract tree CSS and SCALE all px values by zoomFactor ──
-  // This is the only method guaranteed to work in Chrome print dialog
-  let rawCss='';
-  try{
-    for(const ss of document.styleSheets){
-      try{
-        for(const rule of ss.cssRules){
-          const txt=rule.cssText||'';
-          if(txt.match(/\.(n-|bom-|op-|stk-|fp-hdr|wip-wc|stock-row|ops-|tree-scroll|scan-)/)){
-            rawCss+=txt+'\n';
-          }
-        }
-      }catch(_){}
-    }
-  }catch(_){}
-  // Scale ALL px values: 18px → 32.4px at 180% zoom
-  const scaledCss=rawCss.replace(/(-?\d+(?:\.\d+)?)px/g,(_,n)=>(parseFloat(n)*zoomFactor).toFixed(2)+'px');
+  // ── Build in-page print overlay ──
+  document.getElementById('struct-print-overlay')?.remove();
+  const ov=dv('');ov.id='struct-print-overlay';ov.style.display='block';
 
-  const varsCss=`:root{
-    --border:#e2e5ea;--border2:#edf0f3;
-    --text:#111827;--text2:#374151;--text3:#6b7280;--text4:#9ca3af;
-    --make:#6d28d9;--buy:#065f46;--op-red:#dc2626;
-    --sans:Arial,sans-serif;--mono:Arial,monospace;
-  }`;
+  // Screen buttons (hidden at print via CSS)
+  const btnBar=dv('spo-close');btnBar.style.cssText='position:fixed;top:10px;right:14px;z-index:100000;display:flex;gap:8px;align-items:center';
+  const closeBtn=el('button');closeBtn.style.cssText='height:32px;padding:0 14px;border:1px solid #e2e8f0;border-radius:4px;background:#fff;cursor:pointer;font-size:12px;font-weight:600;box-shadow:0 2px 8px rgba(0,0,0,.15)';
+  closeBtn.textContent='✕ Închide';closeBtn.addEventListener('click',()=>{ov.remove();});
+  const printBtn2=el('button');printBtn2.style.cssText='height:32px;padding:0 14px;border:1.5px solid #0369a1;border-radius:4px;background:#eff6ff;cursor:pointer;font-size:12px;font-weight:700;color:#0369a1;box-shadow:0 2px 8px rgba(0,0,0,.15)';
+  printBtn2.innerHTML='🖨 Printează / Export PDF';
+  printBtn2.addEventListener('click',()=>window.print());
+  const hint=dv('');hint.style.cssText='font-size:10px;color:#6b7280;max-width:220px;line-height:1.4';
+  hint.textContent='În dialogul de printare, ajustați "Scale" pentru dimensiunea dorită';
+  btnBar.appendChild(closeBtn);btnBar.appendChild(printBtn2);btnBar.appendChild(hint);
+  ov.appendChild(btnBar);
 
-  const titleLine=`Structura BOM — ${S.selFP}${fp?.name?' · '+fp.name:''}`;
-  const subLine=`${fmtN(S.qtyInput)} buc · Eficiență: ${S.efficienta||100}%${S.structIgnoreStock?' · Stocuri ignorate':''} · Zoom: ${currentZoom}% · ${new Date().toLocaleDateString('ro-RO')}`;
-  const baseFontPx=(13*zoomFactor).toFixed(2);
+  // Title
+  const titleDiv=dv('');titleDiv.style.cssText='margin-bottom:8px;padding-bottom:6px;border-bottom:2px solid #e2e8f0';
+  titleDiv.innerHTML=`<div style="font-size:15px;font-weight:800;color:#1e3a5f">${titleLine}</div>
+    <div style="font-size:10px;color:#6b7280;margin-top:2px">${subLine}</div>`;
+  ov.appendChild(titleDiv);
 
-  const fullHtml=`<!DOCTYPE html><html><head><meta charset="UTF-8">
-<title>${titleLine}</title>
-<style>
-${varsCss}
-/* Base font scaled — all em/rem values cascade from this */
-html,body{margin:0;padding:0;font-family:Arial,sans-serif;font-size:${baseFontPx}px}
-body{padding:${(8*zoomFactor).toFixed(0)}mm}
-h2{font-size:${(15*zoomFactor).toFixed(1)}px;margin:0 0 ${(3*zoomFactor).toFixed(0)}px;color:#1e3a5f}
-p.sub{font-size:${(10*zoomFactor).toFixed(1)}px;color:#6b7280;margin:0 0 ${(10*zoomFactor).toFixed(0)}px}
-/* All tree CSS with px values multiplied by ${zoomFactor} */
-${scaledCss}
-.tree-scroll{overflow:visible!important}
-.n-tog{display:none!important}
-@page{size:A3 landscape;margin:${(6*zoomFactor).toFixed(0)}mm}
-*{-webkit-print-color-adjust:exact!important;print-color-adjust:exact!important}
-</style></head><body>
-<h2>${titleLine}</h2>
-<p class="sub">${subLine}</p>
-${treeHtml}
-<script>setTimeout(()=>window.print(),600);<\/script>
-</body></html>`;
+  // Tree content
+  ov.appendChild(cloned);
 
-  const w=window.open('','_blank');
-  if(w){
-    w.document.open();w.document.write(fullHtml);w.document.close();
-  } else {
-    // Fallback: Blob URL
-    const blob=new Blob([fullHtml],{type:'text/html'});
-    const url=URL.createObjectURL(blob);
-    const a=document.createElement('a');a.href=url;a.target='_blank';
-    a.style.display='none';document.body.appendChild(a);a.click();
-    setTimeout(()=>{a.remove();URL.revokeObjectURL(url);},3000);
-    showToast('PDF deschis în tab nou — Ctrl+P / ⌘P pentru print','ok',4000);
-  }
+  document.body.appendChild(ov);
+  setTimeout(()=>ov.scrollTo(0,0),30);
 }
 
 /*
