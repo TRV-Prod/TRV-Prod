@@ -1197,7 +1197,7 @@ button { font-family: var(--sans); }
 @media print {
   body > *:not(#pv2-print-overlay):not(#struct-print-overlay) { display:none!important; }
   #pv2-print-overlay { display:block!important; position:static!important; padding:0!important; }
-  #struct-print-overlay { display:block!important; position:static!important; padding:8mm!important; }
+  #struct-print-overlay { display:block!important; position:static!important; padding:0!important; overflow:visible!important; }
   #struct-print-overlay .spo-close { display:none!important; }
 }
 #struct-print-overlay {
@@ -2324,28 +2324,56 @@ function exportStructuraPDF(){
     </div>`;
   ov.appendChild(titleDiv);
 
-  // Clone current tree DOM — preserves exact visual state (expand/collapse + zoom)
+  // Clone current tree DOM — preserves exact visual state (expand/collapse)
   const cloned=treeEl.cloneNode(true);
-  // Remove interactive elements
   cloned.querySelectorAll('input,textarea').forEach(el2=>el2.remove());
   cloned.querySelectorAll('button').forEach(el2=>{if(!el2.classList.contains('n-tog'))el2.remove();});
   cloned.querySelectorAll('[style*="cursor:pointer"],[style*="cursor: pointer"]').forEach(el2=>el2.style.cursor='default');
-  // Explicitly set zoom to currentZoom (CSS zoom scales text + connectors + padding uniformly)
-  // This is what the browser uses in print dialog too
+  // Reset any existing zoom on clone
+  cloned.style.zoom='';
+
   const zoomFactor=currentZoom/100;
-  cloned.style.zoom=String(zoomFactor);
-  // For print: also set font-size as fallback for browsers that don't support CSS zoom in @media print
+
+  // Wrapper that scales with transform (works in @media print unlike CSS zoom)
+  // transform:scale doesn't affect layout, so we compensate with explicit dimensions
+  const scaleWrap=dv('');
+  scaleWrap.id='struct-scale-wrap';
+  scaleWrap.style.cssText=[
+    `transform:scale(${zoomFactor})`,
+    'transform-origin:top left',
+    `width:${100/zoomFactor}%`,         // compensate: at 180% scale, need 55.5% width so scaled = 100%
+    `height:${100/zoomFactor}%`,
+  ].join(';');
+  scaleWrap.appendChild(cloned);
+
+  // Container that reserves the correct scaled dimensions
+  const scaleContainer=dv('');
+  scaleContainer.style.cssText=[
+    'overflow:visible',
+    `width:100%`,
+    `min-height:${treeEl.scrollHeight*zoomFactor}px`,
+  ].join(';');
+  scaleContainer.appendChild(scaleWrap);
+  ov.appendChild(scaleContainer);
+
+  // Inject print-specific CSS that forces the scale transform in @media print
   const styleEl2=document.createElement('style');
   styleEl2.textContent=`
-    #struct-print-overlay .tree-scroll,
-    #struct-print-overlay #structura-tree-root{zoom:${zoomFactor}!important;}
+    #struct-scale-wrap{
+      transform:scale(${zoomFactor}) !important;
+      transform-origin:top left !important;
+      width:${100/zoomFactor}% !important;
+    }
     @media print{
-      #struct-print-overlay .tree-scroll,
-      #struct-print-overlay #structura-tree-root{zoom:${zoomFactor}!important;}
+      #struct-scale-wrap{
+        transform:scale(${zoomFactor}) !important;
+        transform-origin:top left !important;
+        width:${100/zoomFactor}% !important;
+      }
+      #struct-print-overlay{padding:0 !important;}
     }
   `;
   ov.appendChild(styleEl2);
-  ov.appendChild(cloned);
 
   // Print-specific styles injected into overlay
   const styleEl=document.createElement('style');
