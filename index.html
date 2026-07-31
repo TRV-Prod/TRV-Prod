@@ -2324,16 +2324,23 @@ function exportStructuraPDF(){
     </div>`;
   ov.appendChild(titleDiv);
 
-  // Clone current tree DOM exactly — preserves expand/collapse state
+  // Clone current tree DOM exactly — preserves expand/collapse state + current zoom
   const cloned=treeEl.cloneNode(true);
-  // Remove interactive elements (toggle buttons, input fields) from clone
-  cloned.querySelectorAll('input,textarea,button:not(.n-tog)').forEach(el2=>el2.remove());
-  // Remove click handlers visual cues
-  cloned.querySelectorAll('[style*="cursor:pointer"]').forEach(el2=>el2.style.cursor='default');
-  // Apply zoom to tree content
-  cloned.style.fontSize=(currentZoom/100*13)+'px';
-  cloned.style.transformOrigin='top left';
-  ov.appendChild(cloned);
+  // Remove interactive elements from clone (inputs, buttons except visual toggles)
+  cloned.querySelectorAll('input,textarea').forEach(el2=>el2.remove());
+  cloned.querySelectorAll('button').forEach(el2=>{
+    if(!el2.classList.contains('n-tog'))el2.remove();
+  });
+  // Remove pointer cursors (not interactive in print)
+  cloned.querySelectorAll('[style*="cursor:pointer"],[style*="cursor: pointer"]').forEach(el2=>el2.style.cursor='default');
+  // Apply zoom via CSS zoom property — scales ALL elements (text, connectors, padding, borders)
+  // Remove any existing zoom from the clone (it was set via style.zoom on the original)
+  cloned.style.zoom='';
+  // Wrap in a zoom container
+  const zoomWrap=dv('');
+  zoomWrap.style.cssText=`zoom:${currentZoom/100};transform-origin:top left;width:${100/(currentZoom/100)}%`;
+  zoomWrap.appendChild(cloned);
+  ov.appendChild(zoomWrap);
 
   // Print-specific styles injected into overlay
   const styleEl=document.createElement('style');
