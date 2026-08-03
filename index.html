@@ -9161,23 +9161,52 @@ function _pushComponentRow(fpItemNo,matNo,fpCustomer,fd,unitsNeeded,obRows,
   const matName=str(stock.name||bomRow?.['Mat. name']||'');
   const matDrawing=str(bomRow?.['Mat. drawing']||'').trim();
 
-  // ── Paint material lookup from BOM children ──
-  const _isPaintWC=(name)=>{const n=(name||'').toLowerCase();return n.includes('paint')||n.includes('powder')||n.includes('primer');};
-  const _hasPaintWC=wcOps.some(op=>_isPaintWC(op.wcName));
+  // ── Paint material lookup from BOM ──
+  const _isPaintWCFn=(name)=>{const n=(name||'').toLowerCase();return n.includes('paint')||n.includes('powder')||n.includes('primer');};
+  const _hasPaintWC=wcOps.some(op=>_isPaintWCFn(op.wcName));
   let paintMatNo='', paintMatDesc='';
   if(_hasPaintWC&&S.bomIdx){
-    // Try component's own children first, then FP-level children
-    const childRows=[...(S.bomIdx.get(`${fpItemNo}__${matNo}`)||[])];
-    // If no children found at component level, component itself may be the paint component
-    // In that case show its own code/name
-    let paints=childRows.map(br=>({
-      n:str(br['Material no']||'').trim(),
-      d:str(br['Mat. name']||br['Mat desc']||'').trim(),
-    })).filter(m=>m.n);
-    if(!paints.length&&matNo){
-      // Fallback: show the component itself as paint material
-      paints=[{n:matNo,d:matName||''}];
+    const _isPaintMat=(n,d)=>{
+      const ns=(n||'').toLowerCase(),ds=(d||'').toLowerCase();
+      return ns.includes('paint')||ns.includes('vops')||ns.includes('powder')||ns.includes('primer')||ns.includes('ral')||
+             ds.includes('paint')||ds.includes('vops')||ds.includes('powder')||ds.includes('primer')||ds.includes('ral');
+    };
+    const _getDesc=(br)=>str(br['Mat. name']||br['Mat desc']||br['Mat. description']||br['Name']||'').trim();
+
+    // Strategy 1: direct children of this component in FP context
+    let paints=(S.bomIdx.get(`${fpItemNo}__${matNo}`)||[])
+      .map(br=>({n:str(br['Material no']||'').trim(),d:_getDesc(br)}))
+      .filter(m=>m.n&&_isPaintMat(m.n,m.d));
+
+    // Strategy 2: all BOM rows for this FP — find paint-related materials at any level
+    if(!paints.length){
+      for(const [key,rows] of S.bomIdx){
+        if(!key.startsWith(fpItemNo+'__'))continue;
+        for(const br of rows){
+          const n=str(br['Material no']||'').trim();
+          const d=_getDesc(br);
+          if(n&&_isPaintMat(n,d))paints.push({n,d});
+        }
+        if(paints.length)break;
+      }
     }
+
+    // Strategy 3: global BOM search for any paint material linked to matNo
+    if(!paints.length){
+      for(const [key,rows] of S.bomIdx){
+        if(!key.includes(matNo))continue;
+        for(const br of rows){
+          const n=str(br['Material no']||'').trim();
+          const d=_getDesc(br);
+          if(n&&_isPaintMat(n,d))paints.push({n,d});
+        }
+        if(paints.length)break;
+      }
+    }
+
+    // Deduplicate
+    const seen=new Set();
+    paints=paints.filter(p=>{if(seen.has(p.n))return false;seen.add(p.n);return true;});
     paintMatNo=paints.map(m=>m.n).join(', ');
     paintMatDesc=paints.map(m=>m.d).join(', ');
   }
