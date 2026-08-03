@@ -9432,6 +9432,7 @@ function applyRowFilter(rows){
     return true;
   });
 }
+let _currentWcGroups=null,_currentAllRows=null;
 function renderPlanV2(){
   try{
     initPlanV2State();
@@ -9637,7 +9638,7 @@ function renderPlanV2(){
         tbl.replaceChild(newTbody,oldTbody);
       });
     }
-    let _currentWcGroups=null,_currentAllRows=null;
+    // _currentWcGroups and _currentAllRows are global (declared near renderPlanV2)
     let buildPV2Tbody=null; // will be set during rebuildContent
 
     function rebuildContent(){
