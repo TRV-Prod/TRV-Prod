@@ -9161,50 +9161,41 @@ function _pushComponentRow(fpItemNo,matNo,fpCustomer,fd,unitsNeeded,obRows,
   const matName=str(stock.name||bomRow?.['Mat. name']||'');
   const matDrawing=str(bomRow?.['Mat. drawing']||'').trim();
 
-  // ── Paint material lookup from BOM ──
-  const _isPaintWCFn=(name)=>{const n=(name||'').toLowerCase();return n.includes('paint')||n.includes('powder')||n.includes('primer');};
+  // ── Paint material lookup via 'Mat product group' = 'Paint powder' / 'Paint wet' ──
+  const _isPaintWCFn=(name)=>{const n=(name||'').toLowerCase();return n.includes('paint')||n.includes('powder')||n.includes('primer')||n.includes('pawder');};
   const _hasPaintWC=wcOps.some(op=>_isPaintWCFn(op.wcName));
   let paintMatNo='', paintMatDesc='';
-  if(_hasPaintWC&&S.bomIdx){
-    const _isPaintMat=(n,d)=>{
-      const ns=(n||'').toLowerCase(),ds=(d||'').toLowerCase();
-      return ns.includes('paint')||ns.includes('vops')||ns.includes('powder')||ns.includes('primer')||ns.includes('ral')||
-             ds.includes('paint')||ds.includes('vops')||ds.includes('powder')||ds.includes('primer')||ds.includes('ral');
+  if(_hasPaintWC&&S.bomData){
+    const _isPaintGrp=(grp)=>{
+      const g=(grp||'').trim().toLowerCase();
+      // Match 'Paint powder', 'Paint wet', 'paint', etc.
+      return g.startsWith('paint')||g.includes('paint powder')||g.includes('paint wet');
     };
-    const _getDesc=(br)=>str(br['Mat. name']||br['Mat desc']||br['Mat. description']||br['Name']||'').trim();
+    const _getBomDesc=(br)=>str(br['Mat. name']||br['Mat desc']||br['Mat. description']||br['FP name']||'').trim();
 
-    // Strategy 1: direct children of this component in FP context
-    let paints=(S.bomIdx.get(`${fpItemNo}__${matNo}`)||[])
-      .map(br=>({n:str(br['Material no']||'').trim(),d:_getDesc(br)}))
-      .filter(m=>m.n&&_isPaintMat(m.n,m.d));
+    // Primary: filter raw bomData by FP code + paint product group
+    let paintRows=S.bomData.filter(br=>{
+      const fp2=str(br['Final product']||'').trim();
+      const grp=str(br['Mat product group']||'').trim();
+      return fp2===fpItemNo&&_isPaintGrp(grp);
+    });
 
-    // Strategy 2: all BOM rows for this FP — find paint-related materials at any level
-    if(!paints.length){
-      for(const [key,rows] of S.bomIdx){
-        if(!key.startsWith(fpItemNo+'__'))continue;
-        for(const br of rows){
-          const n=str(br['Material no']||'').trim();
-          const d=_getDesc(br);
-          if(n&&_isPaintMat(n,d))paints.push({n,d});
-        }
-        if(paints.length)break;
-      }
+    // Fallback: try matching by component code in case Final product column has the component
+    if(!paintRows.length){
+      paintRows=S.bomData.filter(br=>{
+        const grp=str(br['Mat product group']||'').trim();
+        const compNo=str(br['Comp no.']||'').trim();
+        return compNo===matNo&&_isPaintGrp(grp);
+      });
     }
 
-    // Strategy 3: global BOM search for any paint material linked to matNo
-    if(!paints.length){
-      for(const [key,rows] of S.bomIdx){
-        if(!key.includes(matNo))continue;
-        for(const br of rows){
-          const n=str(br['Material no']||'').trim();
-          const d=_getDesc(br);
-          if(n&&_isPaintMat(n,d))paints.push({n,d});
-        }
-        if(paints.length)break;
-      }
-    }
+    let paints=paintRows.map(br=>({
+      n:str(br['Material no']||'').trim(),
+      d:_getBomDesc(br),
+      grp:str(br['Mat product group']||'').trim(),
+    })).filter(m=>m.n);
 
-    // Deduplicate
+    // Deduplicate by material no
     const seen=new Set();
     paints=paints.filter(p=>{if(seen.has(p.n))return false;seen.add(p.n);return true;});
     paintMatNo=paints.map(m=>m.n).join(', ');
