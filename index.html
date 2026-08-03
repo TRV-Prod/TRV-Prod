@@ -1196,16 +1196,15 @@ button { font-family: var(--sans); }
 /* ── PV2 Print Overlay ── */
 @media print {
   body > *:not(#pv2-print-overlay):not(#struct-print-overlay) { display:none!important; }
-  #pv2-print-overlay { display:block!important; position:static!important; padding:0!important; }
+  #pv2-print-overlay { display:block!important; position:static!important; inset:unset!important; padding:0!important; margin:0; }
   #struct-print-overlay {
-    display:block!important;position:static!important;
+    display:block!important;position:static!important;inset:unset!important;
     padding:6mm!important;overflow:visible!important;
-    background:#fff!important;
+    background:#fff!important;margin:0;
   }
-  #struct-print-overlay .spo-close,
-  #struct-print-overlay button { display:none!important; }
+  .spo-close,.spo-close * { display:none!important; }
   *{-webkit-print-color-adjust:exact!important;print-color-adjust:exact!important}
-  @page{size:A3 landscape;margin:6mm}
+  @page{size:A3 landscape;margin:0}
 }
 #struct-print-overlay {
   display:none;
@@ -9161,45 +9160,46 @@ function _pushComponentRow(fpItemNo,matNo,fpCustomer,fd,unitsNeeded,obRows,
   const matName=str(stock.name||bomRow?.['Mat. name']||'');
   const matDrawing=str(bomRow?.['Mat. drawing']||'').trim();
 
-  // ── Paint material lookup via 'Mat product group' = 'Paint powder' / 'Paint wet' ──
+  // ── Paint material lookup: Final product + Comp no. + Mat product group ──
+  // BOM row: Final product=FP, Comp no.=subassembly, Material no=paint, Mat product group='Paint powder'/'Paint wet'
   const _isPaintWCFn=(name)=>{const n=(name||'').toLowerCase();return n.includes('paint')||n.includes('powder')||n.includes('primer')||n.includes('pawder');};
   const _hasPaintWC=wcOps.some(op=>_isPaintWCFn(op.wcName));
   let paintMatNo='', paintMatDesc='';
   if(_hasPaintWC&&S.bomData){
-    const _isPaintGrp=(grp)=>{
-      const g=(grp||'').trim().toLowerCase();
-      // Match 'Paint powder', 'Paint wet', 'paint', etc.
-      return g.startsWith('paint')||g.includes('paint powder')||g.includes('paint wet');
-    };
-    const _getBomDesc=(br)=>str(br['Mat. name']||br['Mat desc']||br['Mat. description']||br['FP name']||'').trim();
+    const _isPaintGrp=(grp)=>{const g=(grp||'').trim().toLowerCase();return g==='paint powder'||g==='paint wet'||g.startsWith('paint');};
+    const _getBomDesc=(br)=>str(br['Mat desc']||br['Mat. name']||br['Mat. description']||'').trim();
 
-    // Primary: filter raw bomData by FP code + paint product group
-    let paintRows=S.bomData.filter(br=>{
-      const fp2=str(br['Final product']||'').trim();
-      const grp=str(br['Mat product group']||'').trim();
-      return fp2===fpItemNo&&_isPaintGrp(grp);
-    });
+    // Filter: same FP + same Comp no. (sub-assembly) + paint group
+    let paintRows=S.bomData.filter(br=>
+      str(br['Final product']||'').trim()===fpItemNo &&
+      str(br['Comp no.']||'').trim()===matNo &&
+      _isPaintGrp(str(br['Mat product group']||'').trim())
+    );
 
-    // Fallback: try matching by component code in case Final product column has the component
+    // Fallback 1: match only by Comp no. (if FP column differs)
     if(!paintRows.length){
-      paintRows=S.bomData.filter(br=>{
-        const grp=str(br['Mat product group']||'').trim();
-        const compNo=str(br['Comp no.']||'').trim();
-        return compNo===matNo&&_isPaintGrp(grp);
-      });
+      paintRows=S.bomData.filter(br=>
+        str(br['Comp no.']||'').trim()===matNo &&
+        _isPaintGrp(str(br['Mat product group']||'').trim())
+      );
     }
 
-    let paints=paintRows.map(br=>({
-      n:str(br['Material no']||'').trim(),
-      d:_getBomDesc(br),
-      grp:str(br['Mat product group']||'').trim(),
-    })).filter(m=>m.n);
+    // Fallback 2: match only by FP (get all paint materials for this FP)
+    if(!paintRows.length){
+      paintRows=S.bomData.filter(br=>
+        str(br['Final product']||'').trim()===fpItemNo &&
+        _isPaintGrp(str(br['Mat product group']||'').trim())
+      );
+    }
 
-    // Deduplicate by material no
+    let paints=paintRows
+      .map(br=>({n:str(br['Material no']||'').trim(),d:_getBomDesc(br)}))
+      .filter(m=>m.n);
+    // Deduplicate
     const seen=new Set();
     paints=paints.filter(p=>{if(seen.has(p.n))return false;seen.add(p.n);return true;});
-    paintMatNo=paints.map(m=>m.n).join(', ');
-    paintMatDesc=paints.map(m=>m.d).join(', ');
+    paintMatNo=paints.map(m=>m.n).join('; ');
+    paintMatDesc=paints.map(m=>m.d).join('; ');
   }
 
   result.push({
@@ -10368,17 +10368,15 @@ function printPV2(st){
   printBtn2.addEventListener('click',()=>window.print());
 
   const filterInfo=Object.entries(st.colFilters||{}).filter(([,v])=>v).map(([k,v])=>`${k}="${v}"`).join(' · ');
-  overlay.innerHTML=`
-    <style>
-      #pv2-print-overlay table{width:100%;border-collapse:collapse}
-      #pv2-print-overlay th{background:#334155;color:#fff;padding:3px 6px;font-size:${fs}pt;font-weight:700;text-align:left;border:1px solid #0f172a}
-      #pv2-print-overlay td{padding:2px 6px;border:1px solid #e2e8f0;font-size:${fs}pt;vertical-align:middle}
-      @page{size:A3 landscape;margin:7mm}
-      @media print{#pv2-print-overlay{padding:0!important}}
-    </style>
-    <h2 style="font-size:${fs+5}pt;margin-bottom:3px">Plan de lucru pentru workshop: ${workshopLabel}</h2>
-    <p style="font-size:${fs-1}pt;color:#555;margin-bottom:10px">${tabLabel} · Transport: ${st.transportDays}z · Producție: ${st.prodDays}z · Eficiență: ${st.efficiency}% · Zoom: ${zoom}% · ${new Date().toLocaleDateString('ro-RO')}${filterInfo?' · Filtre: '+filterInfo:''}</p>
-    ${html}`;
+  overlay.innerHTML=`<style>
+    #pv2-print-overlay table{width:100%;border-collapse:collapse}
+    #pv2-print-overlay th{background:#334155;color:#fff;padding:3px 6px;font-size:${fs}pt;font-weight:700;text-align:left;border:1px solid #0f172a}
+    #pv2-print-overlay td{padding:2px 6px;border:1px solid #e2e8f0;font-size:${fs}pt;vertical-align:middle}
+    .pv2-print-hdr{font-size:${fs+3}pt;font-weight:800;margin:0 0 2px}
+    .pv2-print-sub{font-size:${fs-1}pt;color:#555;margin:0 0 8px}
+    @page{size:A3 landscape;margin:7mm}
+    @media print{#pv2-print-overlay{padding:0!important}.po-close{display:none!important}}
+  </style><div class="pv2-print-hdr">Plan de lucru pentru workshop: ${workshopLabel}</div><div class="pv2-print-sub">${tabLabel} · Transport: ${st.transportDays}z · Producție: ${st.prodDays}z · Eficiență: ${st.efficiency}% · Zoom: ${zoom}% · ${new Date().toLocaleDateString('ro-RO')}${filterInfo?' · Filtre: '+filterInfo:''}</div>${html}`;
   overlay.prepend(closeBtn);overlay.prepend(printBtn2);
   overlay.style.display='block';
   setTimeout(()=>overlay.scrollTo(0,0),50);
