@@ -1273,6 +1273,7 @@ const S={
   perfData:null,
   perfWcGroups:[],
   perfLivrari:[],  // raw rows saved to Supabase
+  paintIdx:null,
   normCfg:{wcs:[],orders:[]},
   normSessions:[],
   perfData:null,  // {rows:[{period,item,name,qty}], months:[...], items:{item→{name}}}
@@ -1850,7 +1851,26 @@ function extractFPs(rows){
   return[...m.values()].sort((a,b)=>a.code.localeCompare(b.code));
 }
 
-function applyBom(rows,ts){S.bomData=rows;S.bomIdx=buildBomIdx(rows);S.fps=extractFPs(rows);S.meta.bom={rows:rows.length,ts};}
+function applyBom(rows,ts){
+  S.bomData=rows;S.bomIdx=buildBomIdx(rows);S.fps=extractFPs(rows);S.meta.bom={rows:rows.length,ts};
+  // Build paint material index: key='fpItemNo|compNo' → [{no,desc,grp}]
+  S.paintIdx=new Map();
+  for(const br of rows){
+    const grp=str(br['Mat product group']||'').trim().toLowerCase();
+    if(!grp.startsWith('paint'))continue;
+    const fp=str(br['Final product']||'').trim();
+    const comp=str(br['Comp no.']||'').trim();
+    const matNo=str(br['Material no']||'').trim();
+    if(!fp||!comp||!matNo)continue;
+    // Find Mat Desc column case-insensitively
+    let desc='';
+    for(const k of Object.keys(br)){const kl=k.toLowerCase().replace(/[. ]/g,'');if(kl==='matdesc'||kl==='matname'){desc=str(br[k]||'').trim();break;}}
+    const key=fp+'|'+comp;
+    if(!S.paintIdx.has(key))S.paintIdx.set(key,[]);
+    S.paintIdx.get(key).push({no:matNo,desc,grp:str(br['Mat product group']||'').trim()});
+  }
+  console.log('[BOM] paintIdx built:',S.paintIdx.size,'entries');
+}
 function applyBow(rows,ts){S.bowData=rows;S.bowIdx=buildBowIdx(rows);S.meta.bow={rows:rows.length,ts};}
 function applyPo(rows,ts){
   S.poData=rows;
@@ -4834,7 +4854,7 @@ function buildNecTbody(cols, NUM){
         const ta=el('textarea','nec-obs');
         ta.value=S.reportObs[r.matNo]||'';
         ta.rows=1;
-        ta.addEventListener('input',e=>{S.reportObs[r.matNo]=e.target.value;ta.rows=Math.max(1,e.target.value.split('\n').length);});
+        ta.addEventListener('input',e=>{S.reportObs[r.matNo]=e.target.value;ta.rows=Math.max(1,e.target.value.split('~~').length);});
         td.appendChild(ta);
       }
       tr.appendChild(td);
@@ -5448,7 +5468,7 @@ function _buildPlanTbody(wrap){
         ta.value=S.planObs[itemNo]||'';ta.rows=1;ta.placeholder='Observatii...';
         ta.addEventListener('input',e=>{
           S.planObs[itemNo]=e.target.value;
-          ta.rows=Math.max(1,e.target.value.split('\n').length);
+          ta.rows=Math.max(1,e.target.value.split('~~').length);
           savePlan();
         });
         td.appendChild(ta);
@@ -9168,38 +9188,20 @@ function _pushComponentRow(fpItemNo,matNo,fpCustomer,fd,unitsNeeded,obRows,
   const matName=str(stock.name||bomRow?.['Mat. name']||'');
   const matDrawing=str(bomRow?.['Mat. drawing']||'').trim();
 
-  // ── Paint material lookup: always run, filter BOM by FP + Comp no. + Mat product group ──
-  let paintMatNo='', paintMatDesc='';
-  if(S.bomData){
-    const _isPaintGrp=(grp)=>{const g=(grp||'').trim().toLowerCase();return g==='paint powder'||g==='paint wet'||g.startsWith('paint');};
-    // Find paint materials: rows where Final product=fpItemNo, Comp no.=matNo, Mat product group=paint
-    let paintRows=S.bomData.filter(br=>
-      str(br['Final product']||'').trim()===fpItemNo &&
-      str(br['Comp no.']||'').trim()===matNo &&
-      _isPaintGrp(str(br['Mat product group']||'').trim())
-    );
-    // Fallback: only by Comp no.
-    if(!paintRows.length){
-      paintRows=S.bomData.filter(br=>
-        str(br['Comp no.']||'').trim()===matNo &&
-        _isPaintGrp(str(br['Mat product group']||'').trim())
-      );
-    }
-    // Build result: find Mat Desc column regardless of exact header name
-    const _getDesc=(br)=>{
-      for(const k of Object.keys(br)){
-        const kl=k.toLowerCase().replace(/[.\x20]/g,'');
-        if(kl==='matdesc'||kl==='matname'||kl==='matdescription')return str(br[k]||'').trim();
+  // ── Paint materials from pre-built paintIdx (key = fpItemNo|matNo) ──
+  let paintMaterials=[]; // [{no,desc,grp}]
+  if(S.paintIdx){
+    const key=fpItemNo+'|'+matNo;
+    paintMaterials=S.paintIdx.get(key)||[];
+    // Fallback: search any FP context for this comp
+    if(!paintMaterials.length){
+      for(const [k,v] of S.paintIdx){
+        if(k.endsWith('|'+matNo)){paintMaterials=v;break;}
       }
-      return '';
-    };
-    const seen=new Set();
-    const paints=paintRows
-      .map(br=>({n:str(br['Material no']||'').trim(),d:_getDesc(br)}))
-      .filter(p=>p.n&&!seen.has(p.n)&&seen.add(p.n));
-    paintMatNo=paints.map(p=>p.n).join(' | ');
-    paintMatDesc=paints.map(p=>p.d).join(' | ');
+    }
   }
+  const paintMatNo=paintMaterials.map(p=>p.no).join('~~');
+  const paintMatDesc=paintMaterials.map(p=>p.desc).join('~~');
 
   result.push({
     fpItemNo,fpCustomer,fpConfirmDt,fpConfirmWk:obRows[0]?.confirmWk||'',
@@ -9954,19 +9956,20 @@ function renderPlanV2(){
               });
               td.appendChild(inp);
             }
-            else if(c.key==='paintMatNo'){
-              const v=r.paintMatNo||'';
-              td.style.cssText='white-space:pre-line;vertical-align:top;font-family:monospace;font-size:10px';
-              td.textContent=v||'—';
-              if(v){td.style.color='#0369a1';td.style.fontWeight='700';td.title=v;}
-              else td.style.color='#9ca3af';
-            }
-            else if(c.key==='paintMatDesc'){
-              const v=r.paintMatDesc||'';
-              td.style.cssText='white-space:pre-line;vertical-align:top;font-size:10px;max-width:200px';
-              td.textContent=v||'—';
-              if(v){td.style.color='#374151';td.title=v;}
-              else td.style.color='#9ca3af';
+            else if(c.key==='paintMatNo'||c.key==='paintMatDesc'){
+              const lines=(c.key==='paintMatNo'?r.paintMatNo:r.paintMatDesc||'').split('~~').filter(Boolean);
+              td.style.cssText='vertical-align:top;padding:2px 4px';
+              if(!lines.length){td.style.color='#9ca3af';td.textContent='—';}
+              else{
+                lines.forEach((line,i)=>{
+                  const lDiv=document.createElement('div');
+                  lDiv.style.cssText=c.key==='paintMatNo'
+                    ?'font-family:monospace;font-size:10px;font-weight:700;color:#0369a1;white-space:nowrap;padding:1px 0'
+                    :'font-size:10px;color:#374151;white-space:nowrap;padding:1px 0';
+                  if(i>0)lDiv.style.borderTop='1px dashed #e2e8f0';
+                  lDiv.textContent=line;lDiv.title=line;td.appendChild(lDiv);
+                });
+              }
             }
             else if(c.key==='obs'){td.style.overflow='visible';td.style.padding='2px 4px';const inp=el('input');inp.type='text';inp.value=S.planV2Meta?.observations?.[r.obKey]||'';inp.placeholder='Observații...';inp.style.cssText='width:100%;min-width:150px;height:24px;padding:0 6px;border:1px solid var(--border);border-radius:3px;font-size:11px';inp.addEventListener('blur',async()=>{if(!S.planV2Meta)S.planV2Meta={priorities:{},observations:{}};if(inp.value.trim())S.planV2Meta.observations[r.obKey]=inp.value.trim();else delete S.planV2Meta.observations[r.obKey];await savePlanV2Meta();});td.appendChild(inp);}
             else td.textContent=val;
@@ -12029,7 +12032,7 @@ function renderVerificareStocuriPanel(container){
         else if(colId==='obs'){
           td.style.overflow='visible';td.style.padding='2px 4px';
           const ta=el('textarea','vs-obs');ta.value=inp.obs||'';ta.placeholder='Observatii...';ta.rows=1;
-          ta.addEventListener('input',e=>{inp.obs=e.target.value;ta.rows=Math.max(1,e.target.value.split('\n').length);saveStocVerifInputs();});
+          ta.addEventListener('input',e=>{inp.obs=e.target.value;ta.rows=Math.max(1,e.target.value.split('~~').length);saveStocVerifInputs();});
           td.appendChild(ta);
         }
         tr.appendChild(td);
