@@ -1871,6 +1871,8 @@ function applyBom(rows,ts){
       S.paintIdx.get(comp).push({no:matNo,desc});
   }
   console.log('[BOM] paintIdx: keys=',S.paintIdx.size, [...S.paintIdx.entries()].slice(0,3));
+  // If PV2 has already been rendered, force re-computation so paint cols get populated
+  if(S.tab==='planv2'&&typeof render==='function')setTimeout(()=>render(),100);
 }
 function applyBow(rows,ts){S.bowData=rows;S.bowIdx=buildBowIdx(rows);S.meta.bow={rows:rows.length,ts};}
 function applyPo(rows,ts){
@@ -9191,7 +9193,7 @@ function _pushComponentRow(fpItemNo,matNo,fpCustomer,fd,unitsNeeded,obRows,
 
   // ── Paint materials: lookup by Comp no. = matNo ──
   const paintMaterials=S.paintIdx?.get(matNo)||[];
-  if(paintMaterials.length)console.log('[PV2 Paint]',matNo,'→',paintMaterials.map(p=>p.no).join(','));
+
   const paintMatNo=paintMaterials.map(p=>p.no).join('~~');
   const paintMatDesc=paintMaterials.map(p=>p.desc).join('~~');
 
@@ -9950,7 +9952,6 @@ function renderPlanV2(){
               td.appendChild(inp);
             }
             else if(c.key==='paintMatNo'||c.key==='paintMatDesc'){
-              if(c.key==='paintMatNo'&&r.paintMatNo)console.log('[RENDER]',r.matNo,'paintMatNo=',JSON.stringify(r.paintMatNo));
               const rawVal=c.key==='paintMatNo'?(r.paintMatNo||''):(r.paintMatDesc||'');
               const parts=rawVal.split('~~').filter(Boolean);
               // Override td style to allow wrapping
