@@ -9615,33 +9615,28 @@ function renderPlanV2(){
     paintBtn.style.cssText='border-color:#7c3aed;color:#7c3aed;background:#ede9fe';
     paintBtn.title='Aduce codurile de vopsea din BOM pentru toate componentele vizibile';
     paintBtn.addEventListener('click',()=>{
-      if(!S.paintIdx||!S.paintIdx.size){showToast('paintIdx gol — reimportați BOM','err',3000);return;}
-      if(!_currentAllRows||!_currentAllRows.length){showToast('Nu există date PV2','err',2000);return;}
+      if(!S.paintIdx||!S.paintIdx.size){showToast('BOM nu e încărcat sau nu conține vopsele','err',3000);return;}
       let updated=0;
-      // Update paint on ALL rows in allComponents
-      const rowsToUpdate=_currentAllRows;
-      rowsToUpdate.forEach(r=>{
-        const paints=S.paintIdx.get(r.matNo)||[];
-        if(paints.length){
-          r.paintMatNo=paints.map(p=>p.no).join('~~');
-          r.paintMatDesc=paints.map(p=>p.desc).join('~~');
+      // Directly update DOM cells — bypass rebuild entirely
+      document.querySelectorAll('#pv2-content td[data-pv2-col="paintMatNo"], #pv2-content td[data-pv2-col="paintMatDesc"]').forEach(td=>{
+        const tr=td.closest('tr');if(!tr)return;
+        // Find matNo from the matNo cell in same row
+        const matNoTd=tr.querySelector('td[data-pv2-col="matNo"]');
+        const matNo=matNoTd?.textContent?.trim()||'';
+        if(!matNo)return;
+        const paints=S.paintIdx.get(matNo)||[];
+        if(!paints.length)return;
+        const col=td.getAttribute('data-pv2-col');
+        const v=paints.map(p=>col==='paintMatNo'?p.no:p.desc).filter(Boolean).join(' / ');
+        if(v){
+          td.textContent=v;td.title=v;td.style.color=col==='paintMatNo'?'#0369a1':'#374151';
+          td.style.fontWeight=col==='paintMatNo'?'700':'400';
+          if(col==='paintMatNo')td.style.fontFamily='monospace';
+          td.style.overflow='visible';
           updated++;
         }
       });
-      // Also update wcGroups rows
-      if(_currentWcGroups){
-        _currentWcGroups.forEach(rows=>{
-          rows.forEach(r=>{
-            const paints=S.paintIdx.get(r.matNo)||[];
-            if(paints.length){
-              r.paintMatNo=paints.map(p=>p.no).join('~~');
-              r.paintMatDesc=paints.map(p=>p.desc).join('~~');
-            }
-          });
-        });
-      }
-      showToast(`✓ Vopsele aduse: ${updated} componente actualizate`,'ok',3000);
-      rebuildAllTbodies();
+      showToast(updated?`✓ ${updated} celule vopsele actualizate`:'Nu s-au găsit componente cu vopsea','ok',2500);
     });
     g4.appendChild(paintBtn);
 
