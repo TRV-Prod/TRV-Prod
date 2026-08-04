@@ -9193,7 +9193,13 @@ function _pushComponentRow(fpItemNo,matNo,fpCustomer,fd,unitsNeeded,obRows,
 
   // ── Paint materials: lookup by Comp no. = matNo ──
   const paintMaterials=S.paintIdx?.get(matNo)||[];
-
+  if(S.paintIdx&&!S._dbgDone){
+    S._dbgDone=true;
+    const keys=[...S.paintIdx.keys()].slice(0,3);
+    console.log('[PAINT] paintIdx sample keys:',keys,'current matNo:',matNo);
+    console.log('[PAINT] get(matNo)=',S.paintIdx.get(matNo));
+  }
+  if(paintMaterials.length)console.log('[PAINT HIT]',matNo,'→',paintMaterials.map(p=>p.no).join(','));
   const paintMatNo=paintMaterials.map(p=>p.no).join('~~');
   const paintMatDesc=paintMaterials.map(p=>p.desc).join('~~');
 
