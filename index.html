@@ -4538,7 +4538,7 @@ function getNecRows(){
     if(rs.sortCol==='needed02w') return dir*(b.needed02w-a.needed02w);
     if(rs.sortCol==='totalNeeded') return dir*((b.needed02w+b.needed34w)-(a.needed02w+a.needed34w));
     if(rs.sortCol==='status'){
-      const statusRank=r=>(r.onHand||0)<=(r.needed02w||0)?0:(r.onHand||0)<(r.needed02w||0)+(r.needed34w||0)?1:2;
+      const statusRank=r=>((r.needed02w||0)>(r.onHand||0))?0:((r.onHand||0)<(r.needed02w||0)+(r.needed34w||0))?1:2;
       return dir*(statusRank(a)-statusRank(b));
     }
     if(rs.sortCol==='needed34w') return dir*(b.needed34w-a.needed34w);
@@ -4560,7 +4560,7 @@ function exportNecExcel(){
     ws_data.push([
       r.group, r.matNo, r.name, r.unit,
       r.needed02w, r.needed34w, (r.needed02w||0)+(r.needed34w||0), r.onHand, r.wip, r.netNeeded,
-      (r.onHand||0)<=(r.needed02w||0)?'CRITIC!':(r.onHand||0)<(r.needed02w||0)+(r.needed34w||0)?'Atentie!':'OK',
+      ((r.needed02w||0)>(r.onHand||0))?'CRITIC!':((r.onHand||0)<(r.needed02w||0)+(r.needed34w||0))?'Atentie!':'OK',
       r.fps.map(([fp,q])=>`${fp}: ${Math.round(q)}`).join('; '),
       S.reportObs[r.matNo]||'',
     ]);
@@ -4825,17 +4825,25 @@ function buildNecTbody(cols, NUM){
         td.appendChild(sp('nec-num',fmtN2(n)));
       }
       else if(c.key==='status'){
-        const total=(r.needed02w||0)+(r.needed34w||0);
+        const nec02=r.needed02w||0;
+        const total=nec02+(r.needed34w||0);
         const oh=r.onHand||0;
         let badge;
-        if(oh<=( r.needed02w||0)){
+        // CRITIC: Necesar 0-2W > On Hand
+        if(nec02>oh){
           badge=sp('nec-status-critic','🔴 CRITIC!');
+          badge.title=`Necesar 0-2W (${fmtN2(nec02)}) > On Hand (${fmtN2(oh)})`;
           tr.classList.add('nec-row-critic');
-        } else if(oh<total){
+        }
+        // ATENȚIE: On Hand < Total Necesar (dar 0-2W acoperit)
+        else if(oh<total){
           badge=sp('nec-status-warn','⚠ Atenție!');
+          badge.title=`On Hand (${fmtN2(oh)}) < Total Necesar (${fmtN2(total)})`;
           tr.classList.add('nec-row-warn');
-        } else {
+        }
+        else {
           badge=sp('nec-status-ok','✓ OK');
+          badge.title=`Stoc suficient: On Hand (${fmtN2(oh)}) ≥ Total (${fmtN2(total)})`;
         }
         td.appendChild(badge);
       }
