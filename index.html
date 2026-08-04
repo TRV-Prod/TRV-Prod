@@ -9950,6 +9950,7 @@ function renderPlanV2(){
               td.appendChild(inp);
             }
             else if(c.key==='paintMatNo'||c.key==='paintMatDesc'){
+              if(c.key==='paintMatNo'&&r.paintMatNo)console.log('[RENDER]',r.matNo,'paintMatNo=',JSON.stringify(r.paintMatNo));
               const rawVal=c.key==='paintMatNo'?(r.paintMatNo||''):(r.paintMatDesc||'');
               const parts=rawVal.split('~~').filter(Boolean);
               // Override td style to allow wrapping
