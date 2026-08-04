@@ -9950,18 +9950,21 @@ function renderPlanV2(){
               td.appendChild(inp);
             }
             else if(c.key==='paintMatNo'||c.key==='paintMatDesc'){
-              const lines=(c.key==='paintMatNo'?r.paintMatNo:r.paintMatDesc||'').split('~~').filter(Boolean);
-              td.style.cssText='vertical-align:top;padding:2px 4px';
-              if(!lines.length){td.style.color='#9ca3af';td.textContent='—';}
-              else{
-                lines.forEach((line,i)=>{
-                  const lDiv=document.createElement('div');
-                  lDiv.style.cssText=c.key==='paintMatNo'
-                    ?'font-family:monospace;font-size:10px;font-weight:700;color:#0369a1;white-space:nowrap;padding:1px 0'
-                    :'font-size:10px;color:#374151;white-space:nowrap;padding:1px 0';
-                  if(i>0)lDiv.style.borderTop='1px dashed #e2e8f0';
-                  lDiv.textContent=line;lDiv.title=line;td.appendChild(lDiv);
-                });
+              const rawVal=c.key==='paintMatNo'?(r.paintMatNo||''):(r.paintMatDesc||'');
+              const parts=rawVal.split('~~').filter(Boolean);
+              // Override td style to allow wrapping
+              td.style.overflow='visible';
+              td.style.whiteSpace='pre-wrap';
+              td.style.verticalAlign='top';
+              td.style.maxWidth='none';
+              if(!parts.length){
+                td.textContent='—';td.style.color='#9ca3af';
+              } else {
+                td.textContent=parts.join(' / ');
+                td.style.color=c.key==='paintMatNo'?'#0369a1':'#374151';
+                if(c.key==='paintMatNo')td.style.fontFamily='monospace';
+                td.style.fontWeight=c.key==='paintMatNo'?'700':'400';
+                td.title=parts.join(', ');
               }
             }
             else if(c.key==='obs'){td.style.overflow='visible';td.style.padding='2px 4px';const inp=el('input');inp.type='text';inp.value=S.planV2Meta?.observations?.[r.obKey]||'';inp.placeholder='Observații...';inp.style.cssText='width:100%;min-width:150px;height:24px;padding:0 6px;border:1px solid var(--border);border-radius:3px;font-size:11px';inp.addEventListener('blur',async()=>{if(!S.planV2Meta)S.planV2Meta={priorities:{},observations:{}};if(inp.value.trim())S.planV2Meta.observations[r.obKey]=inp.value.trim();else delete S.planV2Meta.observations[r.obKey];await savePlanV2Meta();});td.appendChild(inp);}
