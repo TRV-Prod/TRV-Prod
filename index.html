@@ -9611,6 +9611,40 @@ function renderPlanV2(){
     const excelBtn=el('button','tbtn');excelBtn.style.cssText='border-color:#16a34a;color:#15803d;background:#f0fdf4';
     excelBtn.innerHTML='⬇ Excel';excelBtn.addEventListener('click',()=>exportPV2Excel(st));
     const pdfBtn=el('button','tbtn');pdfBtn.innerHTML='🖨 PDF';pdfBtn.addEventListener('click',()=>printPV2(st));
+    const paintBtn=el('button','tbtn');paintBtn.innerHTML='🎨 Vopsele';
+    paintBtn.style.cssText='border-color:#7c3aed;color:#7c3aed;background:#ede9fe';
+    paintBtn.title='Aduce codurile de vopsea din BOM pentru toate componentele vizibile';
+    paintBtn.addEventListener('click',()=>{
+      if(!S.paintIdx||!S.paintIdx.size){showToast('paintIdx gol — reimportați BOM','err',3000);return;}
+      if(!_currentAllRows||!_currentAllRows.length){showToast('Nu există date PV2','err',2000);return;}
+      let updated=0;
+      // Update paint on ALL rows in allComponents
+      const rowsToUpdate=_currentAllRows;
+      rowsToUpdate.forEach(r=>{
+        const paints=S.paintIdx.get(r.matNo)||[];
+        if(paints.length){
+          r.paintMatNo=paints.map(p=>p.no).join('~~');
+          r.paintMatDesc=paints.map(p=>p.desc).join('~~');
+          updated++;
+        }
+      });
+      // Also update wcGroups rows
+      if(_currentWcGroups){
+        _currentWcGroups.forEach(rows=>{
+          rows.forEach(r=>{
+            const paints=S.paintIdx.get(r.matNo)||[];
+            if(paints.length){
+              r.paintMatNo=paints.map(p=>p.no).join('~~');
+              r.paintMatDesc=paints.map(p=>p.desc).join('~~');
+            }
+          });
+        });
+      }
+      showToast(`✓ Vopsele aduse: ${updated} componente actualizate`,'ok',3000);
+      rebuildAllTbodies();
+    });
+    g4.appendChild(paintBtn);
+
     const clearPrioBtn=el('button','tbtn');clearPrioBtn.innerHTML='🗑 Golește priorități';
     clearPrioBtn.style.cssText='border-color:#dc2626;color:#dc2626';
     clearPrioBtn.addEventListener('click',()=>{
@@ -9951,9 +9985,16 @@ function renderPlanV2(){
               td.appendChild(inp);
             }
             else if(c.key==='paintMatNo'||c.key==='paintMatDesc'){
-              // Look up directly from paintIdx at render time (guaranteed fresh data)
-              const paints=S.paintIdx?.get(r.matNo)||[];
-              const v=paints.map(p=>c.key==='paintMatNo'?p.no:p.desc).filter(Boolean).join(' / ');
+              // Use r.paintMatNo if set by button, fallback to direct lookup
+              let v='';
+              const raw=c.key==='paintMatNo'?(r.paintMatNo||''):(r.paintMatDesc||'');
+              if(raw){
+                v=raw.split('~~').filter(Boolean).join(' / ');
+              } else {
+                // Fallback: direct lookup
+                const paints=S.paintIdx?.get(r.matNo)||[];
+                v=paints.map(p=>c.key==='paintMatNo'?p.no:p.desc).filter(Boolean).join(' / ');
+              }
               td.style.overflow='visible';td.style.whiteSpace='normal';td.style.maxWidth='none';
               if(v){
                 td.textContent=v;td.title=v;
