@@ -1197,6 +1197,8 @@ button { font-family: var(--sans); }
 @media print {
   /* When an overlay is active: hide everything else */
   body.has-print-overlay > *:not(#pv2-print-overlay):not(#struct-print-overlay) { display:none!important; }
+  body.has-print-overlay #structura-tree-root:not(#struct-print-clone) { display:none!important; }
+  body.has-print-overlay #structura-tree-root { display:none!important; }
   /* When no overlay: hide only nav/login/toast/balloon elements */
   body:not(.has-print-overlay) #login-wrap,
   body:not(.has-print-overlay) #toast-container,
@@ -2340,10 +2342,12 @@ function exportStructuraPDF(){
 
   // Clone current DOM — preserves expand/collapse state exactly as visible
   const cloned=treeEl.cloneNode(true);
+  cloned.id='struct-print-clone';
   cloned.querySelectorAll('input,textarea').forEach(e=>e.remove());
   cloned.querySelectorAll('button').forEach(e=>{if(!e.classList.contains('n-tog'))e.remove();});
-  // Remove pointer cursors
   cloned.querySelectorAll('[style*="cursor"]').forEach(e=>{e.style.cursor='default';});
+  // Strip nested IDs so print CSS selectors don't match twice
+  cloned.querySelectorAll('[id]').forEach(e=>{if(e!==cloned)e.removeAttribute('id');});
   // Keep existing zoom from tree element (CSS zoom property)
   // Browser print dialog "Scale" option will let user adjust further
 
