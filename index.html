@@ -7624,7 +7624,9 @@ function openOrientareModal(prefix){
       const planQ=planQty(fp.code);
       const fpStock=S.stockIdx.get(fp.code)||{onHand:0,totalWIP:0};
       if(planQ<=0){
-        return {code:fp.code,name:fp.name||'',planQty:0,onHand:fpStock.onHand||0,apt:null,missing:[],planDone:false};
+        // Not in plan → treated as complete, no assembly needed
+        return {code:fp.code,name:fp.name||'',planQty:0,onHand:fpStock.onHand||0,
+                apt:true,missing:[],planDone:true,notInPlan:true,totalComps:0};
       }
       // ── FP stock already covers the plan → PLAN REALIZAT, skip component check ──
       if((fpStock.onHand||0)>=planQ){
@@ -7717,12 +7719,14 @@ function openOrientareModal(prefix){
       tr.appendChild(mkTd(`<b style="font-size:14px;color:${r.onHand>0?'#15803d':'#94a3b8'}">${fmtN(r.onHand)}</b>`,'text-align:right'));
       tr.appendChild(mkTd(
         r.apt===null?'<span style="color:#94a3b8;font-size:11px">Fără plan</span>'
+        :r.notInPlan?'<span style="display:inline-block;padding:4px 12px;border-radius:14px;font-size:11.5px;font-weight:800;background:#f1f5f9;color:#64748b;border:2px solid #cbd5e1">📭 Nu e în plan</span>'
         :r.planDone?'<span style="display:inline-block;padding:4px 12px;border-radius:14px;font-size:12px;font-weight:900;background:#dcfce7;color:#15803d;border:2px solid #16a34a">✅ PLAN REALIZAT</span>'
         :r.apt?'<span style="display:inline-block;padding:4px 14px;border-radius:14px;font-size:13px;font-weight:900;background:#dcfce7;color:#15803d;border:2px solid #86efac">✓ DA</span>'
         :'<span style="display:inline-block;padding:4px 14px;border-radius:14px;font-size:13px;font-weight:900;background:#fee2e2;color:#991b1b;border:2px solid #fca5a5">✕ NU</span>',
         'text-align:center'));
       tr.appendChild(mkTd(
-        r.planDone?'<span style="color:#15803d;font-size:10px;font-weight:600">Stoc suficient — nu necesită producție</span>'
+        r.notInPlan?'<span style="color:#94a3b8;font-size:10px">Fără cantități planificate</span>'
+        :r.planDone?'<span style="color:#15803d;font-size:10px;font-weight:600">Stoc suficient — nu necesită producție</span>'
         :r.apt===false&&r.missing.length
           ?`<div style="font-size:10px;line-height:1.5">${r.missing.slice(0,4).map(m=>`<div><span style="font-family:monospace;font-weight:700;color:#dc2626">${m.matNo}</span> <span style="color:#6b7280">nec:${fmtN(m.need)} / stoc:${fmtN(m.avail)}</span> <b style="color:#dc2626">−${fmtN(m.short)}</b></div>`).join('')}
              ${r.missing.length>4?`<div style="color:#94a3b8;font-style:italic">+${r.missing.length-4} altele</div>`:''}</div>`
@@ -7808,15 +7812,16 @@ function renderAsamblare(){
   };
   fillFpSel(fpSearch.value);
   fpSearch.addEventListener('input',()=>{S.asmSearchPrefix=fpSearch.value;fillFpSel(fpSearch.value);});
-  fpSel.addEventListener('change',()=>{S.asmFP=fpSel.value;S.asmForceShow=false;S.asmExp=new Set();expandAllAsm();rebuild();});
+  fpSel.addEventListener('change',()=>{S.asmFP=fpSel.value;S.asmForceShow=false;S.asmExp=new Set();S.asmQty=planQty(S.asmFP)||0;qInp.value=S.asmQty;expandAllAsm();rebuild();});
   fpWrap.appendChild(fpSearch);fpWrap.appendChild(fpSel);tbRow1.appendChild(fpWrap);
 
   // Qty
   const qWrap=dv('');qWrap.style.cssText='display:flex;align-items:center;gap:5px';
   qWrap.innerHTML='<span style="font-size:10px;font-weight:700;color:var(--text3);text-transform:uppercase">Cantitate:</span>';
-  const qInp=el('input');qInp.type='number';qInp.min=1;qInp.value=S.asmQty||1;
+  if(S.asmQty===undefined||S.asmQty===null)S.asmQty=planQty(S.asmFP)||0;
+  const qInp=el('input');qInp.type='number';qInp.min=0;qInp.value=S.asmQty;
   qInp.style.cssText='width:80px;height:32px;padding:0 8px;border:1.5px solid var(--border);border-radius:5px;font-size:13px;font-weight:700;text-align:center';
-  qInp.addEventListener('change',()=>{S.asmQty=Math.max(1,parseInt(qInp.value)||1);qInp.value=S.asmQty;rebuild();});
+  qInp.addEventListener('change',()=>{S.asmQty=Math.max(0,parseInt(qInp.value)||0);qInp.value=S.asmQty;rebuild();});
   qWrap.appendChild(qInp);tbRow1.appendChild(qWrap);
 
   // Plan qty display
@@ -7899,7 +7904,9 @@ function renderAsamblare(){
       :'<span style="color:#94a3b8">Nu e în plan</span>';
 
     // FP header card
-    const planDone=planQ>0&&fpStockCheck.onHand>=planQ&&!S.asmForceShow;
+    // Not in plan (planQ=0) OR stock covers plan → treat as PLAN REALIZAT
+    const notInPlan=planQ<=0;
+    const planDone=(notInPlan||fpStockCheck.onHand>=planQ)&&!S.asmForceShow;
     const fpCard=dv('');fpCard.style.cssText='background:#1e3a5f;color:#fff;border-radius:10px 10px 0 0;padding:12px 16px;margin-bottom:0;position:relative;overflow:hidden';
     if(planDone){
       const wm=dv('');wm.style.cssText='position:absolute;top:50%;left:50%;transform:translate(-50%,-50%) rotate(-12deg);font-size:38px;font-weight:900;color:rgba(134,239,172,.28);letter-spacing:5px;pointer-events:none;white-space:nowrap;text-transform:uppercase;z-index:1';
@@ -7927,18 +7934,18 @@ function renderAsamblare(){
       const doneCard=dv('');
       doneCard.style.cssText='background:#f0fdf4;border:3px solid #16a34a;border-top:none;border-radius:0 0 10px 10px;padding:50px 20px;text-align:center';
       doneCard.innerHTML=`
-        <div style="font-size:54px;margin-bottom:12px">✅</div>
-        <div style="font-size:26px;font-weight:900;color:#15803d;letter-spacing:2px;margin-bottom:8px">PLAN REALIZAT</div>
+        <div style="font-size:54px;margin-bottom:12px">${notInPlan?'📭':'✅'}</div>
+        <div style="font-size:26px;font-weight:900;color:#15803d;letter-spacing:2px;margin-bottom:8px">${notInPlan?'NU ESTE ÎN PLAN':'PLAN REALIZAT'}</div>
         <div style="font-size:13px;color:#166534;margin-bottom:16px">
-          Stocul de produs finit acoperă integral cantitatea planificată.
+          ${notInPlan?'Acest produs nu are cantități planificate — nu necesită asamblare.':'Stocul de produs finit acoperă integral cantitatea planificată.'}
         </div>
         <div style="display:inline-flex;gap:26px;padding:14px 26px;background:#fff;border:2px solid #86efac;border-radius:10px">
           <div><div style="font-size:9px;color:#6b7280;text-transform:uppercase;font-weight:700">În plan</div>
-               <div style="font-size:24px;font-weight:900;color:#1d4ed8">${fmtN(planQ)}</div></div>
+               <div style="font-size:24px;font-weight:900;color:${planQ>0?'#1d4ed8':'#94a3b8'}">${planQ>0?fmtN(planQ):'0'}</div></div>
           <div><div style="font-size:9px;color:#6b7280;text-transform:uppercase;font-weight:700">On Hand</div>
                <div style="font-size:24px;font-weight:900;color:#15803d">${fmtN(fpStockCheck.onHand)}</div></div>
-          <div><div style="font-size:9px;color:#6b7280;text-transform:uppercase;font-weight:700">Surplus</div>
-               <div style="font-size:24px;font-weight:900;color:#7c3aed">+${fmtN(fpStockCheck.onHand-planQ)}</div></div>
+          ${planQ>0?`<div><div style="font-size:9px;color:#6b7280;text-transform:uppercase;font-weight:700">Surplus</div>
+               <div style="font-size:24px;font-weight:900;color:#7c3aed">+${fmtN(fpStockCheck.onHand-planQ)}</div></div>`:''}
         </div>
         <div style="margin-top:18px">
           <button id="asm-force-show" style="height:34px;padding:0 18px;border:1.5px solid #94a3b8;background:#fff;color:#475569;border-radius:6px;cursor:pointer;font-size:12px;font-weight:600">
