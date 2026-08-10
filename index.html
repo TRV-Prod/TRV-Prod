@@ -7624,7 +7624,12 @@ function openOrientareModal(prefix){
       const planQ=planQty(fp.code);
       const fpStock=S.stockIdx.get(fp.code)||{onHand:0,totalWIP:0};
       if(planQ<=0){
-        return {code:fp.code,name:fp.name||'',planQty:0,onHand:fpStock.onHand||0,apt:null,missing:[]};
+        return {code:fp.code,name:fp.name||'',planQty:0,onHand:fpStock.onHand||0,apt:null,missing:[],planDone:false};
+      }
+      // ── FP stock already covers the plan → PLAN REALIZAT, skip component check ──
+      if((fpStock.onHand||0)>=planQ){
+        return {code:fp.code,name:fp.name||'',planQty:planQ,onHand:fpStock.onHand||0,
+                apt:true,missing:[],planDone:true,totalComps:0};
       }
       // Recursive: for PA components, if not enough stock, check their children (WE parts)
       const needMap=new Map();
@@ -7712,11 +7717,13 @@ function openOrientareModal(prefix){
       tr.appendChild(mkTd(`<b style="font-size:14px;color:${r.onHand>0?'#15803d':'#94a3b8'}">${fmtN(r.onHand)}</b>`,'text-align:right'));
       tr.appendChild(mkTd(
         r.apt===null?'<span style="color:#94a3b8;font-size:11px">Fără plan</span>'
+        :r.planDone?'<span style="display:inline-block;padding:4px 12px;border-radius:14px;font-size:12px;font-weight:900;background:#dcfce7;color:#15803d;border:2px solid #16a34a">✅ PLAN REALIZAT</span>'
         :r.apt?'<span style="display:inline-block;padding:4px 14px;border-radius:14px;font-size:13px;font-weight:900;background:#dcfce7;color:#15803d;border:2px solid #86efac">✓ DA</span>'
         :'<span style="display:inline-block;padding:4px 14px;border-radius:14px;font-size:13px;font-weight:900;background:#fee2e2;color:#991b1b;border:2px solid #fca5a5">✕ NU</span>',
         'text-align:center'));
       tr.appendChild(mkTd(
-        r.apt===false&&r.missing.length
+        r.planDone?'<span style="color:#15803d;font-size:10px;font-weight:600">Stoc suficient — nu necesită producție</span>'
+        :r.apt===false&&r.missing.length
           ?`<div style="font-size:10px;line-height:1.5">${r.missing.slice(0,4).map(m=>`<div><span style="font-family:monospace;font-weight:700;color:#dc2626">${m.matNo}</span> <span style="color:#6b7280">nec:${fmtN(m.need)} / stoc:${fmtN(m.avail)}</span> <b style="color:#dc2626">−${fmtN(m.short)}</b></div>`).join('')}
              ${r.missing.length>4?`<div style="color:#94a3b8;font-style:italic">+${r.missing.length-4} altele</div>`:''}</div>`
           :(r.apt===true?`<span style="color:#15803d;font-size:10px">Toate ${r.totalComps} componente disponibile</span>`:'<span style="color:#cbd5e1">—</span>'),
@@ -7737,6 +7744,30 @@ function openOrientareModal(prefix){
   ov.appendChild(modal);
   ov.addEventListener('click',e=>{if(e.target===ov)ov.remove();});
   document.body.appendChild(ov);
+}
+
+
+// Get first (lowest seq) BOW operation for a component — indicates production route
+function _getFirstBowOp(fpCode, matNo){
+  if(!S.bowIdx) return '';
+  const ops=S.bowIdx.get(`${fpCode}__${matNo}`)||[];
+  if(!ops.length){
+    // Fallback: search any FP context
+    for(const [k,v] of S.bowIdx){
+      if(k.endsWith('__'+matNo)&&v.length){
+        const sorted=[...v].sort((a,b)=>(parseFloat(a['Ope seq'])||0)-(parseFloat(b['Ope seq'])||0));
+        return str(sorted[0]['Ope name']||sorted[0]['Ope descr']||'');
+      }
+    }
+    return '';
+  }
+  const sorted=[...ops].sort((a,b)=>{
+    const pa=parseFloat(String(a['Product seq']||'0').replace(',','.'))||0;
+    const pb=parseFloat(String(b['Product seq']||'0').replace(',','.'))||0;
+    if(pa!==pb)return pb-pa;
+    return (parseFloat(String(a['Ope seq']||'0').replace(',','.'))||0)-(parseFloat(String(b['Ope seq']||'0').replace(',','.'))||0);
+  });
+  return str(sorted[0]['Ope name']||sorted[0]['Ope descr']||'');
 }
 
 function renderAsamblare(){
@@ -7777,7 +7808,7 @@ function renderAsamblare(){
   };
   fillFpSel(fpSearch.value);
   fpSearch.addEventListener('input',()=>{S.asmSearchPrefix=fpSearch.value;fillFpSel(fpSearch.value);});
-  fpSel.addEventListener('change',()=>{S.asmFP=fpSel.value;S.asmExp=new Set();expandAllAsm();rebuild();});
+  fpSel.addEventListener('change',()=>{S.asmFP=fpSel.value;S.asmForceShow=false;S.asmExp=new Set();expandAllAsm();rebuild();});
   fpWrap.appendChild(fpSearch);fpWrap.appendChild(fpSel);tbRow1.appendChild(fpWrap);
 
   // Qty
@@ -7868,7 +7899,7 @@ function renderAsamblare(){
       :'<span style="color:#94a3b8">Nu e în plan</span>';
 
     // FP header card
-    const planDone=planQ>0&&fpStockCheck.onHand>=planQ;
+    const planDone=planQ>0&&fpStockCheck.onHand>=planQ&&!S.asmForceShow;
     const fpCard=dv('');fpCard.style.cssText='background:#1e3a5f;color:#fff;border-radius:10px 10px 0 0;padding:12px 16px;margin-bottom:0;position:relative;overflow:hidden';
     if(planDone){
       const wm=dv('');wm.style.cssText='position:absolute;top:50%;left:50%;transform:translate(-50%,-50%) rotate(-12deg);font-size:38px;font-weight:900;color:rgba(134,239,172,.28);letter-spacing:5px;pointer-events:none;white-space:nowrap;text-transform:uppercase;z-index:1';
@@ -7890,6 +7921,36 @@ function renderAsamblare(){
         </div>
       </div>`;
     content.appendChild(fpCard);
+
+    // ── If FP stock covers the plan, show PLAN REALIZAT card instead of tree ──
+    if(planDone){
+      const doneCard=dv('');
+      doneCard.style.cssText='background:#f0fdf4;border:3px solid #16a34a;border-top:none;border-radius:0 0 10px 10px;padding:50px 20px;text-align:center';
+      doneCard.innerHTML=`
+        <div style="font-size:54px;margin-bottom:12px">✅</div>
+        <div style="font-size:26px;font-weight:900;color:#15803d;letter-spacing:2px;margin-bottom:8px">PLAN REALIZAT</div>
+        <div style="font-size:13px;color:#166534;margin-bottom:16px">
+          Stocul de produs finit acoperă integral cantitatea planificată.
+        </div>
+        <div style="display:inline-flex;gap:26px;padding:14px 26px;background:#fff;border:2px solid #86efac;border-radius:10px">
+          <div><div style="font-size:9px;color:#6b7280;text-transform:uppercase;font-weight:700">În plan</div>
+               <div style="font-size:24px;font-weight:900;color:#1d4ed8">${fmtN(planQ)}</div></div>
+          <div><div style="font-size:9px;color:#6b7280;text-transform:uppercase;font-weight:700">On Hand</div>
+               <div style="font-size:24px;font-weight:900;color:#15803d">${fmtN(fpStockCheck.onHand)}</div></div>
+          <div><div style="font-size:9px;color:#6b7280;text-transform:uppercase;font-weight:700">Surplus</div>
+               <div style="font-size:24px;font-weight:900;color:#7c3aed">+${fmtN(fpStockCheck.onHand-planQ)}</div></div>
+        </div>
+        <div style="margin-top:18px">
+          <button id="asm-force-show" style="height:34px;padding:0 18px;border:1.5px solid #94a3b8;background:#fff;color:#475569;border-radius:6px;cursor:pointer;font-size:12px;font-weight:600">
+            Afișează totuși structura componentelor
+          </button>
+        </div>`;
+      content.appendChild(doneCard);
+      doneCard.querySelector('#asm-force-show')?.addEventListener('click',()=>{
+        S.asmForceShow=true;rebuild();
+      });
+      return;
+    }
 
     // Table
     const tblWrap=dv('');tblWrap.style.cssText='background:#fff;border:1px solid var(--border);border-top:none;border-radius:0 0 10px 10px;overflow:hidden';
@@ -7978,11 +8039,17 @@ function renderAsamblare(){
               statusHtml+=`<div style="margin-top:3px"><span style="display:inline-block;padding:1px 6px;border-radius:8px;font-size:9px;font-weight:700;background:#fef3c7;color:#92400e;border:1px solid #fde047">⚠ Lipsă încă ${fmtN(shortage-wipTotal)}</span></div>`;
             }
           } else {
-            // PA (product assembly) → needs assembly, not laser cutting
-            const isPA=/PA\d/i.test(n.matNo)||(n.children&&n.children.length>0);
-            statusHtml=isPA
-              ?'<span style="display:inline-block;padding:2px 8px;border-radius:10px;font-size:10px;font-weight:700;background:#dbeafe;color:#1d4ed8;border:1px solid #93c5fd">🔧 De asamblat</span>'
-              :'<span style="display:inline-block;padding:2px 8px;border-radius:10px;font-size:10px;font-weight:700;background:#fee2e2;color:#991b1b;border:1px solid #fca5a5">🔴 Programare LASER</span>';
+            // Determine production route from BOW first operation
+            const isPA=/PA\d/i.test(n.matNo);
+            if(isPA){
+              statusHtml='<span style="display:inline-block;padding:2px 8px;border-radius:10px;font-size:10px;font-weight:700;background:#dbeafe;color:#1d4ed8;border:1px solid #93c5fd">🔧 De asamblat</span>';
+            } else {
+              // WE/other parts → find first BOW operation (production route)
+              const firstOp=_getFirstBowOp(S.asmFP,n.matNo);
+              statusHtml=firstOp
+                ?`<span style="display:inline-block;padding:2px 8px;border-radius:10px;font-size:10px;font-weight:700;background:#fee2e2;color:#991b1b;border:1px solid #fca5a5">🔴 Programare: ${firstOp}</span>`
+                :'<span style="display:inline-block;padding:2px 8px;border-radius:10px;font-size:10px;font-weight:700;background:#fef3c7;color:#92400e;border:1px solid #fde047">⚠ De produs (fără BOW)</span>';
+            }
           }
         } else {
           statusHtml=`<span style="display:inline-block;padding:2px 8px;border-radius:10px;font-size:10px;font-weight:700;background:#fef3c7;color:#92400e;border:1px solid #fde047">📦 Comandă furnizor</span>`;
@@ -8066,8 +8133,9 @@ function renderAsamblare(){
         if(st.onHand>=needed)statusStr='Stoc OK';
         else if(n.isMake){
           const wipE=Object.entries(st.wipByWC||{}).filter(([,q])=>q>0);
-          const isPA3=/PA\d/i.test(n.matNo)||(n.children&&n.children.length>0);
-          statusStr=wipE.length?('WIP: '+wipE.map(([wc,q])=>wcLabel(wc)+'='+fmtN(q)).join('; ')):(isPA3?'DE ASAMBLAT':'PROGRAMARE LASER');
+          const isPA3=/PA\d/i.test(n.matNo);
+          statusStr=wipE.length?('WIP: '+wipE.map(([wc,q])=>wcLabel(wc)+'='+fmtN(q)).join('; '))
+            :(isPA3?'DE ASAMBLAT':('PROGRAMARE: '+(_getFirstBowOp(S.asmFP,n.matNo)||'necunoscut')));
         } else statusStr='Comandă furnizor';
         data.push([depth,n.matNo,n.matName||'',n.matDraw||'',n.isMake?'MAKE':'BUY',n.unit||'',
           unQty,needed,st.onHand,st.totalWIP,statusStr,done,Math.max(0,needed-done),S.asmData.obs[key]||'']);
@@ -8108,8 +8176,12 @@ function renderAsamblare(){
             const wt=wipE.reduce((s,[,q])=>s+q,0);
             statusTxt=`<span style="color:#7c3aed;font-weight:700">WIP: ${fmtN(wt)}</span><br><span style="font-size:7.5pt;color:#666">${wipE.sort((a,b)=>b[1]-a[1]).map(([wc,q])=>wcLabel(wc)+': '+fmtN(q)).join('<br>')}</span>`;
           } else {
-            const isPA2=/PA\d/i.test(n.matNo)||(n.children&&n.children.length>0);
-            statusTxt=isPA2?'<span style="color:#1d4ed8;font-weight:700">🔧 De asamblat</span>':'<span style="color:#dc2626;font-weight:700">🔴 Prog. LASER</span>';
+            const isPA2=/PA\d/i.test(n.matNo);
+            if(isPA2)statusTxt='<span style="color:#1d4ed8;font-weight:700">🔧 De asamblat</span>';
+            else{
+              const fo=_getFirstBowOp(S.asmFP,n.matNo);
+              statusTxt=fo?`<span style="color:#dc2626;font-weight:700">🔴 ${fo}</span>`:'<span style="color:#92400e;font-weight:700">⚠ De produs</span>';
+            }
           }
         } else statusTxt='<span style="color:#92400e;font-weight:700">📦 Cmd. furnizor</span>';
         rowsHtml+=`<tr${rem===0&&needed>0?' style="background:#f0fdf4"':''}>
