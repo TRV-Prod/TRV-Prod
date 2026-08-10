@@ -7587,6 +7587,138 @@ async function loadAsmData(){
   if(d&&typeof d==='object')S.asmData={obs:d.obs||{},done:d.done||{}};
 }
 
+
+/* ═══════════════════════════════════════════════════════════════
+   MODAL ORIENTARE — verificare disponibilitate asamblare per FP
+═══════════════════════════════════════════════════════════════ */
+function openOrientareModal(prefix){
+  if(!prefix){alert('Introduceți un prefix în câmpul de căutare produs final.');return;}
+  if(!S.bomIdx||!S.stockIdx){alert('BOM sau Planning Overview nu sunt încărcate.');return;}
+
+  document.getElementById('ori-overlay')?.remove();
+  const ov=dv('');ov.id='ori-overlay';
+  ov.style.cssText='position:fixed;inset:0;background:rgba(0,0,0,.5);z-index:9200;display:flex;align-items:center;justify-content:center;padding:16px';
+  const modal=dv('');modal.style.cssText='background:#fff;border-radius:12px;box-shadow:0 24px 70px rgba(0,0,0,.35);width:min(1000px,96vw);max-height:88vh;display:flex;flex-direction:column;overflow:hidden';
+
+  const hdr=dv('');hdr.style.cssText='background:#7c3aed;color:#fff;padding:12px 18px;display:flex;justify-content:space-between;align-items:center;flex-shrink:0';
+  hdr.innerHTML=`<div><div style="font-weight:800;font-size:14px">🧭 Orientare — produse "${prefix}"</div>
+    <div style="font-size:10px;opacity:.85;margin-top:2px">Verificare disponibilitate subcomponente pentru asamblare</div></div>`;
+  const cb=el('button');cb.textContent='✕';cb.style.cssText='border:none;background:rgba(255,255,255,.2);color:#fff;width:30px;height:30px;border-radius:5px;cursor:pointer;font-size:15px';
+  cb.addEventListener('click',()=>ov.remove());hdr.appendChild(cb);modal.appendChild(hdr);
+
+  const body=dv('');body.style.cssText='flex:1;overflow:auto;padding:0';
+  modal.appendChild(body);
+  body.innerHTML='<div style="padding:30px;text-align:center;color:var(--text3)">⏳ Se calculează disponibilitatea...</div>';
+
+  setTimeout(()=>{
+    const pl=prefix.toLowerCase();
+    const matchingFPs=(S.fps||[]).filter(f=>f.code.toLowerCase().startsWith(pl));
+    if(!matchingFPs.length){
+      body.innerHTML=`<div style="padding:30px;text-align:center;color:var(--text3)">Niciun produs final nu începe cu "${prefix}".</div>`;
+      return;
+    }
+
+    // For each FP: check if all subcomponents are available (aggregated by matNo)
+    const results=matchingFPs.map(fp=>{
+      const planQ=planQty(fp.code);
+      const fpStock=S.stockIdx.get(fp.code)||{onHand:0,totalWIP:0};
+      if(planQ<=0){
+        return {code:fp.code,name:fp.name||'',planQty:0,onHand:fpStock.onHand||0,apt:null,missing:[]};
+      }
+      // Aggregate total need per component across whole BOM tree
+      const needMap=new Map(); // matNo → total needed
+      const tree=buildTree(fp.code,fp.code);
+      const walk=(nodes,mult)=>{
+        nodes.forEach(n=>{
+          const unQty=n.qty!=null?n.qty:1;
+          const cumQty=mult*unQty;
+          needMap.set(n.matNo,(needMap.get(n.matNo)||0)+cumQty*planQ);
+          if(n.children?.length)walk(n.children,cumQty);
+        });
+      };
+      walk(tree,1);
+      // Check availability
+      const missing=[];
+      for(const[matNo,need] of needMap){
+        const st=S.stockIdx.get(matNo)||{onHand:0};
+        const avail=Math.max(0,st.onHand||0);
+        if(avail<need)missing.push({matNo,need:Math.round(need*100)/100,avail,short:Math.round((need-avail)*100)/100});
+      }
+      return {
+        code:fp.code,name:fp.name||'',planQty:planQ,onHand:fpStock.onHand||0,
+        apt:missing.length===0,missing:missing.sort((a,b)=>b.short-a.short),
+        totalComps:needMap.size,
+      };
+    });
+
+    // Sort: APT first, then by plan qty desc
+    results.sort((a,b)=>{
+      if(a.apt===b.apt)return (b.planQty||0)-(a.planQty||0);
+      if(a.apt===null)return 1;if(b.apt===null)return -1;
+      return a.apt?-1:1;
+    });
+
+    body.innerHTML='';
+    const tbl=el('table');tbl.style.cssText='width:100%;border-collapse:collapse;font-size:12px';
+    const thead=el('thead');const hr=el('tr');hr.style.cssText='background:#1e3a5f;color:#fff;position:sticky;top:0;z-index:2';
+    [
+      {l:'Produs Final',a:'left',w:''},
+      {l:'Buc planificate',a:'right',w:'110px'},
+      {l:'Buc în stoc',a:'right',w:'95px'},
+      {l:'Apt pt asamblare?',a:'center',w:'150px'},
+      {l:'Componente lipsă',a:'left',w:'240px'},
+    ].forEach(({l,a,w})=>{
+      const th=el('th');th.style.cssText=`padding:8px 10px;text-align:${a};font-size:9.5px;font-weight:800;text-transform:uppercase;letter-spacing:.05em;${w?'width:'+w+';min-width:'+w:''}`;
+      th.textContent=l;hr.appendChild(th);
+    });
+    thead.appendChild(hr);tbl.appendChild(thead);
+
+    const tbody=el('tbody');
+    let aptCount=0,nuCount=0;
+    results.forEach((r,i)=>{
+      const tr=el('tr');
+      if(r.apt===true){tr.style.background='#f0fdf4';aptCount++;}
+      else if(r.apt===false){tr.style.background='#fef2f2';nuCount++;}
+      else tr.style.background=i%2?'#f8fafc':'#fff';
+      tr.style.borderBottom='1px solid #f1f5f9';
+      tr.style.cursor='pointer';
+      tr.title='Click pentru a deschide în Asamblare';
+      tr.addEventListener('click',()=>{S.asmFP=r.code;ov.remove();render();});
+
+      const mkTd=(html,css)=>{const td=el('td');td.style.cssText=(css||'')+';padding:7px 10px;vertical-align:middle';td.innerHTML=html;return td;};
+      tr.appendChild(mkTd(`<div style="font-family:monospace;font-weight:800;font-size:12.5px;color:#1e3a5f">${r.code}</div>
+        ${r.name?`<div style="font-size:10px;color:#6b7280">${r.name}</div>`:''}`));
+      tr.appendChild(mkTd(r.planQty>0?`<b style="font-size:15px;color:#1d4ed8">${fmtN(r.planQty)}</b>`:'<span style="color:#cbd5e1">—</span>','text-align:right'));
+      tr.appendChild(mkTd(`<b style="font-size:14px;color:${r.onHand>0?'#15803d':'#94a3b8'}">${fmtN(r.onHand)}</b>`,'text-align:right'));
+      tr.appendChild(mkTd(
+        r.apt===null?'<span style="color:#94a3b8;font-size:11px">Fără plan</span>'
+        :r.apt?'<span style="display:inline-block;padding:4px 14px;border-radius:14px;font-size:13px;font-weight:900;background:#dcfce7;color:#15803d;border:2px solid #86efac">✓ DA</span>'
+        :'<span style="display:inline-block;padding:4px 14px;border-radius:14px;font-size:13px;font-weight:900;background:#fee2e2;color:#991b1b;border:2px solid #fca5a5">✕ NU</span>',
+        'text-align:center'));
+      tr.appendChild(mkTd(
+        r.apt===false&&r.missing.length
+          ?`<div style="font-size:10px;line-height:1.5">${r.missing.slice(0,4).map(m=>`<div><span style="font-family:monospace;font-weight:700;color:#dc2626">${m.matNo}</span> <span style="color:#6b7280">nec:${fmtN(m.need)} / stoc:${fmtN(m.avail)}</span> <b style="color:#dc2626">−${fmtN(m.short)}</b></div>`).join('')}
+             ${r.missing.length>4?`<div style="color:#94a3b8;font-style:italic">+${r.missing.length-4} altele</div>`:''}</div>`
+          :(r.apt===true?`<span style="color:#15803d;font-size:10px">Toate ${r.totalComps} componente disponibile</span>`:'<span style="color:#cbd5e1">—</span>'),
+        ''));
+      tbody.appendChild(tr);
+    });
+    tbl.appendChild(tbody);body.appendChild(tbl);
+
+    // Summary
+    const sum=dv('');sum.style.cssText='padding:10px 16px;background:#f8f9fb;border-top:2px solid var(--border);font-size:11.5px;display:flex;gap:18px;align-items:center;flex-wrap:wrap';
+    sum.innerHTML=`<span><b>${results.length}</b> produse</span>
+      <span style="color:#15803d"><b>${aptCount}</b> APT pentru asamblare</span>
+      <span style="color:#dc2626"><b>${nuCount}</b> cu componente lipsă</span>
+      <span style="margin-left:auto;color:#94a3b8;font-size:10px">Click pe un rând → deschide în Asamblare</span>`;
+    body.appendChild(sum);
+  },50);
+
+  ov.appendChild(modal);
+  ov.addEventListener('click',e=>{if(e.target===ov)ov.remove();});
+  document.body.appendChild(ov);
+}
+
 function renderAsamblare(){
   const page=dv('');page.style.cssText='display:flex;flex-direction:column;height:100%;overflow:hidden;background:#f8f9fb';
 
@@ -7606,6 +7738,7 @@ function renderAsamblare(){
   const fpWrap=dv('');fpWrap.style.cssText='display:flex;align-items:center;gap:6px;flex:1;min-width:250px;max-width:480px';
   fpWrap.innerHTML='<span style="font-size:10px;font-weight:700;color:var(--text3);text-transform:uppercase;white-space:nowrap">Produs final:</span>';
   const fpSearch=el('input');fpSearch.type='text';fpSearch.placeholder='Caută cod sau denumire...';
+  fpSearch.value=S.asmSearchPrefix!==undefined?S.asmSearchPrefix:'ALS.MF19';
   fpSearch.style.cssText='flex:1;height:32px;padding:0 10px;border:1.5px solid var(--border);border-radius:5px;font-size:12px';
   const fpSel=el('select');fpSel.style.cssText='height:32px;padding:0 8px;border:1.5px solid var(--border);border-radius:5px;font-size:12px;font-weight:600;min-width:180px;max-width:280px';
   const fillFpSel=(q)=>{
@@ -7618,8 +7751,8 @@ function renderAsamblare(){
         fpSel.appendChild(o);
       });
   };
-  fillFpSel('');
-  fpSearch.addEventListener('input',()=>fillFpSel(fpSearch.value));
+  fillFpSel(fpSearch.value);
+  fpSearch.addEventListener('input',()=>{S.asmSearchPrefix=fpSearch.value;fillFpSel(fpSearch.value);});
   fpSel.addEventListener('change',()=>{S.asmFP=fpSel.value;rebuild();});
   fpWrap.appendChild(fpSearch);fpWrap.appendChild(fpSel);tb.appendChild(fpWrap);
 
@@ -7664,6 +7797,11 @@ function renderAsamblare(){
   tb.appendChild(bx);tb.appendChild(bc);
 
   // Print
+  const bori=el('button','tbtn');bori.innerHTML='🧭 Orientare';bori.style.cssText='border-color:#7c3aed;color:#7c3aed;background:#ede9fe;font-weight:700';
+  bori.title='Lista produselor care încep cu prefixul căutat + verificare disponibilitate';
+  bori.onclick=()=>openOrientareModal(fpSearch.value.trim());
+  tb.appendChild(bori);
+
   const bp=el('button','tbtn');bp.innerHTML='🖨 Printează';bp.style.cssText='border-color:#0369a1;color:#0369a1;background:#eff6ff';
   bp.onclick=()=>printAsamblare();
   tb.appendChild(bp);
@@ -7816,7 +7954,11 @@ function renderAsamblare(){
               statusHtml+=`<div style="margin-top:3px"><span style="display:inline-block;padding:1px 6px;border-radius:8px;font-size:9px;font-weight:700;background:#fef3c7;color:#92400e;border:1px solid #fde047">⚠ Lipsă încă ${fmtN(shortage-wipTotal)}</span></div>`;
             }
           } else {
-            statusHtml='<span style="display:inline-block;padding:2px 8px;border-radius:10px;font-size:10px;font-weight:700;background:#fee2e2;color:#991b1b;border:1px solid #fca5a5">🔴 Programare LASER</span>';
+            // PA (product assembly) → needs assembly, not laser cutting
+            const isPA=/PA\d/i.test(n.matNo)||(n.children&&n.children.length>0);
+            statusHtml=isPA
+              ?'<span style="display:inline-block;padding:2px 8px;border-radius:10px;font-size:10px;font-weight:700;background:#dbeafe;color:#1d4ed8;border:1px solid #93c5fd">🔧 De asamblat</span>'
+              :'<span style="display:inline-block;padding:2px 8px;border-radius:10px;font-size:10px;font-weight:700;background:#fee2e2;color:#991b1b;border:1px solid #fca5a5">🔴 Programare LASER</span>';
           }
         } else {
           statusHtml=`<span style="display:inline-block;padding:2px 8px;border-radius:10px;font-size:10px;font-weight:700;background:#fef3c7;color:#92400e;border:1px solid #fde047">📦 Comandă furnizor</span>`;
@@ -7900,7 +8042,8 @@ function renderAsamblare(){
         if(st.onHand>=needed)statusStr='Stoc OK';
         else if(n.isMake){
           const wipE=Object.entries(st.wipByWC||{}).filter(([,q])=>q>0);
-          statusStr=wipE.length?('WIP: '+wipE.map(([wc,q])=>wcLabel(wc)+'='+fmtN(q)).join('; ')):'PROGRAMARE LASER';
+          const isPA3=/PA\d/i.test(n.matNo)||(n.children&&n.children.length>0);
+          statusStr=wipE.length?('WIP: '+wipE.map(([wc,q])=>wcLabel(wc)+'='+fmtN(q)).join('; ')):(isPA3?'DE ASAMBLAT':'PROGRAMARE LASER');
         } else statusStr='Comandă furnizor';
         data.push([depth,n.matNo,n.matName||'',n.matDraw||'',n.isMake?'MAKE':'BUY',n.unit||'',
           unQty,needed,st.onHand,st.totalWIP,statusStr,done,Math.max(0,needed-done),S.asmData.obs[key]||'']);
@@ -7940,7 +8083,10 @@ function renderAsamblare(){
           if(wipE.length){
             const wt=wipE.reduce((s,[,q])=>s+q,0);
             statusTxt=`<span style="color:#7c3aed;font-weight:700">WIP: ${fmtN(wt)}</span><br><span style="font-size:7.5pt;color:#666">${wipE.sort((a,b)=>b[1]-a[1]).map(([wc,q])=>wcLabel(wc)+': '+fmtN(q)).join('<br>')}</span>`;
-          } else statusTxt='<span style="color:#dc2626;font-weight:700">🔴 Prog. LASER</span>';
+          } else {
+            const isPA2=/PA\d/i.test(n.matNo)||(n.children&&n.children.length>0);
+            statusTxt=isPA2?'<span style="color:#1d4ed8;font-weight:700">🔧 De asamblat</span>':'<span style="color:#dc2626;font-weight:700">🔴 Prog. LASER</span>';
+          }
         } else statusTxt='<span style="color:#92400e;font-weight:700">📦 Cmd. furnizor</span>';
         rowsHtml+=`<tr${rem===0&&needed>0?' style="background:#f0fdf4"':''}>
           <td style="padding-left:${depth*14+4}px">
