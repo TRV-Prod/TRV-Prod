@@ -2331,6 +2331,189 @@ function calcTotalExecTime(fpCode, inputQty){
 /* ═══════════════════════════════════════════════════════════════
    EXPORT STRUCTURA → PDF (print-friendly window with tree connectors)
 ═══════════════════════════════════════════════════════════════ */
+
+/* ═══════════════════════════════════════════════════════════════
+   MODAL ASAMBLARE — subcomponente necesare pentru FP selectat
+═══════════════════════════════════════════════════════════════ */
+function openAsamblareModal(){
+  if(!S.selFP){alert('Selectați un produs final.');return;}
+  if(!S.bomIdx){alert('BOM nu este încărcat.');return;}
+
+  document.getElementById('asm-overlay')?.remove();
+  const fp=S.fps?.find(f=>f.code===S.selFP);
+  const planQ=planQty(S.selFP);
+  const inputQty=S.qtyInput||1;
+
+  // Build flat component list from BOM tree
+  const tree=buildTree(S.selFP,S.selFP);
+  const rows=[];
+  function walk(nodes,depth,parentMult){
+    nodes.forEach(n=>{
+      const unQty=n.qty!=null?n.qty:1;
+      const cumQty=parentMult*unQty;
+      const stock=S.stockIdx?.get(n.matNo)||{onHand:0,totalWIP:0};
+      rows.push({
+        matNo:n.matNo,matName:n.matName||'',matDraw:n.matDraw||'',
+        depth,isMake:n.isMake,unit:n.unit||'',
+        unQty,                              // Un Qty (per parent)
+        cumQty,                             // cumulative per 1 FP
+        needForInput:cumQty*inputQty,       // for structura qty
+        needForPlan:cumQty*planQ,           // for plan qty
+        onHand:stock.onHand||0,
+        wip:stock.totalWIP||0,
+      });
+      if(n.children?.length)walk(n.children,depth+1,cumQty);
+    });
+  }
+  walk(tree,0,1);
+
+  if(!rows.length){alert('Nicio subcomponentă găsită în BOM.');return;}
+
+  const ov=dv('');ov.id='asm-overlay';
+  ov.style.cssText='position:fixed;inset:0;background:rgba(0,0,0,.5);z-index:9000;display:flex;align-items:center;justify-content:center;padding:16px';
+  const modal=dv('');modal.style.cssText='background:#fff;border-radius:12px;box-shadow:0 24px 70px rgba(0,0,0,.35);width:min(1100px,96vw);max-height:88vh;display:flex;flex-direction:column;overflow:hidden';
+
+  // Header
+  const hdr=dv('');hdr.style.cssText='background:#1e3a5f;color:#fff;padding:12px 18px;display:flex;justify-content:space-between;align-items:center;flex-shrink:0';
+  hdr.innerHTML=`<div>
+    <div style="font-weight:800;font-size:14px">🔧 Asamblare — ${S.selFP}</div>
+    <div style="font-size:10px;opacity:.85;margin-top:2px">${fp?.name||''} · Structura: ${fmtN(inputQty)} buc · Plan: ${planQ>0?fmtN(planQ)+' buc':'—'}</div>
+  </div>`;
+  const closeB=el('button');closeB.textContent='✕';
+  closeB.style.cssText='border:none;background:rgba(255,255,255,.2);color:#fff;width:30px;height:30px;border-radius:5px;cursor:pointer;font-size:15px';
+  closeB.addEventListener('click',()=>ov.remove());
+  hdr.appendChild(closeB);modal.appendChild(hdr);
+
+  // Toolbar
+  const tb=dv('');tb.style.cssText='padding:8px 14px;border-bottom:1px solid var(--border);display:flex;gap:8px;align-items:center;flex-wrap:wrap;flex-shrink:0;background:#f8f9fb';
+  let showOnlyMissing=false;
+  let filterType='all';
+  const mkBtn=(label,active,onClick,color)=>{
+    const b=el('button');b.textContent=label;
+    b.style.cssText=`height:28px;padding:0 12px;border-radius:14px;border:1.5px solid ${color};font-size:11px;font-weight:700;cursor:pointer;background:${active?color:'#fff'};color:${active?'#fff':color}`;
+    b.addEventListener('click',onClick);return b;
+  };
+  const filterBar=dv('');filterBar.style.cssText='display:flex;gap:6px';
+  const rebuildFilters=()=>{
+    filterBar.innerHTML='';
+    filterBar.appendChild(mkBtn('Toate',filterType==='all',()=>{filterType='all';renderRows();rebuildFilters();},'#475569'));
+    filterBar.appendChild(mkBtn('MAKE',filterType==='MAKE',()=>{filterType='MAKE';renderRows();rebuildFilters();},'#6d28d9'));
+    filterBar.appendChild(mkBtn('BUY',filterType==='BUY',()=>{filterType='BUY';renderRows();rebuildFilters();},'#065f46'));
+  };
+  rebuildFilters();
+  tb.appendChild(filterBar);
+
+  const missBtn=el('button');missBtn.textContent='⚠ Doar insuficiente';
+  missBtn.style.cssText='height:28px;padding:0 12px;border-radius:14px;border:1.5px solid #dc2626;font-size:11px;font-weight:700;cursor:pointer;background:#fff;color:#dc2626';
+  missBtn.addEventListener('click',()=>{
+    showOnlyMissing=!showOnlyMissing;
+    missBtn.style.background=showOnlyMissing?'#dc2626':'#fff';
+    missBtn.style.color=showOnlyMissing?'#fff':'#dc2626';
+    renderRows();
+  });
+  tb.appendChild(missBtn);
+
+  const excelBtn=el('button');excelBtn.textContent='⬇ Excel';
+  excelBtn.style.cssText='height:28px;padding:0 12px;border-radius:5px;border:1.5px solid #16a34a;font-size:11px;font-weight:700;cursor:pointer;background:#f0fdf4;color:#15803d;margin-left:auto';
+  excelBtn.addEventListener('click',()=>{
+    const data=[['Nivel','Cod','Denumire','Tip','U/M','Un Qty','Necesar Structura','Necesar Plan','On Hand','WIP','Lipsă Plan']];
+    getFilteredRows().forEach(r=>data.push([
+      r.depth,r.matNo,r.matName,r.isMake?'MAKE':'BUY',r.unit,
+      r.unQty,r.needForInput,r.needForPlan,r.onHand,r.wip,
+      Math.max(0,r.needForPlan-r.onHand),
+    ]));
+    const wb=XLSX.utils.book_new();
+    const ws=XLSX.utils.aoa_to_sheet(data);
+    ws['!cols']=[{wch:6},{wch:20},{wch:32},{wch:8},{wch:6},{wch:10},{wch:14},{wch:14},{wch:10},{wch:10},{wch:12}];
+    XLSX.utils.book_append_sheet(wb,ws,'Asamblare');
+    XLSX.writeFile(wb,`Asamblare_${S.selFP}_${new Date().toISOString().slice(0,10)}.xlsx`);
+  });
+  tb.appendChild(excelBtn);
+  modal.appendChild(tb);
+
+  // Body — table
+  const body=dv('');body.style.cssText='flex:1;overflow:auto;padding:0';
+  modal.appendChild(body);
+
+  const getFilteredRows=()=>rows.filter(r=>{
+    if(filterType!=='all'&&(r.isMake?'MAKE':'BUY')!==filterType)return false;
+    if(showOnlyMissing&&r.onHand>=r.needForPlan)return false;
+    return true;
+  });
+
+  function renderRows(){
+    body.innerHTML='';
+    const filtered=getFilteredRows();
+    if(!filtered.length){
+      body.innerHTML='<div style="padding:30px;text-align:center;color:var(--text3);font-size:12px">Nicio componentă conform filtrului.</div>';
+      return;
+    }
+    const tbl=el('table');tbl.style.cssText='width:100%;border-collapse:collapse;font-size:11.5px';
+    const thead=el('thead');const hr=el('tr');
+    hr.style.cssText='background:#1e3a5f;color:#fff;position:sticky;top:0;z-index:2';
+    [
+      {l:'Cod / Denumire',a:'left',w:''},
+      {l:'Tip',a:'center',w:'56px'},
+      {l:'Un Qty',a:'right',w:'70px'},
+      {l:'Necesar Struct.',a:'right',w:'95px'},
+      {l:'Necesar Plan',a:'right',w:'95px'},
+      {l:'On Hand',a:'right',w:'80px'},
+      {l:'WIP',a:'right',w:'70px'},
+      {l:'Lipsă',a:'right',w:'80px'},
+    ].forEach(({l,a,w})=>{
+      const th=el('th');
+      th.style.cssText=`padding:7px 8px;text-align:${a};font-size:9.5px;font-weight:700;text-transform:uppercase;letter-spacing:.04em;${w?'width:'+w+';min-width:'+w:''}`;
+      th.textContent=l;hr.appendChild(th);
+    });
+    thead.appendChild(hr);tbl.appendChild(thead);
+
+    const tbody=el('tbody');
+    filtered.forEach((r,i)=>{
+      const lipsaPlan=Math.max(0,r.needForPlan-r.onHand);
+      const insufficient=planQ>0&&lipsaPlan>0;
+      const tr=el('tr');
+      tr.style.cssText=insufficient
+        ?'background:#fef2f2;border-left:3px solid #dc2626'
+        :`background:${i%2?'#f8fafc':'#fff'}`;
+      const mkTd=(html,css)=>{const td=el('td');td.style.cssText=(css||'')+';padding:6px 8px;border-bottom:1px solid #f1f5f9';td.innerHTML=html;return td;};
+
+      const indent=r.depth*14;
+      tr.appendChild(mkTd(
+        `<div style="padding-left:${indent}px">
+          <span style="font-family:monospace;font-weight:700;font-size:11.5px;color:${r.isMake?'#6d28d9':'#065f46'}">${r.matNo}</span>
+          ${r.matDraw?`<span style="color:#9ca3af;font-size:10px;margin-left:5px">⇒${r.matDraw}</span>`:''}
+          <div style="font-size:10px;color:#6b7280;padding-left:${indent?0:0}px">${r.matName}</div>
+        </div>`));
+      tr.appendChild(mkTd(
+        `<span style="display:inline-block;padding:1px 6px;border-radius:3px;font-size:9px;font-weight:700;background:${r.isMake?'rgba(109,40,217,.1)':'rgba(6,95,70,.1)'};color:${r.isMake?'#6d28d9':'#065f46'};border:1px solid ${r.isMake?'rgba(109,40,217,.25)':'rgba(6,95,70,.25)'}">${r.isMake?'MAKE':'BUY'}</span>`,
+        'text-align:center'));
+      tr.appendChild(mkTd(fmtN(r.unQty)+(r.unit?' '+r.unit:''),'text-align:right;color:#6b7280;font-size:10.5px'));
+      tr.appendChild(mkTd(`<b style="color:#1d4ed8;font-size:12.5px">${fmtN(r.needForInput)}</b>`,'text-align:right'));
+      tr.appendChild(mkTd(planQ>0?`<b style="color:#7c3aed;font-size:12.5px">${fmtN(r.needForPlan)}</b>`:'<span style="color:#cbd5e1">—</span>','text-align:right'));
+      tr.appendChild(mkTd(`<b style="color:${r.onHand>0?'#15803d':r.onHand<0?'#dc2626':'#94a3b8'};font-size:12.5px">${fmtN(r.onHand)}</b>`,'text-align:right'));
+      tr.appendChild(mkTd(r.wip?`<span style="color:#7c3aed;font-weight:600">${fmtN(r.wip)}</span>`:'<span style="color:#cbd5e1">—</span>','text-align:right'));
+      tr.appendChild(mkTd(
+        lipsaPlan>0?`<b style="color:#dc2626;font-size:12.5px">${fmtN(lipsaPlan)}</b>`:'<span style="color:#15803d;font-weight:700">✓</span>',
+        'text-align:right'));
+      tbody.appendChild(tr);
+    });
+    tbl.appendChild(tbody);body.appendChild(tbl);
+
+    // Summary footer
+    const totalMissing=filtered.filter(r=>Math.max(0,r.needForPlan-r.onHand)>0).length;
+    const sum=dv('');sum.style.cssText='padding:8px 14px;background:#f8f9fb;border-top:1px solid var(--border);font-size:11px;color:var(--text2);display:flex;gap:16px';
+    sum.innerHTML=`<span><b>${filtered.length}</b> componente</span>
+      ${planQ>0?`<span style="color:#dc2626"><b>${totalMissing}</b> insuficiente pentru plan</span>`:''}
+      <span style="margin-left:auto;color:#94a3b8">Necesar Struct. = Un Qty × ${fmtN(inputQty)} · Necesar Plan = Un Qty × ${fmtN(planQ)}</span>`;
+    body.appendChild(sum);
+  }
+
+  renderRows();
+  ov.appendChild(modal);
+  ov.addEventListener('click',e=>{if(e.target===ov)ov.remove();});
+  document.body.appendChild(ov);
+}
+
 function exportStructuraPDF(){
   if(!S.selFP){alert('Selectați un produs final.');return;}
   const treeEl=document.getElementById('structura-tree-root');
@@ -3540,9 +3723,12 @@ function renderStructura(){
   const tbr=dv('tb-r');
   const bx=el('button','tbtn');bx.textContent='⊞ Extinde tot';bx.onclick=()=>{expandAll(buildTree(S.selFP,S.selFP));reTree();};
   const bc=el('button','tbtn');bc.textContent='⊟ Colaseaza tot';bc.onclick=()=>{S.exp=new Set();S.expOps=new Set();reTree();};
+  const basm=el('button','tbtn');basm.textContent='🔧 Asamblare';basm.style.cssText='border-color:#7c3aed;color:#7c3aed;background:#ede9fe';
+  basm.title='Lista subcomponente cu cantități necesare și stoc';
+  basm.onclick=()=>openAsamblareModal();
   const bpdf=el('button','tbtn');bpdf.textContent='🖨 Export PDF';bpdf.style.cssText='border-color:#dc2626;color:#dc2626';
   bpdf.onclick=()=>exportStructuraPDF();
-  tbr.appendChild(bx);tbr.appendChild(bc);tbr.appendChild(bpdf);
+  tbr.appendChild(bx);tbr.appendChild(bc);tbr.appendChild(basm);tbr.appendChild(bpdf);
   tbr.appendChild(mkZoomCtrl('structura'));
   tb.appendChild(tbr);cnt.appendChild(tb);
 
