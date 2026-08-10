@@ -1196,7 +1196,8 @@ button { font-family: var(--sans); }
 /* ── PV2 Print Overlay ── */
 @media print {
   /* When an overlay is active: hide everything else */
-  body.has-print-overlay > *:not(#pv2-print-overlay):not(#struct-print-overlay) { display:none!important; }
+  body.has-print-overlay > *:not(#pv2-print-overlay):not(#struct-print-overlay):not(#asm-print-overlay) { display:none!important; }
+  #asm-print-overlay{display:block!important;position:static!important;inset:unset!important;padding:6mm!important;overflow:visible!important;margin:0}
   body.has-print-overlay #structura-tree-root:not(#struct-print-clone) { display:none!important; }
   body.has-print-overlay #structura-tree-root { display:none!important; }
   /* When no overlay: hide only nav/login/toast/balloon elements */
@@ -7625,24 +7626,43 @@ function openOrientareModal(prefix){
       if(planQ<=0){
         return {code:fp.code,name:fp.name||'',planQty:0,onHand:fpStock.onHand||0,apt:null,missing:[]};
       }
-      // Aggregate total need per component across whole BOM tree
-      const needMap=new Map(); // matNo → total needed
+      // Recursive: for PA components, if not enough stock, check their children (WE parts)
+      const needMap=new Map();
       const tree=buildTree(fp.code,fp.code);
+      const isPA=(code)=>/PA\d/i.test(code);
       const walk=(nodes,mult)=>{
         nodes.forEach(n=>{
           const unQty=n.qty!=null?n.qty:1;
           const cumQty=mult*unQty;
-          needMap.set(n.matNo,(needMap.get(n.matNo)||0)+cumQty*planQ);
-          if(n.children?.length)walk(n.children,cumQty);
+          const needed=cumQty*planQ;
+          const st=S.stockIdx.get(n.matNo)||{onHand:0};
+          const avail=Math.max(0,st.onHand||0);
+          // If PA and has children: check if own stock covers need
+          if(isPA(n.matNo)&&n.children?.length){
+            if(avail>=needed){
+              // PA available in stock → don't drill into children
+              needMap.set(n.matNo,(needMap.get(n.matNo)||0)+needed);
+            } else {
+              // PA insufficient → need to assemble it, so check its children (WE parts)
+              const shortfall=needed-avail;
+              if(avail>0)needMap.set(n.matNo,(needMap.get(n.matNo)||0)+avail);
+              // Recurse only for the shortfall quantity
+              walk(n.children,shortfall/planQ);
+            }
+          } else {
+            needMap.set(n.matNo,(needMap.get(n.matNo)||0)+needed);
+            // Non-PA with children: still walk for completeness
+            if(n.children?.length&&avail<needed)walk(n.children,cumQty);
+          }
         });
       };
       walk(tree,1);
-      // Check availability
+      // Check availability (aggregated per matNo — shared components counted once)
       const missing=[];
       for(const[matNo,need] of needMap){
         const st=S.stockIdx.get(matNo)||{onHand:0};
         const avail=Math.max(0,st.onHand||0);
-        if(avail<need)missing.push({matNo,need:Math.round(need*100)/100,avail,short:Math.round((need-avail)*100)/100});
+        if(avail<need-0.001)missing.push({matNo,need:Math.round(need*100)/100,avail,short:Math.round((need-avail)*100)/100});
       }
       return {
         code:fp.code,name:fp.name||'',planQty:planQ,onHand:fpStock.onHand||0,
@@ -7728,19 +7748,23 @@ function renderAsamblare(){
   }
 
   if(!S.asmFP)S.asmFP=S.selFP||S.fps[0]?.code||'';
+  if(!S.asmFilter)S.asmFilter='MAKE';
   if(!S.asmData)S.asmData={obs:{},done:{}};
   loadAsmData();
 
   // ── Toolbar ──
-  const tb=dv('');tb.style.cssText='display:flex;align-items:center;gap:10px;padding:10px 14px;background:#fff;border-bottom:2px solid var(--border);flex-shrink:0;flex-wrap:wrap';
+  const tb=dv('');tb.style.cssText='display:flex;flex-direction:column;gap:8px;padding:10px 14px;background:#fff;border-bottom:2px solid var(--border);flex-shrink:0';
+  const tbRow1=dv('');tbRow1.style.cssText='display:flex;align-items:center;gap:10px;flex-wrap:wrap;width:100%';
+  const tbRow2=dv('');tbRow2.style.cssText='display:flex;align-items:center;gap:8px;flex-wrap:wrap;width:100%';
+  tb.appendChild(tbRow1);tb.appendChild(tbRow2);
 
   // FP selector
-  const fpWrap=dv('');fpWrap.style.cssText='display:flex;align-items:center;gap:6px;flex:1;min-width:250px;max-width:480px';
+  const fpWrap=dv('');fpWrap.style.cssText='display:flex;align-items:center;gap:6px;flex:1;min-width:280px';
   fpWrap.innerHTML='<span style="font-size:10px;font-weight:700;color:var(--text3);text-transform:uppercase;white-space:nowrap">Produs final:</span>';
   const fpSearch=el('input');fpSearch.type='text';fpSearch.placeholder='Caută cod sau denumire...';
   fpSearch.value=S.asmSearchPrefix!==undefined?S.asmSearchPrefix:'ALS.MF19';
-  fpSearch.style.cssText='flex:1;height:32px;padding:0 10px;border:1.5px solid var(--border);border-radius:5px;font-size:12px';
-  const fpSel=el('select');fpSel.style.cssText='height:32px;padding:0 8px;border:1.5px solid var(--border);border-radius:5px;font-size:12px;font-weight:600;min-width:180px;max-width:280px';
+  fpSearch.style.cssText='flex:1;min-width:110px;max-width:160px;height:34px;padding:0 10px;border:1.5px solid var(--border);border-radius:5px;font-size:12px';
+  const fpSel=el('select');fpSel.style.cssText='height:34px;padding:0 8px;border:1.5px solid var(--border);border-radius:5px;font-size:12px;font-weight:600;flex:2;min-width:240px;text-overflow:ellipsis';
   const fillFpSel=(q)=>{
     fpSel.innerHTML='';
     const ql=(q||'').toLowerCase();
@@ -7753,8 +7777,8 @@ function renderAsamblare(){
   };
   fillFpSel(fpSearch.value);
   fpSearch.addEventListener('input',()=>{S.asmSearchPrefix=fpSearch.value;fillFpSel(fpSearch.value);});
-  fpSel.addEventListener('change',()=>{S.asmFP=fpSel.value;rebuild();});
-  fpWrap.appendChild(fpSearch);fpWrap.appendChild(fpSel);tb.appendChild(fpWrap);
+  fpSel.addEventListener('change',()=>{S.asmFP=fpSel.value;S.asmExp=new Set();expandAllAsm();rebuild();});
+  fpWrap.appendChild(fpSearch);fpWrap.appendChild(fpSel);tbRow1.appendChild(fpWrap);
 
   // Qty
   const qWrap=dv('');qWrap.style.cssText='display:flex;align-items:center;gap:5px';
@@ -7762,14 +7786,14 @@ function renderAsamblare(){
   const qInp=el('input');qInp.type='number';qInp.min=1;qInp.value=S.asmQty||1;
   qInp.style.cssText='width:80px;height:32px;padding:0 8px;border:1.5px solid var(--border);border-radius:5px;font-size:13px;font-weight:700;text-align:center';
   qInp.addEventListener('change',()=>{S.asmQty=Math.max(1,parseInt(qInp.value)||1);qInp.value=S.asmQty;rebuild();});
-  qWrap.appendChild(qInp);tb.appendChild(qWrap);
+  qWrap.appendChild(qInp);tbRow1.appendChild(qWrap);
 
   // Plan qty display
   const planInfo=dv('');planInfo.id='asm-plan-info';planInfo.style.cssText='font-size:11px;color:var(--text2);padding:4px 10px;background:#eff6ff;border-radius:5px;border:1px solid #bfdbfe';
-  tb.appendChild(planInfo);
+  tbRow1.appendChild(planInfo);
 
   // MAKE/BUY filter
-  if(!S.asmFilter)S.asmFilter='all';
+  if(!S.asmFilter)S.asmFilter='MAKE';
   const filtWrap=dv('');filtWrap.style.cssText='display:flex;gap:4px';
   const mkFiltBtn=(label,val,color)=>{
     const b=el('button');b.textContent=label;b.dataset.fv=val;b.dataset.fc=color;
@@ -7787,29 +7811,29 @@ function renderAsamblare(){
   filtWrap.appendChild(mkFiltBtn('Toate','all','#475569'));
   filtWrap.appendChild(mkFiltBtn('MAKE','MAKE','#6d28d9'));
   filtWrap.appendChild(mkFiltBtn('BUY','BUY','#065f46'));
-  tb.appendChild(filtWrap);
+  tbRow2.appendChild(filtWrap);
 
   // Expand/collapse
   const bx=el('button','tbtn');bx.textContent='⊞ Extinde tot';
   bx.onclick=()=>{expandAllAsm();rebuild();};
   const bc=el('button','tbtn');bc.textContent='⊟ Colapsează';
   bc.onclick=()=>{S.asmExp=new Set();rebuild();};
-  tb.appendChild(bx);tb.appendChild(bc);
+  tbRow2.appendChild(bx);tbRow2.appendChild(bc);
 
   // Print
   const bori=el('button','tbtn');bori.innerHTML='🧭 Orientare';bori.style.cssText='border-color:#7c3aed;color:#7c3aed;background:#ede9fe;font-weight:700';
   bori.title='Lista produselor care încep cu prefixul căutat + verificare disponibilitate';
   bori.onclick=()=>openOrientareModal(fpSearch.value.trim());
-  tb.appendChild(bori);
+  tbRow2.appendChild(bori);
 
   const bp=el('button','tbtn');bp.innerHTML='🖨 Printează';bp.style.cssText='border-color:#0369a1;color:#0369a1;background:#eff6ff';
   bp.onclick=()=>printAsamblare();
-  tb.appendChild(bp);
+  tbRow2.appendChild(bp);
 
   // Excel
   const be=el('button','tbtn');be.innerHTML='⬇ Excel';be.style.cssText='border-color:#16a34a;color:#15803d;background:#f0fdf4';
   be.onclick=()=>exportAsmExcel();
-  tb.appendChild(be);
+  tbRow2.appendChild(be);
 
   // Reset progress
   const br=el('button','tbtn');br.innerHTML='🔄 Reset progres';br.style.cssText='border-color:#dc2626;color:#dc2626;margin-left:auto';
@@ -7819,7 +7843,7 @@ function renderAsamblare(){
     Object.keys(S.asmData.obs).forEach(k=>{if(k.startsWith(S.asmFP+'|'))delete S.asmData.obs[k];});
     saveAsmData();rebuild();
   };
-  tb.appendChild(br);
+  tbRow2.appendChild(br);
   page.appendChild(tb);
 
   // ── Content ──
@@ -8111,14 +8135,8 @@ function renderAsamblare(){
     const ov=dv('');ov.id='asm-print-overlay';
     ov.style.cssText='position:fixed;inset:0;z-index:99999;background:#fff;overflow:auto;padding:10mm;display:block';
 
-    const btnBar=dv('spo-close');btnBar.style.cssText='position:fixed;top:10px;right:14px;z-index:100000;display:flex;gap:8px';
-    const cb=el('button');cb.textContent='✕ Închide';cb.style.cssText='height:32px;padding:0 14px;border:1px solid #e2e8f0;border-radius:4px;background:#fff;cursor:pointer;font-size:12px;font-weight:600;box-shadow:0 2px 8px rgba(0,0,0,.15)';
-    cb.addEventListener('click',()=>{ov.remove();document.body.classList.remove('has-print-overlay');});
-    const pb=el('button');pb.textContent='🖨 Printează';pb.style.cssText='height:32px;padding:0 14px;border:1.5px solid #0369a1;border-radius:4px;background:#eff6ff;cursor:pointer;font-size:12px;font-weight:700;color:#0369a1;box-shadow:0 2px 8px rgba(0,0,0,.15)';
-    pb.addEventListener('click',()=>window.print());
-    btnBar.appendChild(cb);btnBar.appendChild(pb);ov.appendChild(btnBar);
-
-    ov.innerHTML+=`<style>
+    // Build content first via innerHTML, THEN attach buttons via DOM (innerHTML+= destroys listeners)
+    ov.innerHTML=`<style>
       #asm-print-overlay table{width:100%;border-collapse:collapse;font-size:9pt}
       #asm-print-overlay th{background:#1e3a5f;color:#fff;padding:5px 6px;font-size:8pt;font-weight:700;text-align:left;border:1px solid #0f172a}
       #asm-print-overlay td{padding:4px 6px;border:1px solid #e2e8f0;vertical-align:top}
@@ -8138,9 +8156,28 @@ function renderAsamblare(){
       </tr></thead>
       <tbody>${rowsHtml}</tbody>
     </table>`;
-    ov.prepend(btnBar);
+    // Attach buttons AFTER innerHTML so listeners survive
+    const btnBar=dv('spo-close');
+    btnBar.style.cssText='position:fixed;top:10px;right:14px;z-index:100001;display:flex;gap:8px';
+    const cb=el('button');cb.textContent='✕ Închide';
+    cb.style.cssText='height:34px;padding:0 16px;border:1px solid #e2e8f0;border-radius:5px;background:#fff;cursor:pointer;font-size:12px;font-weight:700;box-shadow:0 3px 12px rgba(0,0,0,.2)';
+    cb.addEventListener('click',(e)=>{
+      e.preventDefault();e.stopPropagation();
+      ov.remove();document.body.classList.remove('has-print-overlay');
+    });
+    const pb=el('button');pb.textContent='🖨 Printează';
+    pb.style.cssText='height:34px;padding:0 16px;border:1.5px solid #0369a1;border-radius:5px;background:#eff6ff;cursor:pointer;font-size:12px;font-weight:800;color:#0369a1;box-shadow:0 3px 12px rgba(0,0,0,.2)';
+    pb.addEventListener('click',(e)=>{
+      e.preventDefault();e.stopPropagation();
+      setTimeout(()=>window.print(),50);
+    });
+    btnBar.appendChild(cb);btnBar.appendChild(pb);
+    ov.insertBefore(btnBar,ov.firstChild);
     document.body.appendChild(ov);
     document.body.classList.add('has-print-overlay');
+    // ESC to close
+    const escHandler=(e)=>{if(e.key==='Escape'){ov.remove();document.body.classList.remove('has-print-overlay');document.removeEventListener('keydown',escHandler);}};
+    document.addEventListener('keydown',escHandler);
   }
 
   rebuild();
