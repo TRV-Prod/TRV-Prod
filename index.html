@@ -7635,6 +7635,27 @@ function renderAsamblare(){
   const planInfo=dv('');planInfo.id='asm-plan-info';planInfo.style.cssText='font-size:11px;color:var(--text2);padding:4px 10px;background:#eff6ff;border-radius:5px;border:1px solid #bfdbfe';
   tb.appendChild(planInfo);
 
+  // MAKE/BUY filter
+  if(!S.asmFilter)S.asmFilter='all';
+  const filtWrap=dv('');filtWrap.style.cssText='display:flex;gap:4px';
+  const mkFiltBtn=(label,val,color)=>{
+    const b=el('button');b.textContent=label;b.dataset.fv=val;b.dataset.fc=color;
+    b.style.cssText=`height:30px;padding:0 12px;border-radius:15px;border:1.5px solid ${color};font-size:11px;font-weight:700;cursor:pointer;background:${S.asmFilter===val?color:'#fff'};color:${S.asmFilter===val?'#fff':color}`;
+    b.addEventListener('click',()=>{
+      S.asmFilter=val;
+      filtWrap.querySelectorAll('button').forEach(b2=>{
+        const v=b2.dataset.fv,c=b2.dataset.fc;
+        b2.style.background=v===val?c:'#fff';b2.style.color=v===val?'#fff':c;
+      });
+      rebuild();
+    });
+    return b;
+  };
+  filtWrap.appendChild(mkFiltBtn('Toate','all','#475569'));
+  filtWrap.appendChild(mkFiltBtn('MAKE','MAKE','#6d28d9'));
+  filtWrap.appendChild(mkFiltBtn('BUY','BUY','#065f46'));
+  tb.appendChild(filtWrap);
+
   // Expand/collapse
   const bx=el('button','tbtn');bx.textContent='⊞ Extinde tot';
   bx.onclick=()=>{expandAllAsm();rebuild();};
@@ -7678,13 +7699,19 @@ function renderAsamblare(){
     const fp=S.fps.find(f=>f.code===S.asmFP);
     const planQ=planQty(S.asmFP);
     const qty=S.asmQty||1;
+    const fpStockCheck=S.stockIdx?.get(S.asmFP)||{onHand:0,totalWIP:0};
+    const fpStock=fpStockCheck;
     planInfo.innerHTML=planQ>0
       ?`📋 În plan: <b style="color:#1d4ed8">${fmtN(planQ)} buc</b>`
       :'<span style="color:#94a3b8">Nu e în plan</span>';
 
     // FP header card
-    const fpCard=dv('');fpCard.style.cssText='background:#1e3a5f;color:#fff;border-radius:10px 10px 0 0;padding:12px 16px;margin-bottom:0';
-    const fpStock=S.stockIdx?.get(S.asmFP)||{onHand:0,totalWIP:0};
+    const planDone=planQ>0&&fpStockCheck.onHand>=planQ;
+    const fpCard=dv('');fpCard.style.cssText='background:#1e3a5f;color:#fff;border-radius:10px 10px 0 0;padding:12px 16px;margin-bottom:0;position:relative;overflow:hidden';
+    if(planDone){
+      const wm=dv('');wm.style.cssText='position:absolute;top:50%;left:50%;transform:translate(-50%,-50%) rotate(-12deg);font-size:38px;font-weight:900;color:rgba(134,239,172,.28);letter-spacing:5px;pointer-events:none;white-space:nowrap;text-transform:uppercase;z-index:1';
+      wm.textContent='PLAN REALIZAT';fpCard.appendChild(wm);
+    }
     const fpDoneKey=S.asmFP+'|__FP__';
     const fpDone=parseFloat(S.asmData.done[fpDoneKey])||0;
     fpCard.innerHTML=`
@@ -7708,12 +7735,13 @@ function renderAsamblare(){
     const thead=el('thead');const hr=el('tr');hr.style.cssText='background:#f0f4fa;border-bottom:2px solid #cbd5e1';
     [
       {l:'Componentă',a:'left',w:''},
-      {l:'Un Qty',a:'right',w:'70px'},
-      {l:'Necesar',a:'right',w:'85px'},
-      {l:'On Hand',a:'right',w:'80px'},
-      {l:'Realizat',a:'center',w:'95px'},
-      {l:'Rămas',a:'right',w:'80px'},
-      {l:'Observații',a:'left',w:'200px'},
+      {l:'Un Qty',a:'right',w:'62px'},
+      {l:'Necesar',a:'right',w:'78px'},
+      {l:'On Hand',a:'right',w:'72px'},
+      {l:'Status / Locație',a:'left',w:'180px'},
+      {l:'Realizat',a:'center',w:'88px'},
+      {l:'Rămas',a:'right',w:'70px'},
+      {l:'Observații',a:'left',w:'170px'},
     ].forEach(({l,a,w})=>{
       const th=el('th');
       th.style.cssText=`padding:8px 10px;text-align:${a};font-size:9.5px;font-weight:800;color:#475569;text-transform:uppercase;letter-spacing:.05em;${w?'width:'+w+';min-width:'+w:''}`;
@@ -7726,6 +7754,13 @@ function renderAsamblare(){
 
     function renderNodes(nodes,depth,parentMult){
       nodes.forEach(n=>{
+        // Apply MAKE/BUY filter
+        const nType=n.isMake?'MAKE':'BUY';
+        const hasMatchingChild=(node)=>{
+          if((node.isMake?'MAKE':'BUY')===S.asmFilter)return true;
+          return (node.children||[]).some(hasMatchingChild);
+        };
+        if(S.asmFilter!=='all'&&nType!==S.asmFilter&&!hasMatchingChild(n))return;
         const unQty=n.qty!=null?n.qty:1;
         const cumQty=parentMult*unQty;
         const needed=cumQty*qty;
@@ -7764,7 +7799,29 @@ function renderAsamblare(){
         const mkTd=(html,css)=>{const td=el('td');td.style.cssText=(css||'')+';padding:7px 10px;vertical-align:middle';td.innerHTML=html;return td;};
         tr.appendChild(mkTd(`${fmtN(unQty)}${n.unit?' <span style="font-size:9px;color:#94a3b8">'+n.unit+'</span>':''}`,'text-align:right;color:#6b7280;font-size:11px'));
         tr.appendChild(mkTd(`<b style="font-size:14px;color:#1d4ed8">${fmtN(needed)}</b>`,'text-align:right'));
-        tr.appendChild(mkTd(`<b style="font-size:13px;color:${stock.onHand>=needed?'#15803d':stock.onHand>0?'#ca8a04':'#dc2626'}">${fmtN(stock.onHand)}</b>${stock.totalWIP?`<div style="font-size:9px;color:#7c3aed">WIP: ${fmtN(stock.totalWIP)}</div>`:''}`,'text-align:right'));
+        tr.appendChild(mkTd(`<b style="font-size:13px;color:${stock.onHand>=needed?'#15803d':stock.onHand>0?'#ca8a04':'#dc2626'}">${fmtN(stock.onHand)}</b>`,'text-align:right'));
+
+        // ── Status / Locație cell ──
+        let statusHtml='';
+        if(stock.onHand>=needed){
+          statusHtml='<span style="display:inline-block;padding:2px 8px;border-radius:10px;font-size:10px;font-weight:700;background:#dcfce7;color:#15803d;border:1px solid #86efac">✓ Stoc suficient</span>';
+        } else if(n.isMake){
+          const shortage=needed-Math.max(0,stock.onHand);
+          const wipEntries=Object.entries(stock.wipByWC||{}).filter(([,q])=>q>0);
+          if(wipEntries.length){
+            const wipTotal=wipEntries.reduce((s,[,q])=>s+q,0);
+            const wcList=wipEntries.sort((a,b)=>b[1]-a[1]).map(([wc,q])=>`${wcLabel(wc)}: <b>${fmtN(q)}</b>`).join('<br>');
+            statusHtml=`<div style="font-size:10px"><span style="display:inline-block;padding:1px 6px;border-radius:8px;font-size:9px;font-weight:700;background:#ede9fe;color:#7c3aed;border:1px solid #c4b5fd;margin-bottom:3px">🔄 În WIP: ${fmtN(wipTotal)}</span><div style="color:#6b7280;line-height:1.4">${wcList}</div></div>`;
+            if(wipTotal<shortage){
+              statusHtml+=`<div style="margin-top:3px"><span style="display:inline-block;padding:1px 6px;border-radius:8px;font-size:9px;font-weight:700;background:#fef3c7;color:#92400e;border:1px solid #fde047">⚠ Lipsă încă ${fmtN(shortage-wipTotal)}</span></div>`;
+            }
+          } else {
+            statusHtml='<span style="display:inline-block;padding:2px 8px;border-radius:10px;font-size:10px;font-weight:700;background:#fee2e2;color:#991b1b;border:1px solid #fca5a5">🔴 Programare LASER</span>';
+          }
+        } else {
+          statusHtml=`<span style="display:inline-block;padding:2px 8px;border-radius:10px;font-size:10px;font-weight:700;background:#fef3c7;color:#92400e;border:1px solid #fde047">📦 Comandă furnizor</span>`;
+        }
+        tr.appendChild(mkTd(statusHtml,'font-size:10px;vertical-align:middle'));
 
         // Realizat input
         const tdDone=el('td');tdDone.style.cssText='padding:5px 8px;text-align:center;vertical-align:middle';
@@ -7827,24 +7884,33 @@ function renderAsamblare(){
   function exportAsmExcel(){
     const tree=buildTree(S.asmFP,S.asmFP);
     const qty=S.asmQty||1;
-    const data=[['Nivel','Cod','Denumire','Desen','Tip','U/M','Un Qty','Necesar','On Hand','WIP','Realizat','Rămas','Observații']];
+    const data=[['Nivel','Cod','Denumire','Desen','Tip','U/M','Un Qty','Necesar','On Hand','WIP','Status / Locație','Realizat','Rămas','Observații']];
     function walk(nodes,depth,mult){
       nodes.forEach(n=>{
+        const nT=n.isMake?'MAKE':'BUY';
+        const hasM=(nd)=>((nd.isMake?'MAKE':'BUY')===S.asmFilter)||(nd.children||[]).some(hasM);
+        if(S.asmFilter!=='all'&&nT!==S.asmFilter&&!hasM(n))return;
         const unQty=n.qty!=null?n.qty:1;
         const cumQty=mult*unQty;
         const needed=cumQty*qty;
-        const st=S.stockIdx?.get(n.matNo)||{onHand:0,totalWIP:0};
+        const st=S.stockIdx?.get(n.matNo)||{onHand:0,totalWIP:0,wipByWC:{}};
         const key=S.asmFP+'|'+n.matNo;
         const done=parseFloat(S.asmData.done[key])||0;
+        let statusStr='';
+        if(st.onHand>=needed)statusStr='Stoc OK';
+        else if(n.isMake){
+          const wipE=Object.entries(st.wipByWC||{}).filter(([,q])=>q>0);
+          statusStr=wipE.length?('WIP: '+wipE.map(([wc,q])=>wcLabel(wc)+'='+fmtN(q)).join('; ')):'PROGRAMARE LASER';
+        } else statusStr='Comandă furnizor';
         data.push([depth,n.matNo,n.matName||'',n.matDraw||'',n.isMake?'MAKE':'BUY',n.unit||'',
-          unQty,needed,st.onHand,st.totalWIP,done,Math.max(0,needed-done),S.asmData.obs[key]||'']);
+          unQty,needed,st.onHand,st.totalWIP,statusStr,done,Math.max(0,needed-done),S.asmData.obs[key]||'']);
         if(n.children?.length)walk(n.children,depth+1,cumQty);
       });
     }
     walk(tree,0,1);
     const wb=XLSX.utils.book_new();
     const ws=XLSX.utils.aoa_to_sheet(data);
-    ws['!cols']=[{wch:6},{wch:20},{wch:32},{wch:16},{wch:7},{wch:6},{wch:9},{wch:10},{wch:10},{wch:8},{wch:10},{wch:9},{wch:30}];
+    ws['!cols']=[{wch:6},{wch:20},{wch:32},{wch:16},{wch:7},{wch:6},{wch:9},{wch:10},{wch:10},{wch:8},{wch:32},{wch:10},{wch:9},{wch:30}];
     XLSX.utils.book_append_sheet(wb,ws,'Asamblare');
     XLSX.writeFile(wb,`Asamblare_${S.asmFP}_${new Date().toISOString().slice(0,10)}.xlsx`);
   }
@@ -7856,22 +7922,36 @@ function renderAsamblare(){
     let rowsHtml='';
     function walk(nodes,depth,mult){
       nodes.forEach(n=>{
+        const nType=n.isMake?'MAKE':'BUY';
+        const hasMatch=(node)=>((node.isMake?'MAKE':'BUY')===S.asmFilter)||(node.children||[]).some(hasMatch);
+        if(S.asmFilter!=='all'&&nType!==S.asmFilter&&!hasMatch(n))return;
         const unQty=n.qty!=null?n.qty:1;
         const cumQty=mult*unQty;
         const needed=cumQty*qty;
-        const st=S.stockIdx?.get(n.matNo)||{onHand:0,totalWIP:0};
+        const st=S.stockIdx?.get(n.matNo)||{onHand:0,totalWIP:0,wipByWC:{}};
         const key=S.asmFP+'|'+n.matNo;
         const done=parseFloat(S.asmData.done[key])||0;
         const rem=Math.max(0,needed-done);
+        // Status
+        let statusTxt='';
+        if(st.onHand>=needed)statusTxt='<span style="color:#15803d;font-weight:700">✓ Stoc OK</span>';
+        else if(n.isMake){
+          const wipE=Object.entries(st.wipByWC||{}).filter(([,q])=>q>0);
+          if(wipE.length){
+            const wt=wipE.reduce((s,[,q])=>s+q,0);
+            statusTxt=`<span style="color:#7c3aed;font-weight:700">WIP: ${fmtN(wt)}</span><br><span style="font-size:7.5pt;color:#666">${wipE.sort((a,b)=>b[1]-a[1]).map(([wc,q])=>wcLabel(wc)+': '+fmtN(q)).join('<br>')}</span>`;
+          } else statusTxt='<span style="color:#dc2626;font-weight:700">🔴 Prog. LASER</span>';
+        } else statusTxt='<span style="color:#92400e;font-weight:700">📦 Cmd. furnizor</span>';
         rowsHtml+=`<tr${rem===0&&needed>0?' style="background:#f0fdf4"':''}>
           <td style="padding-left:${depth*14+4}px">
             <b style="font-family:monospace;color:${n.isMake?'#6d28d9':'#065f46'}">${n.matNo}</b>
-            <span style="font-size:8pt;color:#666;margin-left:4px">${n.isMake?'MAKE':'BUY'}</span>
+            <span style="font-size:7.5pt;color:#666;margin-left:4px">${nType}</span>
             ${n.matName?`<div style="font-size:8pt;color:#555">${n.matName}</div>`:''}
           </td>
           <td style="text-align:right">${fmtN(unQty)}</td>
           <td style="text-align:right;font-weight:700">${fmtN(needed)}</td>
           <td style="text-align:right">${fmtN(st.onHand)}</td>
+          <td style="font-size:8pt">${statusTxt}</td>
           <td style="text-align:center;font-weight:700">${done||''}</td>
           <td style="text-align:right;font-weight:700;color:${rem>0?'#dc2626':'#15803d'}">${rem>0?fmtN(rem):'✓'}</td>
           <td style="font-size:8pt">${S.asmData.obs[key]||''}</td>
@@ -7899,14 +7979,16 @@ function renderAsamblare(){
       @page{size:A4;margin:8mm}
       @media print{#asm-print-overlay{padding:0!important}.spo-close{display:none!important}}
     </style>
-    <div style="font-size:14pt;font-weight:800;color:#1e3a5f;margin-bottom:2px">🔧 Fișă Asamblare — ${S.asmFP}</div>
-    <div style="font-size:9pt;color:#555;margin-bottom:8px">${fp?.name||''} · Cantitate: <b>${fmtN(qty)} buc</b> · ${new Date().toLocaleDateString('ro-RO')}</div>
+    ${(()=>{const pq=planQty(S.asmFP);const fs=S.stockIdx?.get(S.asmFP)||{onHand:0};return pq>0&&fs.onHand>=pq?'<div style="position:fixed;top:45%;left:50%;transform:translate(-50%,-50%) rotate(-25deg);font-size:60pt;font-weight:900;color:rgba(22,163,74,.13);letter-spacing:8px;pointer-events:none;z-index:0;white-space:nowrap">PLAN REALIZAT</div>':'';})()}
+    <div style="font-size:14pt;font-weight:800;color:#1e3a5f;margin-bottom:2px;position:relative;z-index:1">🔧 Fișă Asamblare — ${S.asmFP}</div>
+    <div style="font-size:9pt;color:#555;margin-bottom:8px;position:relative;z-index:1">${fp?.name||''} · Cantitate: <b>${fmtN(qty)} buc</b>${S.asmFilter!=='all'?' · Filtru: <b>'+S.asmFilter+'</b>':''} · ${new Date().toLocaleDateString('ro-RO')}</div>
     <table>
       <thead><tr>
-        <th>Componentă</th><th style="text-align:right;width:55px">Un Qty</th>
-        <th style="text-align:right;width:65px">Necesar</th><th style="text-align:right;width:60px">On Hand</th>
-        <th style="text-align:center;width:65px">Realizat</th><th style="text-align:right;width:55px">Rămas</th>
-        <th style="width:150px">Observații</th>
+        <th>Componentă</th><th style="text-align:right;width:48px">Un Qty</th>
+        <th style="text-align:right;width:58px">Necesar</th><th style="text-align:right;width:55px">On Hand</th>
+        <th style="width:120px">Status / Locație</th>
+        <th style="text-align:center;width:58px">Realizat</th><th style="text-align:right;width:50px">Rămas</th>
+        <th style="width:110px">Observații</th>
       </tr></thead>
       <tbody>${rowsHtml}</tbody>
     </table>`;
