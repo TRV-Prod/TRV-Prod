@@ -1276,6 +1276,10 @@ const S={
   perfWcGroups:[],
   perfLivrari:[],  // raw rows saved to Supabase
   paintIdx:null,
+  asmFP:null,
+  asmQty:1,
+  asmExp:new Set(),
+  asmData:{obs:{},done:{}},
   normCfg:{wcs:[],orders:[]},
   normSessions:[],
   perfData:null,  // {rows:[{period,item,name,qty}], months:[...], items:{item→{name}}}
@@ -3342,6 +3346,7 @@ function render(){
     {id:'scanari',label:'Raport Scanari'},
     {id:'scanner',label:'📷 Scanner'},
   ];
+  tabs.push({id:'asamblare',label:'🔧 Asamblare'});
   tabs.push({id:'normare',label:'⏱ Normare'});
   if(S.session.role==='admin') tabs.push({id:'dctr',label:'Disciplina CTR'});
   if(S.session.role==='admin') tabs.push({id:'performanta',label:'Performanță'});
@@ -3445,6 +3450,7 @@ function render(){
   else if(S.tab==='planificare')body.appendChild(renderPlanificare());
   else if(S.tab==='planv2')body.appendChild(renderPlanV2());
   else if(S.tab==='pwc')body.appendChild(renderPwcTab());
+  else if(S.tab==='asamblare')body.appendChild(renderAsamblare());
   else if(S.tab==='normare')body.appendChild(renderNormare());
   else if(S.tab==='dctr')body.appendChild(renderDctrTab());
   else if(S.tab==='performanta')body.appendChild(renderPerformanta());
@@ -3723,12 +3729,9 @@ function renderStructura(){
   const tbr=dv('tb-r');
   const bx=el('button','tbtn');bx.textContent='⊞ Extinde tot';bx.onclick=()=>{expandAll(buildTree(S.selFP,S.selFP));reTree();};
   const bc=el('button','tbtn');bc.textContent='⊟ Colaseaza tot';bc.onclick=()=>{S.exp=new Set();S.expOps=new Set();reTree();};
-  const basm=el('button','tbtn');basm.textContent='🔧 Asamblare';basm.style.cssText='border-color:#7c3aed;color:#7c3aed;background:#ede9fe';
-  basm.title='Lista subcomponente cu cantități necesare și stoc';
-  basm.onclick=()=>openAsamblareModal();
   const bpdf=el('button','tbtn');bpdf.textContent='🖨 Export PDF';bpdf.style.cssText='border-color:#dc2626;color:#dc2626';
   bpdf.onclick=()=>exportStructuraPDF();
-  tbr.appendChild(bx);tbr.appendChild(bc);tbr.appendChild(basm);tbr.appendChild(bpdf);
+  tbr.appendChild(bx);tbr.appendChild(bc);tbr.appendChild(bpdf);
   tbr.appendChild(mkZoomCtrl('structura'));
   tb.appendChild(tbr);cnt.appendChild(tb);
 
@@ -7569,6 +7572,352 @@ const NORM_EVENTS=[
   {id:'run',      label:'▶ RUN (producție serie)',       color:'#15803d',bg:'#dcfce7'},
   {id:'other',    label:'✎ Altele',                     color:'#6b7280',bg:'#f3f4f6'},
 ];
+
+/* ═══════════════════════════════════════════════════════════════
+   MODUL ASAMBLARE — arbore BOM cu urmărire producție pentru operatori
+═══════════════════════════════════════════════════════════════ */
+
+async function saveAsmData(){
+  if(!S.sbCfg)return;
+  await sbUpload(S.sbCfg,'data-asamblare.json',S.asmData);
+}
+async function loadAsmData(){
+  if(!S.sbCfg)return;
+  const d=await sbDownload(S.sbCfg,'data-asamblare.json');
+  if(d&&typeof d==='object')S.asmData={obs:d.obs||{},done:d.done||{}};
+}
+
+function renderAsamblare(){
+  const page=dv('');page.style.cssText='display:flex;flex-direction:column;height:100%;overflow:hidden;background:#f8f9fb';
+
+  if(!S.bomIdx||!S.fps?.length){
+    page.innerHTML='<div style="padding:40px;text-align:center;color:var(--text3);font-size:13px">Încărcați fișierul BOM din tab-ul Fisiere.</div>';
+    return page;
+  }
+
+  if(!S.asmFP)S.asmFP=S.selFP||S.fps[0]?.code||'';
+  if(!S.asmData)S.asmData={obs:{},done:{}};
+  loadAsmData();
+
+  // ── Toolbar ──
+  const tb=dv('');tb.style.cssText='display:flex;align-items:center;gap:10px;padding:10px 14px;background:#fff;border-bottom:2px solid var(--border);flex-shrink:0;flex-wrap:wrap';
+
+  // FP selector
+  const fpWrap=dv('');fpWrap.style.cssText='display:flex;align-items:center;gap:6px;flex:1;min-width:250px;max-width:480px';
+  fpWrap.innerHTML='<span style="font-size:10px;font-weight:700;color:var(--text3);text-transform:uppercase;white-space:nowrap">Produs final:</span>';
+  const fpSearch=el('input');fpSearch.type='text';fpSearch.placeholder='Caută cod sau denumire...';
+  fpSearch.style.cssText='flex:1;height:32px;padding:0 10px;border:1.5px solid var(--border);border-radius:5px;font-size:12px';
+  const fpSel=el('select');fpSel.style.cssText='height:32px;padding:0 8px;border:1.5px solid var(--border);border-radius:5px;font-size:12px;font-weight:600;min-width:180px;max-width:280px';
+  const fillFpSel=(q)=>{
+    fpSel.innerHTML='';
+    const ql=(q||'').toLowerCase();
+    (S.fps||[]).filter(f=>!ql||f.code.toLowerCase().includes(ql)||(f.name||'').toLowerCase().includes(ql))
+      .slice(0,300).forEach(f=>{
+        const o=el('option');o.value=f.code;o.textContent=`${f.code}${f.name?' — '+f.name:''}`;
+        if(f.code===S.asmFP)o.selected=true;
+        fpSel.appendChild(o);
+      });
+  };
+  fillFpSel('');
+  fpSearch.addEventListener('input',()=>fillFpSel(fpSearch.value));
+  fpSel.addEventListener('change',()=>{S.asmFP=fpSel.value;rebuild();});
+  fpWrap.appendChild(fpSearch);fpWrap.appendChild(fpSel);tb.appendChild(fpWrap);
+
+  // Qty
+  const qWrap=dv('');qWrap.style.cssText='display:flex;align-items:center;gap:5px';
+  qWrap.innerHTML='<span style="font-size:10px;font-weight:700;color:var(--text3);text-transform:uppercase">Cantitate:</span>';
+  const qInp=el('input');qInp.type='number';qInp.min=1;qInp.value=S.asmQty||1;
+  qInp.style.cssText='width:80px;height:32px;padding:0 8px;border:1.5px solid var(--border);border-radius:5px;font-size:13px;font-weight:700;text-align:center';
+  qInp.addEventListener('change',()=>{S.asmQty=Math.max(1,parseInt(qInp.value)||1);qInp.value=S.asmQty;rebuild();});
+  qWrap.appendChild(qInp);tb.appendChild(qWrap);
+
+  // Plan qty display
+  const planInfo=dv('');planInfo.id='asm-plan-info';planInfo.style.cssText='font-size:11px;color:var(--text2);padding:4px 10px;background:#eff6ff;border-radius:5px;border:1px solid #bfdbfe';
+  tb.appendChild(planInfo);
+
+  // Expand/collapse
+  const bx=el('button','tbtn');bx.textContent='⊞ Extinde tot';
+  bx.onclick=()=>{expandAllAsm();rebuild();};
+  const bc=el('button','tbtn');bc.textContent='⊟ Colapsează';
+  bc.onclick=()=>{S.asmExp=new Set();rebuild();};
+  tb.appendChild(bx);tb.appendChild(bc);
+
+  // Print
+  const bp=el('button','tbtn');bp.innerHTML='🖨 Printează';bp.style.cssText='border-color:#0369a1;color:#0369a1;background:#eff6ff';
+  bp.onclick=()=>printAsamblare();
+  tb.appendChild(bp);
+
+  // Excel
+  const be=el('button','tbtn');be.innerHTML='⬇ Excel';be.style.cssText='border-color:#16a34a;color:#15803d;background:#f0fdf4';
+  be.onclick=()=>exportAsmExcel();
+  tb.appendChild(be);
+
+  // Reset progress
+  const br=el('button','tbtn');br.innerHTML='🔄 Reset progres';br.style.cssText='border-color:#dc2626;color:#dc2626;margin-left:auto';
+  br.onclick=()=>{
+    if(!confirm('Ștergi progresul înregistrat pentru acest produs?'))return;
+    Object.keys(S.asmData.done).forEach(k=>{if(k.startsWith(S.asmFP+'|'))delete S.asmData.done[k];});
+    Object.keys(S.asmData.obs).forEach(k=>{if(k.startsWith(S.asmFP+'|'))delete S.asmData.obs[k];});
+    saveAsmData();rebuild();
+  };
+  tb.appendChild(br);
+  page.appendChild(tb);
+
+  // ── Content ──
+  const content=dv('');content.id='asm-content';
+  content.style.cssText='flex:1;overflow:auto;padding:12px 16px';
+  page.appendChild(content);
+
+  function expandAllAsm(){
+    const collect=(nodes)=>{nodes.forEach(n=>{if(n.children?.length){S.asmExp.add(n.id);collect(n.children);}});};
+    collect(buildTree(S.asmFP,S.asmFP));
+  }
+
+  function rebuild(){
+    content.innerHTML='';
+    const fp=S.fps.find(f=>f.code===S.asmFP);
+    const planQ=planQty(S.asmFP);
+    const qty=S.asmQty||1;
+    planInfo.innerHTML=planQ>0
+      ?`📋 În plan: <b style="color:#1d4ed8">${fmtN(planQ)} buc</b>`
+      :'<span style="color:#94a3b8">Nu e în plan</span>';
+
+    // FP header card
+    const fpCard=dv('');fpCard.style.cssText='background:#1e3a5f;color:#fff;border-radius:10px 10px 0 0;padding:12px 16px;margin-bottom:0';
+    const fpStock=S.stockIdx?.get(S.asmFP)||{onHand:0,totalWIP:0};
+    const fpDoneKey=S.asmFP+'|__FP__';
+    const fpDone=parseFloat(S.asmData.done[fpDoneKey])||0;
+    fpCard.innerHTML=`
+      <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:12px;flex-wrap:wrap">
+        <div>
+          <div style="font-size:16px;font-weight:900;font-family:monospace">${S.asmFP}</div>
+          <div style="font-size:11px;opacity:.85;margin-top:2px">${fp?.name||''}${fp?.drawing?(' · '+fp.drawing):''}</div>
+        </div>
+        <div style="display:flex;gap:14px;align-items:center;flex-wrap:wrap">
+          <div style="text-align:center"><div style="font-size:9px;opacity:.7;text-transform:uppercase">De asamblat</div><div style="font-size:20px;font-weight:900">${fmtN(qty)}</div></div>
+          <div style="text-align:center"><div style="font-size:9px;opacity:.7;text-transform:uppercase">On Hand</div><div style="font-size:20px;font-weight:900;color:#86efac">${fmtN(fpStock.onHand)}</div></div>
+          <div style="text-align:center"><div style="font-size:9px;opacity:.7;text-transform:uppercase">Realizat</div><div id="asm-fp-done" style="font-size:20px;font-weight:900;color:#fde047">${fmtN(fpDone)}</div></div>
+          <div style="text-align:center"><div style="font-size:9px;opacity:.7;text-transform:uppercase">Rămas</div><div id="asm-fp-rem" style="font-size:20px;font-weight:900;color:#fca5a5">${fmtN(Math.max(0,qty-fpDone))}</div></div>
+        </div>
+      </div>`;
+    content.appendChild(fpCard);
+
+    // Table
+    const tblWrap=dv('');tblWrap.style.cssText='background:#fff;border:1px solid var(--border);border-top:none;border-radius:0 0 10px 10px;overflow:hidden';
+    const tbl=el('table');tbl.style.cssText='width:100%;border-collapse:collapse;font-size:12px';
+    const thead=el('thead');const hr=el('tr');hr.style.cssText='background:#f0f4fa;border-bottom:2px solid #cbd5e1';
+    [
+      {l:'Componentă',a:'left',w:''},
+      {l:'Un Qty',a:'right',w:'70px'},
+      {l:'Necesar',a:'right',w:'85px'},
+      {l:'On Hand',a:'right',w:'80px'},
+      {l:'Realizat',a:'center',w:'95px'},
+      {l:'Rămas',a:'right',w:'80px'},
+      {l:'Observații',a:'left',w:'200px'},
+    ].forEach(({l,a,w})=>{
+      const th=el('th');
+      th.style.cssText=`padding:8px 10px;text-align:${a};font-size:9.5px;font-weight:800;color:#475569;text-transform:uppercase;letter-spacing:.05em;${w?'width:'+w+';min-width:'+w:''}`;
+      th.textContent=l;hr.appendChild(th);
+    });
+    thead.appendChild(hr);tbl.appendChild(thead);
+
+    const tbody=el('tbody');
+    const tree=buildTree(S.asmFP,S.asmFP);
+
+    function renderNodes(nodes,depth,parentMult){
+      nodes.forEach(n=>{
+        const unQty=n.qty!=null?n.qty:1;
+        const cumQty=parentMult*unQty;
+        const needed=cumQty*qty;
+        const stock=S.stockIdx?.get(n.matNo)||{onHand:0,totalWIP:0};
+        const hasCh=n.children?.length>0;
+        const isExp=S.asmExp.has(n.id);
+        const key=S.asmFP+'|'+n.matNo;
+        const done=parseFloat(S.asmData.done[key])||0;
+        const rem=Math.max(0,needed-done);
+        const complete=done>=needed&&needed>0;
+
+        const tr=el('tr');
+        tr.style.cssText=complete?'background:#f0fdf4':'background:#fff';
+        tr.style.borderBottom='1px solid #f1f5f9';
+
+        // Component cell with tree structure
+        const tdComp=el('td');tdComp.style.cssText='padding:7px 10px;vertical-align:middle';
+        const compWrap=dv('');compWrap.style.cssText=`display:flex;align-items:center;gap:6px;padding-left:${depth*20}px`;
+        if(hasCh){
+          const tog=el('button');tog.textContent=isExp?'▼':'▶';
+          tog.style.cssText='width:20px;height:20px;border:1px solid #cbd5e1;background:#f8fafc;border-radius:3px;cursor:pointer;font-size:9px;color:#475569;flex-shrink:0;padding:0';
+          tog.addEventListener('click',()=>{isExp?S.asmExp.delete(n.id):S.asmExp.add(n.id);rebuild();});
+          compWrap.appendChild(tog);
+        } else {
+          const sp2=dv('');sp2.style.cssText='width:20px;flex-shrink:0';compWrap.appendChild(sp2);
+        }
+        const info=dv('');
+        info.innerHTML=`<div style="font-family:monospace;font-weight:${depth===0?'800':'700'};font-size:${depth===0?'12.5':'11.5'}px;color:${n.isMake?'#6d28d9':'#065f46'}">
+            ${complete?'<span style="color:#15803d;margin-right:4px">✓</span>':''}${n.matNo}
+            <span style="display:inline-block;margin-left:5px;padding:0 5px;border-radius:3px;font-size:8.5px;font-weight:700;background:${n.isMake?'rgba(109,40,217,.1)':'rgba(6,95,70,.1)'};color:${n.isMake?'#6d28d9':'#065f46'}">${n.isMake?'MAKE':'BUY'}</span>
+          </div>
+          ${n.matName?`<div style="font-size:10.5px;color:#6b7280;margin-top:1px">${n.matName}</div>`:''}
+          ${n.matDraw?`<div style="font-size:9.5px;color:#a78bfa">⇒ ${n.matDraw}</div>`:''}`;
+        compWrap.appendChild(info);tdComp.appendChild(compWrap);tr.appendChild(tdComp);
+
+        const mkTd=(html,css)=>{const td=el('td');td.style.cssText=(css||'')+';padding:7px 10px;vertical-align:middle';td.innerHTML=html;return td;};
+        tr.appendChild(mkTd(`${fmtN(unQty)}${n.unit?' <span style="font-size:9px;color:#94a3b8">'+n.unit+'</span>':''}`,'text-align:right;color:#6b7280;font-size:11px'));
+        tr.appendChild(mkTd(`<b style="font-size:14px;color:#1d4ed8">${fmtN(needed)}</b>`,'text-align:right'));
+        tr.appendChild(mkTd(`<b style="font-size:13px;color:${stock.onHand>=needed?'#15803d':stock.onHand>0?'#ca8a04':'#dc2626'}">${fmtN(stock.onHand)}</b>${stock.totalWIP?`<div style="font-size:9px;color:#7c3aed">WIP: ${fmtN(stock.totalWIP)}</div>`:''}`,'text-align:right'));
+
+        // Realizat input
+        const tdDone=el('td');tdDone.style.cssText='padding:5px 8px;text-align:center;vertical-align:middle';
+        const doneInp=el('input');doneInp.type='number';doneInp.min=0;doneInp.value=done||'';
+        doneInp.placeholder='0';
+        doneInp.style.cssText=`width:75px;height:30px;padding:0 6px;border:2px solid ${complete?'#16a34a':'#cbd5e1'};border-radius:5px;font-size:14px;font-weight:800;text-align:center;color:${complete?'#15803d':'#1e3a5f'};background:${complete?'#f0fdf4':'#fff'}`;
+        ['keydown','click','input'].forEach(ev=>doneInp.addEventListener(ev,e=>e.stopPropagation()));
+        const saveDone=()=>{
+          const v=parseFloat(doneInp.value)||0;
+          if(v>0)S.asmData.done[key]=v;else delete S.asmData.done[key];
+          saveAsmData();
+          // Update this row's display without full rebuild
+          const newRem=Math.max(0,needed-v);
+          const remCell=tr.querySelector('.asm-rem');
+          if(remCell)remCell.innerHTML=newRem>0?`<b style="font-size:14px;color:#dc2626">${fmtN(newRem)}</b>`:'<span style="color:#15803d;font-weight:800;font-size:15px">✓</span>';
+          const isDone=v>=needed&&needed>0;
+          doneInp.style.borderColor=isDone?'#16a34a':'#cbd5e1';
+          doneInp.style.background=isDone?'#f0fdf4':'#fff';
+          doneInp.style.color=isDone?'#15803d':'#1e3a5f';
+          tr.style.background=isDone?'#f0fdf4':'#fff';
+        };
+        doneInp.addEventListener('change',saveDone);
+        doneInp.addEventListener('blur',saveDone);
+        tdDone.appendChild(doneInp);tr.appendChild(tdDone);
+
+        const tdRem=mkTd(rem>0?`<b style="font-size:14px;color:#dc2626">${fmtN(rem)}</b>`:'<span style="color:#15803d;font-weight:800;font-size:15px">✓</span>','text-align:right');
+        tdRem.className='asm-rem';tr.appendChild(tdRem);
+
+        // Observations
+        const tdObs=el('td');tdObs.style.cssText='padding:5px 8px;vertical-align:middle';
+        const obsInp=el('textarea');obsInp.rows=1;obsInp.placeholder='Observații...';
+        obsInp.value=S.asmData.obs[key]||'';
+        obsInp.style.cssText='width:100%;min-height:30px;padding:5px 7px;border:1px solid var(--border);border-radius:4px;font-size:11px;resize:vertical;font-family:inherit';
+        ['keydown','click','input'].forEach(ev=>obsInp.addEventListener(ev,e=>e.stopPropagation()));
+        obsInp.addEventListener('change',()=>{
+          const v=obsInp.value.trim();
+          if(v)S.asmData.obs[key]=v;else delete S.asmData.obs[key];
+          saveAsmData();
+        });
+        obsInp.addEventListener('blur',()=>{
+          const v=obsInp.value.trim();
+          if(v)S.asmData.obs[key]=v;else delete S.asmData.obs[key];
+          saveAsmData();
+        });
+        tdObs.appendChild(obsInp);tr.appendChild(tdObs);
+
+        tbody.appendChild(tr);
+        if(hasCh&&isExp)renderNodes(n.children,depth+1,cumQty);
+      });
+    }
+
+    renderNodes(tree,0,1);
+    tbl.appendChild(tbody);tblWrap.appendChild(tbl);content.appendChild(tblWrap);
+
+    if(!tree.length){
+      content.innerHTML+='<div style="padding:30px;text-align:center;color:var(--text3)">Nicio subcomponentă în BOM pentru acest produs.</div>';
+    }
+  }
+
+  function exportAsmExcel(){
+    const tree=buildTree(S.asmFP,S.asmFP);
+    const qty=S.asmQty||1;
+    const data=[['Nivel','Cod','Denumire','Desen','Tip','U/M','Un Qty','Necesar','On Hand','WIP','Realizat','Rămas','Observații']];
+    function walk(nodes,depth,mult){
+      nodes.forEach(n=>{
+        const unQty=n.qty!=null?n.qty:1;
+        const cumQty=mult*unQty;
+        const needed=cumQty*qty;
+        const st=S.stockIdx?.get(n.matNo)||{onHand:0,totalWIP:0};
+        const key=S.asmFP+'|'+n.matNo;
+        const done=parseFloat(S.asmData.done[key])||0;
+        data.push([depth,n.matNo,n.matName||'',n.matDraw||'',n.isMake?'MAKE':'BUY',n.unit||'',
+          unQty,needed,st.onHand,st.totalWIP,done,Math.max(0,needed-done),S.asmData.obs[key]||'']);
+        if(n.children?.length)walk(n.children,depth+1,cumQty);
+      });
+    }
+    walk(tree,0,1);
+    const wb=XLSX.utils.book_new();
+    const ws=XLSX.utils.aoa_to_sheet(data);
+    ws['!cols']=[{wch:6},{wch:20},{wch:32},{wch:16},{wch:7},{wch:6},{wch:9},{wch:10},{wch:10},{wch:8},{wch:10},{wch:9},{wch:30}];
+    XLSX.utils.book_append_sheet(wb,ws,'Asamblare');
+    XLSX.writeFile(wb,`Asamblare_${S.asmFP}_${new Date().toISOString().slice(0,10)}.xlsx`);
+  }
+
+  function printAsamblare(){
+    const tree=buildTree(S.asmFP,S.asmFP);
+    const qty=S.asmQty||1;
+    const fp=S.fps.find(f=>f.code===S.asmFP);
+    let rowsHtml='';
+    function walk(nodes,depth,mult){
+      nodes.forEach(n=>{
+        const unQty=n.qty!=null?n.qty:1;
+        const cumQty=mult*unQty;
+        const needed=cumQty*qty;
+        const st=S.stockIdx?.get(n.matNo)||{onHand:0,totalWIP:0};
+        const key=S.asmFP+'|'+n.matNo;
+        const done=parseFloat(S.asmData.done[key])||0;
+        const rem=Math.max(0,needed-done);
+        rowsHtml+=`<tr${rem===0&&needed>0?' style="background:#f0fdf4"':''}>
+          <td style="padding-left:${depth*14+4}px">
+            <b style="font-family:monospace;color:${n.isMake?'#6d28d9':'#065f46'}">${n.matNo}</b>
+            <span style="font-size:8pt;color:#666;margin-left:4px">${n.isMake?'MAKE':'BUY'}</span>
+            ${n.matName?`<div style="font-size:8pt;color:#555">${n.matName}</div>`:''}
+          </td>
+          <td style="text-align:right">${fmtN(unQty)}</td>
+          <td style="text-align:right;font-weight:700">${fmtN(needed)}</td>
+          <td style="text-align:right">${fmtN(st.onHand)}</td>
+          <td style="text-align:center;font-weight:700">${done||''}</td>
+          <td style="text-align:right;font-weight:700;color:${rem>0?'#dc2626':'#15803d'}">${rem>0?fmtN(rem):'✓'}</td>
+          <td style="font-size:8pt">${S.asmData.obs[key]||''}</td>
+        </tr>`;
+        if(n.children?.length)walk(n.children,depth+1,cumQty);
+      });
+    }
+    walk(tree,0,1);
+
+    document.getElementById('asm-print-overlay')?.remove();
+    const ov=dv('');ov.id='asm-print-overlay';
+    ov.style.cssText='position:fixed;inset:0;z-index:99999;background:#fff;overflow:auto;padding:10mm;display:block';
+
+    const btnBar=dv('spo-close');btnBar.style.cssText='position:fixed;top:10px;right:14px;z-index:100000;display:flex;gap:8px';
+    const cb=el('button');cb.textContent='✕ Închide';cb.style.cssText='height:32px;padding:0 14px;border:1px solid #e2e8f0;border-radius:4px;background:#fff;cursor:pointer;font-size:12px;font-weight:600;box-shadow:0 2px 8px rgba(0,0,0,.15)';
+    cb.addEventListener('click',()=>{ov.remove();document.body.classList.remove('has-print-overlay');});
+    const pb=el('button');pb.textContent='🖨 Printează';pb.style.cssText='height:32px;padding:0 14px;border:1.5px solid #0369a1;border-radius:4px;background:#eff6ff;cursor:pointer;font-size:12px;font-weight:700;color:#0369a1;box-shadow:0 2px 8px rgba(0,0,0,.15)';
+    pb.addEventListener('click',()=>window.print());
+    btnBar.appendChild(cb);btnBar.appendChild(pb);ov.appendChild(btnBar);
+
+    ov.innerHTML+=`<style>
+      #asm-print-overlay table{width:100%;border-collapse:collapse;font-size:9pt}
+      #asm-print-overlay th{background:#1e3a5f;color:#fff;padding:5px 6px;font-size:8pt;font-weight:700;text-align:left;border:1px solid #0f172a}
+      #asm-print-overlay td{padding:4px 6px;border:1px solid #e2e8f0;vertical-align:top}
+      @page{size:A4;margin:8mm}
+      @media print{#asm-print-overlay{padding:0!important}.spo-close{display:none!important}}
+    </style>
+    <div style="font-size:14pt;font-weight:800;color:#1e3a5f;margin-bottom:2px">🔧 Fișă Asamblare — ${S.asmFP}</div>
+    <div style="font-size:9pt;color:#555;margin-bottom:8px">${fp?.name||''} · Cantitate: <b>${fmtN(qty)} buc</b> · ${new Date().toLocaleDateString('ro-RO')}</div>
+    <table>
+      <thead><tr>
+        <th>Componentă</th><th style="text-align:right;width:55px">Un Qty</th>
+        <th style="text-align:right;width:65px">Necesar</th><th style="text-align:right;width:60px">On Hand</th>
+        <th style="text-align:center;width:65px">Realizat</th><th style="text-align:right;width:55px">Rămas</th>
+        <th style="width:150px">Observații</th>
+      </tr></thead>
+      <tbody>${rowsHtml}</tbody>
+    </table>`;
+    ov.prepend(btnBar);
+    document.body.appendChild(ov);
+    document.body.classList.add('has-print-overlay');
+  }
+
+  rebuild();
+  return page;
+}
 
 function renderNormare(){
   const page=dv('');page.style.cssText='display:flex;flex-direction:column;height:100%;overflow:hidden;background:#f8f9fb';
