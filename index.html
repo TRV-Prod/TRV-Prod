@@ -7782,8 +7782,14 @@ function renderAsamblare(){
     return page;
   }
 
-  if(!S.asmFP)S.asmFP=S.selFP||S.fps[0]?.code||'';
   if(!S.asmFilter)S.asmFilter='MAKE';
+  if(S.asmSearchPrefix===undefined)S.asmSearchPrefix='ALS.MF19';
+  // Default FP: first one matching the current search prefix
+  if(!S.asmFP){
+    const pfx=(S.asmSearchPrefix||'').toLowerCase();
+    const firstMatch=pfx?S.fps.find(f=>f.code.toLowerCase().startsWith(pfx)):null;
+    S.asmFP=firstMatch?.code||S.selFP||S.fps[0]?.code||'';
+  }
   if(!S.asmData)S.asmData={obs:{},done:{}};
   loadAsmData();
 
@@ -7803,15 +7809,40 @@ function renderAsamblare(){
   const fillFpSel=(q)=>{
     fpSel.innerHTML='';
     const ql=(q||'').toLowerCase();
-    (S.fps||[]).filter(f=>!ql||f.code.toLowerCase().includes(ql)||(f.name||'').toLowerCase().includes(ql))
-      .slice(0,300).forEach(f=>{
-        const o=el('option');o.value=f.code;o.textContent=`${f.code}${f.name?' — '+f.name:''}`;
-        if(f.code===S.asmFP)o.selected=true;
-        fpSel.appendChild(o);
-      });
+    const matches=(S.fps||[]).filter(f=>!ql||f.code.toLowerCase().includes(ql)||(f.name||'').toLowerCase().includes(ql));
+    matches.slice(0,300).forEach(f=>{
+      const o=el('option');o.value=f.code;o.textContent=`${f.code}${f.name?' — '+f.name:''}`;
+      fpSel.appendChild(o);
+    });
+    // Ensure current asmFP is in the list and selected; if not in filter, add it at top
+    if(S.asmFP){
+      if(!matches.find(f=>f.code===S.asmFP)){
+        const cur=S.fps.find(f=>f.code===S.asmFP);
+        if(cur){
+          const o=el('option');o.value=cur.code;o.textContent=`${cur.code}${cur.name?' — '+cur.name:''}`;
+          fpSel.insertBefore(o,fpSel.firstChild);
+        }
+      }
+      fpSel.value=S.asmFP;
+    }
   };
   fillFpSel(fpSearch.value);
-  fpSearch.addEventListener('input',()=>{S.asmSearchPrefix=fpSearch.value;fillFpSel(fpSearch.value);});
+  fpSearch.addEventListener('input',()=>{
+    S.asmSearchPrefix=fpSearch.value;
+    fillFpSel(fpSearch.value);
+    // If current FP no longer matches the filter, switch to first match
+    const pfx=fpSearch.value.toLowerCase();
+    if(pfx&&S.asmFP&&!S.asmFP.toLowerCase().includes(pfx)){
+      const firstMatch=S.fps.find(f=>f.code.toLowerCase().startsWith(pfx)||f.code.toLowerCase().includes(pfx));
+      if(firstMatch){
+        S.asmFP=firstMatch.code;
+        fpSel.value=firstMatch.code;
+        S.asmForceShow=false;S.asmExp=new Set();
+        S.asmQty=planQty(S.asmFP)||0;qInp.value=S.asmQty;
+        expandAllAsm();rebuild();
+      }
+    }
+  });
   fpSel.addEventListener('change',()=>{S.asmFP=fpSel.value;S.asmForceShow=false;S.asmExp=new Set();S.asmQty=planQty(S.asmFP)||0;qInp.value=S.asmQty;expandAllAsm();rebuild();});
   fpWrap.appendChild(fpSearch);fpWrap.appendChild(fpSel);tbRow1.appendChild(fpWrap);
 
