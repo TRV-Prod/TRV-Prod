@@ -13331,6 +13331,58 @@ table{border:2px solid #0f172a}
 .pos{color:#15803d;font-weight:700}
 .neg-circle{display:inline-block;padding:1px 6px;border-radius:50px;background:#fee2e2;color:#991b1b;border:1.5px solid #fca5a5;font-weight:700}
 @media print{@page{size:landscape;margin:8mm}tr:hover td{background:inherit}}
+
+/* ═══ PRINT OVERLAY OVERRIDE — must be last, higher specificity than #app rules ═══ */
+@media print {
+  body.has-print-overlay #app,
+  body.has-print-overlay #app > *,
+  body.has-print-overlay .body,
+  body.has-print-overlay .body > *,
+  body.has-print-overlay .cnt,
+  body.has-print-overlay .cnt > *,
+  body.has-print-overlay .hdr,
+  body.has-print-overlay .sbar,
+  body.has-print-overlay .tb,
+  body.has-print-overlay .stats,
+  body.has-print-overlay .wc-stats,
+  body.has-print-overlay .structura-page,
+  body.has-print-overlay .files-page,
+  body.has-print-overlay .stocuri-page,
+  body.has-print-overlay .plan-page,
+  body.has-print-overlay .pwc-page,
+  body.has-print-overlay #structura-tree-root,
+  body.has-print-overlay #bom-tree-content,
+  body.has-print-overlay .print-header,
+  body.has-print-overlay .mobile-nav-sidebar,
+  body.has-print-overlay .mobile-nav-overlay,
+  body.has-print-overlay #fs-btn {
+    display: none !important;
+  }
+  /* Show ONLY the active overlay */
+  body.has-print-overlay #struct-print-overlay,
+  body.has-print-overlay #pv2-print-overlay,
+  body.has-print-overlay #asm-print-overlay,
+  body.has-print-overlay #nec-print-overlay {
+    display: block !important;
+    position: static !important;
+    inset: unset !important;
+    overflow: visible !important;
+    height: auto !important;
+    max-height: none !important;
+    margin: 0 !important;
+    background: #fff !important;
+  }
+  body.has-print-overlay #struct-print-overlay *,
+  body.has-print-overlay #pv2-print-overlay *,
+  body.has-print-overlay #asm-print-overlay *,
+  body.has-print-overlay #nec-print-overlay * {
+    overflow: visible !important;
+  }
+  body.has-print-overlay .spo-close,
+  body.has-print-overlay .po-close {
+    display: none !important;
+  }
+}
 </style></head><body>
 <h2>${title}</h2>
 <p class="sub">Data: ${new Date().toLocaleDateString('ro-RO')} · ${rows.length} componente · Filtru FP: ${f.fpFilter==='all'?'Toate':f.fpFilter} · Tip: ${f.tipFilter==='all'?'Toate':f.tipFilter} · Zoom: ${zoomPct}%</p>
