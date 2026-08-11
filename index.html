@@ -2547,10 +2547,10 @@ function exportStructuraPDF(){
   // Screen buttons (hidden at print via CSS)
   const btnBar=dv('spo-close');btnBar.style.cssText='position:fixed;top:10px;right:14px;z-index:100000;display:flex;gap:8px;align-items:center';
   const closeBtn=el('button');closeBtn.style.cssText='height:32px;padding:0 14px;border:1px solid #e2e8f0;border-radius:4px;background:#fff;cursor:pointer;font-size:12px;font-weight:600;box-shadow:0 2px 8px rgba(0,0,0,.15)';
-  closeBtn.textContent='✕ Închide';closeBtn.addEventListener('click',()=>{ov.remove();});
+  closeBtn.textContent='✕ Închide';closeBtn.addEventListener('click',()=>{ov.remove();document.body.classList.remove('has-print-overlay');});
   const printBtn2=el('button');printBtn2.style.cssText='height:32px;padding:0 14px;border:1.5px solid #0369a1;border-radius:4px;background:#eff6ff;cursor:pointer;font-size:12px;font-weight:700;color:#0369a1;box-shadow:0 2px 8px rgba(0,0,0,.15)';
   printBtn2.innerHTML='🖨 Printează / Export PDF';
-  printBtn2.addEventListener('click',()=>window.print());
+  printBtn2.addEventListener('click',e=>{e.stopPropagation();setTimeout(()=>window.print(),50);});
   const hint=dv('');hint.style.cssText='font-size:10px;color:#6b7280;max-width:220px;line-height:1.4';
   hint.textContent='În dialogul de printare, ajustați "Scale" pentru dimensiunea dorită';
   btnBar.appendChild(closeBtn);btnBar.appendChild(printBtn2);btnBar.appendChild(hint);
@@ -2566,6 +2566,10 @@ function exportStructuraPDF(){
   ov.appendChild(cloned);
 
   document.body.appendChild(ov);
+  document.body.classList.add('has-print-overlay');
+  // ESC to close
+  const escH=e=>{if(e.key==='Escape'){ov.remove();document.body.classList.remove('has-print-overlay');document.removeEventListener('keydown',escH);}};
+  document.addEventListener('keydown',escH);
   setTimeout(()=>ov.scrollTo(0,0),30);
 }
 
@@ -11569,7 +11573,7 @@ function printPV2(st){
   closeBtn.addEventListener('click',()=>{overlay.style.display='none';overlay.innerHTML='';document.body.classList.remove('has-print-overlay');});
   const printBtn2=el('button','po-close');printBtn2.style.cssText='position:fixed;top:10px;right:220px;z-index:100000;height:32px;padding:0 14px;border:1.5px solid #0369a1;border-radius:4px;background:#eff6ff;cursor:pointer;font-size:12px;font-weight:700;color:#0369a1;display:flex;align-items:center;gap:6px;box-shadow:0 2px 8px rgba(0,0,0,.15)';
   printBtn2.innerHTML='🖨 Printează / Save PDF';
-  printBtn2.addEventListener('click',()=>window.print());
+  printBtn2.addEventListener('click',e=>{e.stopPropagation();setTimeout(()=>window.print(),50);});
 
   const filterInfo=Object.entries(st.colFilters||{}).filter(([,v])=>v).map(([k,v])=>`${k}="${v}"`).join(' · ');
   overlay.innerHTML=`<style>
