@@ -1196,7 +1196,8 @@ button { font-family: var(--sans); }
 /* ── PV2 Print Overlay ── */
 @media print {
   /* When an overlay is active: hide everything else */
-  body.has-print-overlay > *:not(#pv2-print-overlay):not(#struct-print-overlay):not(#asm-print-overlay) { display:none!important; }
+  body.has-print-overlay > *:not(#pv2-print-overlay):not(#struct-print-overlay):not(#asm-print-overlay):not(#nec-print-overlay) { display:none!important; }
+  #nec-print-overlay{display:block!important;position:static!important;inset:unset!important;padding:6mm!important;overflow:visible!important;margin:0}
   #asm-print-overlay{display:block!important;position:static!important;inset:unset!important;padding:6mm!important;overflow:visible!important;margin:0}
   body.has-print-overlay #structura-tree-root:not(#struct-print-clone) { display:none!important; }
   body.has-print-overlay #structura-tree-root { display:none!important; }
@@ -7592,6 +7593,246 @@ async function loadAsmData(){
 /* ═══════════════════════════════════════════════════════════════
    MODAL ORIENTARE — verificare disponibilitate asamblare per FP
 ═══════════════════════════════════════════════════════════════ */
+
+/* ═══════════════════════════════════════════════════════════════
+   MODAL NECESAR COMPONENTE — agregare cerere per componentă
+═══════════════════════════════════════════════════════════════ */
+function openNecesarComponenteModal(prefix){
+  if(!S.bomIdx||!S.stockIdx){alert('BOM sau Planning Overview nu sunt încărcate.');return;}
+
+  document.getElementById('nec-comp-overlay')?.remove();
+  const ov=dv('');ov.id='nec-comp-overlay';
+  ov.style.cssText='position:fixed;inset:0;background:rgba(0,0,0,.5);z-index:9200;display:flex;align-items:center;justify-content:center;padding:14px';
+  const modal=dv('');modal.style.cssText='background:#fff;border-radius:12px;box-shadow:0 24px 70px rgba(0,0,0,.35);width:min(1200px,97vw);max-height:90vh;display:flex;flex-direction:column;overflow:hidden';
+
+  const hdr=dv('');hdr.style.cssText='background:#0891b2;color:#fff;padding:12px 18px;display:flex;justify-content:space-between;align-items:center;flex-shrink:0';
+  hdr.innerHTML=`<div><div style="font-weight:800;font-size:14px">📊 Necesar Componente${prefix?' — "'+prefix+'"':''}</div>
+    <div style="font-size:10px;opacity:.85;margin-top:2px">Cantități agregate din toate produsele planificate</div></div>`;
+  const cb=el('button');cb.textContent='✕';cb.style.cssText='border:none;background:rgba(255,255,255,.2);color:#fff;width:30px;height:30px;border-radius:5px;cursor:pointer;font-size:15px';
+  cb.addEventListener('click',()=>ov.remove());hdr.appendChild(cb);modal.appendChild(hdr);
+
+  // Toolbar
+  const tb2=dv('');tb2.style.cssText='padding:8px 14px;border-bottom:1px solid var(--border);display:flex;gap:8px;align-items:center;flex-wrap:wrap;background:#f8f9fb;flex-shrink:0';
+  let ncFilter='all',ncOnlyMissing=false;
+  const filtBar=dv('');filtBar.style.cssText='display:flex;gap:5px';
+  const mkFb=(lbl,val,col)=>{
+    const b=el('button');b.textContent=lbl;b.dataset.v=val;b.dataset.c=col;
+    b.style.cssText=`height:28px;padding:0 12px;border-radius:14px;border:1.5px solid ${col};font-size:11px;font-weight:700;cursor:pointer;background:${ncFilter===val?col:'#fff'};color:${ncFilter===val?'#fff':col}`;
+    b.addEventListener('click',()=>{ncFilter=val;filtBar.querySelectorAll('button').forEach(x=>{const v=x.dataset.v,c=x.dataset.c;x.style.background=v===val?c:'#fff';x.style.color=v===val?'#fff':c;});renderNec();});
+    return b;
+  };
+  filtBar.appendChild(mkFb('Toate','all','#475569'));
+  filtBar.appendChild(mkFb('MAKE','MAKE','#6d28d9'));
+  filtBar.appendChild(mkFb('BUY','BUY','#065f46'));
+  tb2.appendChild(filtBar);
+
+  const missB=el('button');missB.textContent='⚠ Doar cu lipsă';
+  missB.style.cssText='height:28px;padding:0 12px;border-radius:14px;border:1.5px solid #dc2626;font-size:11px;font-weight:700;cursor:pointer;background:#fff;color:#dc2626';
+  missB.addEventListener('click',()=>{ncOnlyMissing=!ncOnlyMissing;missB.style.background=ncOnlyMissing?'#dc2626':'#fff';missB.style.color=ncOnlyMissing?'#fff':'#dc2626';renderNec();});
+  tb2.appendChild(missB);
+
+  const printB=el('button');printB.innerHTML='🖨 Printează';
+  printB.style.cssText='height:28px;padding:0 12px;border-radius:5px;border:1.5px solid #0369a1;font-size:11px;font-weight:700;cursor:pointer;background:#eff6ff;color:#0369a1;margin-left:auto';
+  printB.addEventListener('click',()=>printNecesar());
+  tb2.appendChild(printB);
+
+  const xlsB=el('button');xlsB.innerHTML='⬇ Excel';
+  xlsB.style.cssText='height:28px;padding:0 12px;border-radius:5px;border:1.5px solid #16a34a;font-size:11px;font-weight:700;cursor:pointer;background:#f0fdf4;color:#15803d';
+  xlsB.addEventListener('click',()=>exportNecesar());
+  tb2.appendChild(xlsB);
+  modal.appendChild(tb2);
+
+  const body=dv('');body.style.cssText='flex:1;overflow:auto';
+  modal.appendChild(body);
+  body.innerHTML='<div style="padding:30px;text-align:center;color:var(--text3)">⏳ Se calculează necesarul agregat...</div>';
+
+  let compMap=new Map();
+
+  setTimeout(()=>{
+    const pl=(prefix||'').toLowerCase();
+    const fpList=(S.fps||[]).filter(f=>{
+      if(pl&&!f.code.toLowerCase().startsWith(pl))return false;
+      return planQty(f.code)>0;
+    });
+
+    // Aggregate: matNo → {name, isMake, unit, total, sources:[{fp,qty}]}
+    compMap=new Map();
+    fpList.forEach(fp=>{
+      const pq=planQty(fp.code);
+      if(pq<=0)return;
+      const fpStock=S.stockIdx.get(fp.code)||{onHand:0};
+      // Skip if FP stock already covers the plan
+      if((fpStock.onHand||0)>=pq)return;
+      const toMake=pq-Math.max(0,fpStock.onHand||0);
+      const tree=buildTree(fp.code,fp.code);
+      const walk=(nodes,mult)=>{
+        nodes.forEach(n=>{
+          const unQty=n.qty!=null?n.qty:1;
+          const cumQty=mult*unQty;
+          const need=cumQty*toMake;
+          if(!compMap.has(n.matNo)){
+            compMap.set(n.matNo,{matNo:n.matNo,name:n.matName||'',isMake:n.isMake,unit:n.unit||'',
+              total:0,sources:[]});
+          }
+          const e=compMap.get(n.matNo);
+          e.total+=need;
+          const ex=e.sources.find(s=>s.fp===fp.code);
+          if(ex)ex.qty+=need;else e.sources.push({fp:fp.code,qty:need});
+          if(n.children?.length)walk(n.children,cumQty);
+        });
+      };
+      walk(tree,1);
+    });
+
+    if(!compMap.size){
+      body.innerHTML=`<div style="padding:30px;text-align:center;color:var(--text3)">Nicio componentă necesară${prefix?' pentru produsele "'+prefix+'"':''}.<br><span style="font-size:11px">Verificați dacă există cantități în plan.</span></div>`;
+      return;
+    }
+    renderNec();
+  },50);
+
+  const getFiltered=()=>[...compMap.values()].filter(c=>{
+    if(ncFilter!=='all'&&(c.isMake?'MAKE':'BUY')!==ncFilter)return false;
+    const st=S.stockIdx.get(c.matNo)||{onHand:0};
+    if(ncOnlyMissing&&(st.onHand||0)>=c.total)return false;
+    return true;
+  }).sort((a,b)=>{
+    const sa=S.stockIdx.get(a.matNo)||{onHand:0},sb=S.stockIdx.get(b.matNo)||{onHand:0};
+    const da=a.total-(sa.onHand||0),db=b.total-(sb.onHand||0);
+    return db-da;  // biggest shortage first
+  });
+
+  function renderNec(){
+    body.innerHTML='';
+    const rows=getFiltered();
+    if(!rows.length){body.innerHTML='<div style="padding:30px;text-align:center;color:var(--text3)">Nicio componentă conform filtrului.</div>';return;}
+
+    const tbl=el('table');tbl.style.cssText='width:100%;border-collapse:collapse;font-size:11.5px';
+    const thead=el('thead');const hr=el('tr');hr.style.cssText='background:#0e7490;color:#fff;position:sticky;top:0;z-index:2';
+    [
+      {l:'Componentă',a:'left',w:''},
+      {l:'Tip',a:'center',w:'52px'},
+      {l:'Necesar Total',a:'right',w:'95px'},
+      {l:'În Stoc',a:'right',w:'82px'},
+      {l:'Diferență',a:'right',w:'90px'},
+      {l:'Detaliu calcul',a:'left',w:'300px'},
+    ].forEach(({l,a,w})=>{
+      const th=el('th');th.style.cssText=`padding:8px 10px;text-align:${a};font-size:9.5px;font-weight:800;text-transform:uppercase;letter-spacing:.05em;${w?'width:'+w+';min-width:'+w:''}`;
+      th.textContent=l;hr.appendChild(th);
+    });
+    thead.appendChild(hr);tbl.appendChild(thead);
+
+    const tbody=el('tbody');
+    rows.forEach((c,i)=>{
+      const st=S.stockIdx.get(c.matNo)||{onHand:0,totalWIP:0};
+      const oh=st.onHand||0;
+      const diff=c.total-oh;
+      const tr=el('tr');
+      tr.style.cssText=diff>0?'background:#fef2f2;border-left:3px solid #dc2626':`background:${i%2?'#f8fafc':'#fff'}`;
+      tr.style.borderBottom='1px solid #f1f5f9';
+      const mkTd=(html,css)=>{const td=el('td');td.style.cssText=(css||'')+';padding:7px 10px;vertical-align:top';td.innerHTML=html;return td;};
+
+      tr.appendChild(mkTd(`<div style="font-family:monospace;font-weight:800;font-size:12px;color:${c.isMake?'#6d28d9':'#065f46'}">${c.matNo}</div>
+        ${c.name?`<div style="font-size:10px;color:#6b7280;margin-top:1px">${c.name}</div>`:''}`));
+      tr.appendChild(mkTd(`<span style="display:inline-block;padding:1px 6px;border-radius:3px;font-size:8.5px;font-weight:700;background:${c.isMake?'rgba(109,40,217,.1)':'rgba(6,95,70,.1)'};color:${c.isMake?'#6d28d9':'#065f46'}">${c.isMake?'MAKE':'BUY'}</span>`,'text-align:center'));
+      tr.appendChild(mkTd(`<b style="font-size:15px;color:#0891b2">${fmtN(Math.round(c.total*100)/100)}</b>${c.unit?`<div style="font-size:9px;color:#94a3b8">${c.unit}</div>`:''}`,'text-align:right'));
+      tr.appendChild(mkTd(`<b style="font-size:14px;color:${oh>=c.total?'#15803d':oh>0?'#ca8a04':'#dc2626'}">${fmtN(oh)}</b>${st.totalWIP?`<div style="font-size:9px;color:#7c3aed">WIP: ${fmtN(st.totalWIP)}</div>`:''}`,'text-align:right'));
+      tr.appendChild(mkTd(diff>0
+        ?`<b style="font-size:15px;color:#dc2626">−${fmtN(Math.round(diff*100)/100)}</b>`
+        :`<span style="color:#15803d;font-weight:800;font-size:14px">✓ +${fmtN(Math.round(-diff*100)/100)}</span>`,'text-align:right'));
+      // Calculation detail
+      const srcSorted=[...c.sources].sort((a,b)=>b.qty-a.qty);
+      tr.appendChild(mkTd(
+        `<div style="font-size:10px;line-height:1.55;color:#475569">${srcSorted.slice(0,6).map(s=>
+          `<span style="white-space:nowrap"><b style="color:#0891b2">${fmtN(Math.round(s.qty*100)/100)}</b> buc pt <span style="font-family:monospace;font-weight:600">${s.fp}</span></span>`
+        ).join('<br>')}${srcSorted.length>6?`<div style="color:#94a3b8;font-style:italic">+${srcSorted.length-6} produse</div>`:''}</div>`));
+      tbody.appendChild(tr);
+    });
+    tbl.appendChild(tbody);body.appendChild(tbl);
+
+    const missCount=rows.filter(c=>{const s=S.stockIdx.get(c.matNo)||{onHand:0};return c.total>(s.onHand||0);}).length;
+    const sum=dv('');sum.style.cssText='padding:10px 16px;background:#f8f9fb;border-top:2px solid var(--border);font-size:11.5px;display:flex;gap:18px;flex-wrap:wrap';
+    sum.innerHTML=`<span><b>${rows.length}</b> componente</span>
+      <span style="color:#dc2626"><b>${missCount}</b> cu lipsă de stoc</span>
+      <span style="color:#15803d"><b>${rows.length-missCount}</b> acoperite din stoc</span>`;
+    body.appendChild(sum);
+  }
+
+  function exportNecesar(){
+    const rows=getFiltered();
+    const data=[['Cod componentă','Denumire','Tip','U/M','Necesar Total','În Stoc','WIP','Diferență','Detaliu calcul']];
+    rows.forEach(c=>{
+      const st=S.stockIdx.get(c.matNo)||{onHand:0,totalWIP:0};
+      const detail=[...c.sources].sort((a,b)=>b.qty-a.qty)
+        .map(s=>`${Math.round(s.qty*100)/100} buc pt ${s.fp}`).join('; ');
+      data.push([c.matNo,c.name,c.isMake?'MAKE':'BUY',c.unit,
+        Math.round(c.total*100)/100,st.onHand||0,st.totalWIP||0,
+        Math.round((c.total-(st.onHand||0))*100)/100,detail]);
+    });
+    const wb=XLSX.utils.book_new();
+    const ws=XLSX.utils.aoa_to_sheet(data);
+    ws['!cols']=[{wch:20},{wch:34},{wch:7},{wch:6},{wch:13},{wch:10},{wch:9},{wch:11},{wch:60}];
+    XLSX.utils.book_append_sheet(wb,ws,'Necesar Componente');
+    XLSX.writeFile(wb,`Necesar_Componente_${new Date().toISOString().slice(0,10)}.xlsx`);
+  }
+
+  function printNecesar(){
+    const rows=getFiltered();
+    document.getElementById('nec-print-overlay')?.remove();
+    const pov=dv('');pov.id='nec-print-overlay';
+    pov.style.cssText='position:fixed;inset:0;z-index:99999;background:#fff;overflow:auto;padding:10mm;display:block';
+
+    let rowsHtml='';
+    rows.forEach(c=>{
+      const st=S.stockIdx.get(c.matNo)||{onHand:0,totalWIP:0};
+      const oh=st.onHand||0;const diff=c.total-oh;
+      const detail=[...c.sources].sort((a,b)=>b.qty-a.qty)
+        .map(s=>`${fmtN(Math.round(s.qty*100)/100)} buc pt ${s.fp}`).join('<br>');
+      rowsHtml+=`<tr${diff>0?' style="background:#fef2f2"':''}>
+        <td><b style="font-family:monospace">${c.matNo}</b>${c.name?`<div style="font-size:7.5pt;color:#555">${c.name}</div>`:''}</td>
+        <td style="text-align:center;font-size:7.5pt">${c.isMake?'MAKE':'BUY'}</td>
+        <td style="text-align:right;font-weight:800">${fmtN(Math.round(c.total*100)/100)}</td>
+        <td style="text-align:right">${fmtN(oh)}</td>
+        <td style="text-align:right;font-weight:800;color:${diff>0?'#dc2626':'#15803d'}">${diff>0?'−'+fmtN(Math.round(diff*100)/100):'✓'}</td>
+        <td style="font-size:7.5pt;line-height:1.4">${detail}</td>
+      </tr>`;
+    });
+
+    pov.innerHTML=`<style>
+      #nec-print-overlay table{width:100%;border-collapse:collapse;font-size:9pt}
+      #nec-print-overlay th{background:#0e7490;color:#fff;padding:5px 6px;font-size:8pt;font-weight:700;text-align:left;border:1px solid #0f172a}
+      #nec-print-overlay td{padding:4px 6px;border:1px solid #e2e8f0;vertical-align:top}
+      @page{size:A4 landscape;margin:8mm}
+      @media print{#nec-print-overlay{padding:0!important}.spo-close{display:none!important}}
+    </style>
+    <div style="font-size:14pt;font-weight:800;color:#0e7490;margin-bottom:2px">📊 Necesar Componente${prefix?' — '+prefix:''}</div>
+    <div style="font-size:9pt;color:#555;margin-bottom:8px">${rows.length} componente${ncFilter!=='all'?' · Filtru: '+ncFilter:''} · ${new Date().toLocaleDateString('ro-RO')}</div>
+    <table><thead><tr>
+      <th>Componentă</th><th style="width:45px;text-align:center">Tip</th>
+      <th style="width:70px;text-align:right">Necesar Total</th><th style="width:60px;text-align:right">În Stoc</th>
+      <th style="width:65px;text-align:right">Diferență</th><th style="width:200px">Detaliu calcul</th>
+    </tr></thead><tbody>${rowsHtml}</tbody></table>`;
+
+    const bb=dv('spo-close');bb.style.cssText='position:fixed;top:10px;right:14px;z-index:100001;display:flex;gap:8px';
+    const cb2=el('button');cb2.textContent='✕ Închide';
+    cb2.style.cssText='height:34px;padding:0 16px;border:1px solid #e2e8f0;border-radius:5px;background:#fff;cursor:pointer;font-size:12px;font-weight:700;box-shadow:0 3px 12px rgba(0,0,0,.2)';
+    cb2.addEventListener('click',e=>{e.stopPropagation();pov.remove();document.body.classList.remove('has-print-overlay');});
+    const pb2=el('button');pb2.textContent='🖨 Printează';
+    pb2.style.cssText='height:34px;padding:0 16px;border:1.5px solid #0369a1;border-radius:5px;background:#eff6ff;cursor:pointer;font-size:12px;font-weight:800;color:#0369a1;box-shadow:0 3px 12px rgba(0,0,0,.2)';
+    pb2.addEventListener('click',e=>{e.stopPropagation();setTimeout(()=>window.print(),50);});
+    bb.appendChild(cb2);bb.appendChild(pb2);
+    pov.insertBefore(bb,pov.firstChild);
+    document.body.appendChild(pov);
+    document.body.classList.add('has-print-overlay');
+    const esc=e=>{if(e.key==='Escape'){pov.remove();document.body.classList.remove('has-print-overlay');document.removeEventListener('keydown',esc);}};
+    document.addEventListener('keydown',esc);
+  }
+
+  ov.appendChild(modal);
+  ov.addEventListener('click',e=>{if(e.target===ov)ov.remove();});
+  document.body.appendChild(ov);
+}
+
 function openOrientareModal(prefix){
   if(!prefix){alert('Introduceți un prefix în câmpul de căutare produs final.');return;}
   if(!S.bomIdx||!S.stockIdx){alert('BOM sau Planning Overview nu sunt încărcate.');return;}
@@ -7678,11 +7919,18 @@ function openOrientareModal(prefix){
       };
     });
 
-    // Sort: APT first, then by plan qty desc
+    // Sort priority: 0=DA(apt), 1=NU(missing), 2=PLAN REALIZAT, 3=Nu e în plan
+    const rank=r=>{
+      if(r.notInPlan)return 3;
+      if(r.planDone)return 2;
+      if(r.apt===true)return 0;
+      if(r.apt===false)return 1;
+      return 3;
+    };
     results.sort((a,b)=>{
-      if(a.apt===b.apt)return (b.planQty||0)-(a.planQty||0);
-      if(a.apt===null)return 1;if(b.apt===null)return -1;
-      return a.apt?-1:1;
+      const ra=rank(a),rb=rank(b);
+      if(ra!==rb)return ra-rb;
+      return (b.planQty||0)-(a.planQty||0);
     });
 
     body.innerHTML='';
@@ -7892,6 +8140,11 @@ function renderAsamblare(){
   bori.title='Lista produselor care încep cu prefixul căutat + verificare disponibilitate';
   bori.onclick=()=>openOrientareModal(fpSearch.value.trim());
   tbRow2.appendChild(bori);
+
+  const bnec=el('button','tbtn');bnec.innerHTML='📊 Necesar componente';bnec.style.cssText='border-color:#0891b2;color:#0891b2;background:#ecfeff;font-weight:700';
+  bnec.title='Calcul necesar total per componentă pentru toate produsele din plan';
+  bnec.onclick=()=>openNecesarComponenteModal(fpSearch.value.trim());
+  tbRow2.appendChild(bnec);
 
   const bp=el('button','tbtn');bp.innerHTML='🖨 Printează';bp.style.cssText='border-color:#0369a1;color:#0369a1;background:#eff6ff';
   bp.onclick=()=>printAsamblare();
