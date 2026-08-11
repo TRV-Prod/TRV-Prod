@@ -7665,19 +7665,30 @@ function openNecesarComponenteModal(prefix){
       if((fpStock.onHand||0)>=pq)return;
       const toMake=pq-Math.max(0,fpStock.onHand||0);
       const tree=buildTree(fp.code,fp.code);
+      // Include only: WE parts (always), and EX/PA only when they have no children (leaf = purchased assembled)
+      const shouldInclude=(n)=>{
+        const code=(n.matNo||'').toUpperCase();
+        const hasKids=n.children&&n.children.length>0;
+        if(/WE\d/.test(code))return true;              // WE = always (manufactured parts)
+        if(/(EX|PA)\d/.test(code))return !hasKids;     // EX/PA only if leaf (no BOM children)
+        return !hasKids;                                // other codes: only leaves
+      };
       const walk=(nodes,mult)=>{
         nodes.forEach(n=>{
           const unQty=n.qty!=null?n.qty:1;
           const cumQty=mult*unQty;
           const need=cumQty*toMake;
-          if(!compMap.has(n.matNo)){
-            compMap.set(n.matNo,{matNo:n.matNo,name:n.matName||'',isMake:n.isMake,unit:n.unit||'',
-              total:0,sources:[]});
+          if(shouldInclude(n)){
+            if(!compMap.has(n.matNo)){
+              compMap.set(n.matNo,{matNo:n.matNo,name:n.matName||'',isMake:n.isMake,unit:n.unit||'',
+                total:0,sources:[]});
+            }
+            const e=compMap.get(n.matNo);
+            e.total+=need;
+            const ex=e.sources.find(s=>s.fp===fp.code);
+            if(ex)ex.qty+=need;else e.sources.push({fp:fp.code,qty:need});
           }
-          const e=compMap.get(n.matNo);
-          e.total+=need;
-          const ex=e.sources.find(s=>s.fp===fp.code);
-          if(ex)ex.qty+=need;else e.sources.push({fp:fp.code,qty:need});
+          // Always recurse into children to reach WE parts deeper in the tree
           if(n.children?.length)walk(n.children,cumQty);
         });
       };
