@@ -10861,7 +10861,7 @@ function renderPlanV2(){
     function rebuildAllTbodies(){
       // Don't destroy inputs while user is editing priority/obs/qty fields
       const fa=document.activeElement;
-      if(fa&&(fa.getAttribute('data-pv2-prio-key')||fa.getAttribute('data-pv2-obs-key')||fa.closest('td[data-pv2-col="toProduceQty"]')))return;
+      if(fa&&(fa.getAttribute('data-pv2-prio-key')||fa.getAttribute('data-pv2-obs-key')||fa.getAttribute('data-pv2-qty-key')||fa.tagName==='INPUT'||fa.tagName==='TEXTAREA'))return;
       document.querySelectorAll('#pv2-content table[id^="pv2-tbl-"]').forEach(tbl=>{
         const wc=tbl._wc;const visCols_=tbl._visCols;
         if(!wc||!visCols_)return;
@@ -11094,7 +11094,39 @@ function renderPlanV2(){
             else if(c.key==='matNo'){const span=dv('pv2-mo-clickable');span.style.fontFamily='monospace';span.style.fontWeight='700';span.textContent=r.matNo;span.title=r.matName||r.matNo;span.addEventListener('click',ev=>{ev.stopPropagation();openPV2MoPopup(r.matNo,r.matName,wc);});td.appendChild(span);}
             else if(c.key==='matDrawing'){td.textContent=r.matDrawing||'—';td.title=r.matDrawing||'';td.style.fontSize=(st.zoom/100*10)+'px';td.style.color=r.matDrawing?'var(--text1)':'#9ca3af';}
             else if(c.key==='fpQty'){td.textContent=val;td.style.fontWeight='600';td.style.color='var(--accent)';}
-            else if(c.key==='toProduceQty'){td.style.overflow='visible';td.style.padding='2px 4px';const baseQty=Math.round((r.wcToProduceQty!=null?r.wcToProduceQty:r.toProduceQty)*10)/10;const editKey=r.obKey+'__'+r.matNo;const curQty=(st.qtyEdits&&st.qtyEdits[editKey]!=null)?st.qtyEdits[editKey]:baseQty;const qInp=el('input');qInp.type='number';qInp.min=0;qInp.step='any';qInp.value=curQty;qInp.title='Calculat: '+baseQty;qInp.style.cssText=`width:70px;height:24px;padding:0 5px;border:1px solid ${curQty!==baseQty?'#f59e0b':'var(--border)'};border-radius:3px;font-size:11px;font-weight:700;text-align:right;color:#dc2626`;qInp.addEventListener('change',()=>{const nv=parseFloat(qInp.value)||0;if(!st.qtyEdits)st.qtyEdits={};st.qtyEdits[editKey]=nv;const eff=st.efficiency||100;const bowOp=r.wcOps?.find(op=>op.wcName===wc);if(bowOp){const newMin=(bowOp.runTime*nv+bowOp.setupTime)/(eff/100);const bowTd=qInp.closest('tr')?.querySelector('[data-pv2-col="wcMinutes"]');if(bowTd)bowTd.textContent=fmtBowTime(newMin);}qInp.style.borderColor=nv!==baseQty?'#f59e0b':'var(--border)';});td.appendChild(qInp);}
+            else if(c.key==='toProduceQty'){
+              td.style.overflow='visible';td.style.padding='2px 4px';
+              td.setAttribute('data-pv2-col','toProduceQty');
+              const baseQty=Math.round((r.wcToProduceQty!=null?r.wcToProduceQty:r.toProduceQty)*10)/10;
+              const editKey=r.obKey+'__'+r.matNo;
+              const curQty=(st.qtyEdits&&st.qtyEdits[editKey]!=null)?st.qtyEdits[editKey]:baseQty;
+              const qInp=el('input');
+              qInp.type='text';qInp.inputMode='decimal';qInp.autocomplete='off';
+              qInp.setAttribute('data-pv2-qty-key',editKey);
+              qInp.value=curQty;qInp.title='Calculat: '+baseQty;
+              qInp.style.cssText=`width:72px;height:26px;padding:0 6px;border:1.5px solid ${curQty!==baseQty?'#f59e0b':'var(--border)'};border-radius:3px;font-size:11.5px;font-weight:700;text-align:right;color:#dc2626;background:#fff`;
+              // Block all events from bubbling to container (prevents rebuild while typing)
+              ['input','keydown','keyup','change','click','focus','paste'].forEach(ev2=>
+                qInp.addEventListener(ev2,e=>e.stopPropagation()));
+              const saveQty=()=>{
+                const nv=parseFloat(String(qInp.value).replace(',','.'))||0;
+                if(!st.qtyEdits)st.qtyEdits={};
+                st.qtyEdits[editKey]=nv;
+                qInp.value=nv;
+                const eff=st.efficiency||100;
+                const bowOp=r.wcOps?.find(op=>op.wcName===wc);
+                if(bowOp){
+                  const newMin=(bowOp.runTime*nv+bowOp.setupTime)/(eff/100);
+                  const bowTd=qInp.closest('tr')?.querySelector('[data-pv2-col="wcMinutes"]');
+                  if(bowTd)bowTd.textContent=fmtBowTime(newMin);
+                }
+                qInp.style.borderColor=nv!==baseQty?'#f59e0b':'var(--border)';
+              };
+              qInp.addEventListener('change',saveQty);
+              qInp.addEventListener('blur',saveQty);
+              qInp.addEventListener('keydown',e=>{if(e.key==='Enter'){e.preventDefault();saveQty();qInp.blur();}});
+              td.appendChild(qInp);
+            }
             else if(c.key==='onHandQty'){td.textContent=val;td.style.color=r.onHandQty>0?'#15803d':'#9ca3af';td.style.fontWeight='600';}
             else if(c.key==='wipQty'){
               const wcOpForWip=r.wcOps?.find(op=>op.wcName===wc);
