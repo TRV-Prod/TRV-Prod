@@ -5748,6 +5748,9 @@ function _buildPlanTbody(wrap){
   const visCols=pf2.colOrder.filter(c=>pf2.visibleCols.has(c));
   const rows=getPlanRows();
   const tbody=el('tbody');
+  // Ensure Set (may be lost on state reload from JSON)
+  if(!(S.planExpanded instanceof Set))S.planExpanded=new Set(Array.isArray(S.planExpanded)?S.planExpanded:[]);
+  if(!S.planBomFilter)S.planBomFilter='FULL';
   for(const [itemNo,plan] of rows){
     const first=plan.entries[0]||{};
     const customer=[...new Set(plan.entries.map(e=>e.customer).filter(Boolean))].join(', ');
@@ -5784,7 +5787,16 @@ function _buildPlanTbody(wrap){
         const toggleExp=()=>{
           if(S.planExpanded.has(itemNo))S.planExpanded.delete(itemNo);
           else S.planExpanded.add(itemNo);
-          _rebuildPlanBody(wrap);
+          // Find the plan table wrapper dynamically (closure `wrap` may be stale)
+          const tblEl=document.querySelector('.plan-table');
+          const wrapEl=tblEl?.closest('div')?.parentElement||wrap;
+          const oldTb=tblEl?.querySelector('tbody');
+          if(tblEl&&oldTb){
+            const nb=_buildPlanTbody(wrapEl);
+            tblEl.replaceChild(nb,oldTb);
+          } else if(wrap){
+            _rebuildPlanBody(wrap);
+          }
         };
         tog.addEventListener('click',e=>{e.stopPropagation();toggleExp();});
         td.addEventListener('dblclick',e=>{e.stopPropagation();toggleExp();});
@@ -5871,7 +5883,15 @@ function _buildPlanTbody(wrap){
     tbody.appendChild(tr);
 
     // ── Inline BOM expansion ──
-    if(S.planExpanded?.has(itemNo)&&S.bomIdx){
+    if(S.planExpanded.has(itemNo)){
+      if(!S.bomIdx){
+        const btr=el('tr');const btd=el('td');btd.colSpan=visCols.length;
+        btd.style.cssText='padding:8px 20px;font-size:11px;color:#dc2626;background:#fef2f2';
+        btd.textContent='⚠ BOM nu este încărcat. Mergeți la Fisiere și încărcați BOM.';
+        btr.appendChild(btd);tbody.appendChild(btr);
+      }
+    }
+    if(S.planExpanded.has(itemNo)&&S.bomIdx){
       const bomTree=buildTree(itemNo,itemNo);
       const planQtyVal=plan.totalQty||1;
       // Use the SAME calculation as Structura: calcNeeds returns needed per component
