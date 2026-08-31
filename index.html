@@ -1384,7 +1384,7 @@ const GH_COLS={
        '710906-Drilling/Tapping','710907-Rolling','710908-Milling','711001-Subcontracting','711101-Quality control'],
   ob: ['Entry dt','Confirm dt','Request dt','Request_week','Confirm_week','Item_no','Alias_no','Item_name',
        'Customer_no','Customer_name','Sales_price','Currency','Sales price EUR','Ordered','Allocated',
-       'Delivered','Invoiced','Open qty','Net weight','CO_no','CO_line','Valoare de livrat EUR'],
+       'Delivered','Invoiced','Open qty','Net weight','CO_no','CO_line','Cust order no','Valoare de livrat EUR'],
   scanari: ['Transaction dt','MO','Product','Workcenter','Workcenter name','Op no','Employee name','Manufact qty','Scrapped qty','Start_MS','Finish_MS','Used_tm_MS'],
   molist:  ['MO','Product','Prod name','Whs','MO start','MO finish','MO st','MO tp','Op no','Seq no','W/C-Comp','Name','U/M','Status','Order qty','Report qty','Report dt','Hrs'],
 };
@@ -4146,7 +4146,7 @@ function renderStockTable(wrap){buildTable(wrap);}
 /* ═══════════════════════════════════════════════════════════════
    ORDER BOOK MODULE
 ═══════════════════════════════════════════════════════════════ */
-const OB_COLS_ALL=['Entry dt','Confirm dt','Request dt','Request_week','Confirm_week','Item_no','Alias_no','Item_name','Customer_no','Customer_name','Sales price EUR','Ordered','Allocated','Delivered','Invoiced','Open qty','Valoare de livrat EUR','Net weight','_planWeeks','_plan'];
+const OB_COLS_ALL=['Entry dt','Confirm dt','Request dt','Request_week','Confirm_week','CO_no','Cust order no','Item_no','Alias_no','Item_name','Customer_no','Customer_name','Sales price EUR','Ordered','Allocated','Delivered','Invoiced','Open qty','Valoare de livrat EUR','Net weight','_planWeeks','_plan'];
 const OB_NUMERIC=new Set(['Sales price EUR','Ordered','Allocated','Delivered','Invoiced','Open qty','Valoare de livrat EUR','Net weight']);
 const OB_DATE=new Set(['Entry dt','Confirm dt','Request dt']);
 
@@ -5401,6 +5401,127 @@ ${panels}
 </body></html>`);
   w.document.close();
 }
+
+/* ═══════════════════════════════════════════════════════════════
+   POPUP STRUCTURĂ BOM — dublu-click pe Item No în Planificare
+═══════════════════════════════════════════════════════════════ */
+function openPlanBomPopup(itemNo, planQtyVal){
+  if(!S.bomIdx){alert('BOM nu este încărcat.');return;}
+  document.getElementById('plan-bom-overlay')?.remove();
+
+  const qty=planQtyVal||planQty(itemNo)||1;
+  const fp=S.fps?.find(f=>f.code===itemNo);
+  const tree=buildTree(itemNo,itemNo);
+
+  const ov=dv('');ov.id='plan-bom-overlay';
+  ov.style.cssText='position:fixed;inset:0;background:rgba(0,0,0,.5);z-index:9300;display:flex;align-items:center;justify-content:center;padding:14px';
+  const modal=dv('');modal.style.cssText='background:#fff;border-radius:12px;box-shadow:0 24px 70px rgba(0,0,0,.35);width:min(1150px,97vw);max-height:90vh;display:flex;flex-direction:column;overflow:hidden';
+
+  const fpStock=S.stockIdx?.get(itemNo)||{onHand:0,totalWIP:0};
+  const hdr=dv('');hdr.style.cssText='background:#1e3a5f;color:#fff;padding:12px 18px;display:flex;justify-content:space-between;align-items:center;flex-shrink:0;gap:12px;flex-wrap:wrap';
+  hdr.innerHTML=`<div>
+      <div style="font-weight:900;font-size:15px;font-family:monospace">${itemNo}</div>
+      <div style="font-size:11px;opacity:.85;margin-top:2px">${fp?.name||''}${fp?.drawing?' · '+fp.drawing:''}</div>
+    </div>
+    <div style="display:flex;gap:16px;align-items:center">
+      <div style="text-align:center"><div style="font-size:9px;opacity:.7;text-transform:uppercase">Cantitate plan</div>
+        <div style="font-size:20px;font-weight:900">${fmtN(qty)}</div></div>
+      <div style="text-align:center"><div style="font-size:9px;opacity:.7;text-transform:uppercase">On Hand</div>
+        <div style="font-size:20px;font-weight:900;color:${fpStock.onHand>0?'#86efac':'#fca5a5'}">${fmtN(fpStock.onHand)}</div></div>
+    </div>`;
+  const cb=el('button');cb.textContent='✕';cb.style.cssText='border:none;background:rgba(255,255,255,.2);color:#fff;width:30px;height:30px;border-radius:5px;cursor:pointer;font-size:15px;flex-shrink:0';
+  cb.addEventListener('click',()=>ov.remove());hdr.appendChild(cb);modal.appendChild(hdr);
+
+  const body=dv('');body.style.cssText='flex:1;overflow:auto';
+  modal.appendChild(body);
+
+  if(!tree.length){
+    body.innerHTML='<div style="padding:30px;text-align:center;color:var(--text3)">Nicio componentă BOM găsită pentru acest produs.</div>';
+  } else {
+    const tbl=el('table');tbl.style.cssText='width:100%;border-collapse:collapse;font-size:11.5px';
+    const thead=el('thead');const hr=el('tr');hr.style.cssText='background:#334155;color:#fff;position:sticky;top:0;z-index:2';
+    [
+      {l:'Componentă',a:'left',w:''},
+      {l:'Un Qty',a:'right',w:'70px'},
+      {l:'Necesar',a:'right',w:'85px'},
+      {l:'On Hand',a:'right',w:'80px'},
+      {l:'WIP (upstream)',a:'left',w:'190px'},
+      {l:'Lipsă',a:'right',w:'75px'},
+    ].forEach(({l,a,w})=>{
+      const th=el('th');th.style.cssText=`padding:8px 10px;text-align:${a};font-size:9.5px;font-weight:800;text-transform:uppercase;letter-spacing:.05em;${w?'width:'+w+';min-width:'+w:''}`;
+      th.textContent=l;hr.appendChild(th);
+    });
+    thead.appendChild(hr);tbl.appendChild(thead);
+    const tbody=el('tbody');
+
+    const renderNode=(nodes,depth,mult)=>{
+      nodes.forEach(n=>{
+        const unQty=n.qty!=null?n.qty:1;
+        const cumQty=mult*unQty;
+        const needed=cumQty*qty;
+        const st=S.stockIdx?.get(n.matNo)||{onHand:0,totalWIP:0,wipByWC:{}};
+        const oh=st.onHand||0;
+        const lipsa=Math.max(0,needed-oh);
+        const tr=el('tr');
+        tr.style.cssText=lipsa>0?'background:#fef2f2':`background:${depth%2?'#f8fafc':'#fff'}`;
+        tr.style.borderBottom='1px solid #f1f5f9';
+        const mkTd=(html,css)=>{const td=el('td');td.style.cssText=(css||'')+';padding:6px 10px;vertical-align:top';td.innerHTML=html;return td;};
+
+        // Tree connector
+        const conn=depth>0?`<span style="color:#cbd5e1;font-family:monospace;margin-right:3px">${'│&nbsp;&nbsp;'.repeat(depth-1)}└─</span>`:'';
+        tr.appendChild(mkTd(`<div style="padding-left:${depth*4}px">
+          ${conn}<span style="font-family:monospace;font-weight:${depth===0?'800':'700'};font-size:${depth===0?'12':'11.5'}px;color:${n.isMake?'#6d28d9':'#065f46'}">${n.matNo}</span>
+          <span style="display:inline-block;margin-left:5px;padding:0 5px;border-radius:3px;font-size:8.5px;font-weight:700;background:${n.isMake?'rgba(109,40,217,.1)':'rgba(6,95,70,.1)'};color:${n.isMake?'#6d28d9':'#065f46'}">${n.isMake?'MAKE':'BUY'}</span>
+          ${n.matName?`<div style="font-size:10px;color:#6b7280;padding-left:${depth>0?(depth-1)*14+16:0}px">${n.matName}</div>`:''}
+        </div>`));
+        tr.appendChild(mkTd(`${fmtN(unQty)}${n.unit?` <span style="font-size:9px;color:#94a3b8">${n.unit}</span>`:''}`,'text-align:right;color:#6b7280;font-size:11px'));
+        tr.appendChild(mkTd(`<b style="font-size:13.5px;color:#1d4ed8">${fmtN(Math.round(needed*1000)/1000)}</b>`,'text-align:right'));
+        tr.appendChild(mkTd(`<b style="font-size:13px;color:${oh>=needed?'#15803d':oh>0?'#ca8a04':'#dc2626'}">${fmtN(oh)}</b>`,'text-align:right'));
+
+        // WIP per workcenter (upstream operations)
+        const wipE=Object.entries(st.wipByWC||{}).filter(([,q])=>q>0).sort((a,b)=>b[1]-a[1]);
+        tr.appendChild(mkTd(
+          wipE.length
+            ? `<div style="font-size:10px;line-height:1.5">
+                 <span style="display:inline-block;padding:1px 6px;border-radius:8px;font-size:9px;font-weight:700;background:#ede9fe;color:#7c3aed;border:1px solid #c4b5fd;margin-bottom:2px">Total: ${fmtN(st.totalWIP||0)}</span>
+                 ${wipE.map(([wc,q])=>`<div style="color:#475569">${wcLabel(wc)}: <b style="color:#7c3aed">${fmtN(q)}</b></div>`).join('')}
+               </div>`
+            : '<span style="color:#cbd5e1;font-size:10px">—</span>'));
+        tr.appendChild(mkTd(
+          lipsa>0?`<b style="font-size:13.5px;color:#dc2626">${fmtN(Math.round(lipsa*1000)/1000)}</b>`
+                 :'<span style="color:#15803d;font-weight:800;font-size:14px">✓</span>','text-align:right'));
+        tbody.appendChild(tr);
+        if(n.children?.length)renderNode(n.children,depth+1,cumQty);
+      });
+    };
+    renderNode(tree,0,1);
+    tbl.appendChild(tbody);body.appendChild(tbl);
+
+    // Summary
+    let totalComps=0,missingComps=0;
+    const countAll=(nodes,mult)=>{nodes.forEach(n=>{
+      totalComps++;
+      const cq=mult*(n.qty!=null?n.qty:1);
+      const st=S.stockIdx?.get(n.matNo)||{onHand:0};
+      if((st.onHand||0)<cq*qty)missingComps++;
+      if(n.children?.length)countAll(n.children,cq);
+    });};
+    countAll(tree,1);
+    const sum=dv('');sum.style.cssText='padding:10px 16px;background:#f8f9fb;border-top:2px solid var(--border);font-size:11.5px;display:flex;gap:18px;flex-wrap:wrap;flex-shrink:0';
+    sum.innerHTML=`<span><b>${totalComps}</b> componente</span>
+      <span style="color:#dc2626"><b>${missingComps}</b> cu lipsă</span>
+      <span style="color:#15803d"><b>${totalComps-missingComps}</b> acoperite</span>
+      <span style="margin-left:auto;color:#94a3b8;font-size:10px">Necesar = Un Qty cumulat × ${fmtN(qty)} buc</span>`;
+    modal.appendChild(sum);
+  }
+
+  ov.appendChild(modal);
+  ov.addEventListener('click',e=>{if(e.target===ov)ov.remove();});
+  document.body.appendChild(ov);
+  const esc=e=>{if(e.key==='Escape'){ov.remove();document.removeEventListener('keydown',esc);}};
+  document.addEventListener('keydown',esc);
+}
+
 function renderPlanificare(){
   const page=dv('plan-page');
 
@@ -5645,7 +5766,20 @@ function _buildPlanTbody(wrap){
         });
         td.appendChild(pi);
       }
-      else if(colId==='itemNo'){td.appendChild(sp('stk-code',itemNo));}
+      else if(colId==='itemNo'){
+        const codeSp=sp('stk-code',itemNo);
+        codeSp.style.cursor='pointer';codeSp.style.textDecoration='underline dotted';
+        codeSp.title='Dublu-click: structura BOM cu necesar și stocuri';
+        td.appendChild(codeSp);
+        let _tapT=0;
+        const openBom=()=>openPlanBomPopup(itemNo,row.qty);
+        td.addEventListener('dblclick',e=>{e.stopPropagation();openBom();});
+        td.addEventListener('touchend',e=>{
+          const now=Date.now();
+          if(now-_tapT<400){e.preventDefault();e.stopPropagation();openBom();}
+          _tapT=now;
+        });
+      }
       else if(colId==='itemName'){td.textContent=first.itemName||'—';}
       else if(colId==='customer'){td.textContent=customer||'—';}
       else if(colId==='qty'){const s=sp('plan-num',plan.totalQty.toLocaleString('ro-RO')+' buc');s.style.cssText='font-weight:700;color:#15803d;display:block;text-align:right';td.appendChild(s);}
@@ -12943,7 +13077,20 @@ function renderSubcomponentePanel(container){
         const td=el('td');td.style.width=(f.colWidths[colId]||100)+'px';
         td.style.cssText+='overflow:hidden;text-overflow:ellipsis;white-space:nowrap;vertical-align:middle;padding:5px 8px;border-bottom:1px solid var(--border2);border-right:1px solid var(--border2);font-size:12px';
         if(colId==='prio'){const s=sp('');s.style.cssText='font-weight:800;font-family:Arial,monospace;color:#92400e';s.textContent=r.prio;td.appendChild(s);}
-        else if(colId==='itemNo'){td.appendChild(sp('stk-code',r.itemNo));}
+        else if(colId==='itemNo'){
+          const codeSp=sp('stk-code',r.itemNo);
+          codeSp.style.cursor='pointer';codeSp.style.textDecoration='underline dotted';
+          codeSp.title='Dublu-click: structura BOM cu necesar și stocuri';
+          td.appendChild(codeSp);
+          let _tapT2=0;
+          const openBom2=()=>openPlanBomPopup(r.itemNo,r.qty);
+          td.addEventListener('dblclick',e=>{e.stopPropagation();openBom2();});
+          td.addEventListener('touchend',e=>{
+            const now=Date.now();
+            if(now-_tapT2<400){e.preventDefault();e.stopPropagation();openBom2();}
+            _tapT2=now;
+          });
+        }
         else if(colId==='matNo'){td.appendChild(sp('stk-code',r.matNo===r.itemNo?'(FP) '+r.matNo:r.matNo));}
         else if(colId==='matName'){td.textContent=r.matName;td.title=r.matName;}
         else if(colId==='matType'){const cls=r.matType==='M'?'stk-type-m':r.matType==='P'?'stk-type-b':'stk-type-d';if(r.matType)td.appendChild(sp(cls,r.matType));}
