@@ -11552,7 +11552,7 @@ function printPV2(st){
         ${visCols.some(c=>c==='toProduceQty')?`<td style="text-align:right;padding:4px 6px">${fmtN(totalProd)} buc</td>`:''}
         ${visCols.some(c=>c==='wcMinutes')?`<td style="text-align:right;padding:4px 6px;color:#93c5fd">${fmtBowTime(rows.reduce((s,r)=>s+(r.wcMinutes||0),0))}</td>`:''}
       </tr>`;
-      html+=`<div style="margin-bottom:16px;page-break-inside:avoid">
+      html+=`<div class="wc-block" style="margin-bottom:14px">
         <div style="background:#1e3a5f;color:#fff;padding:6px 10px;font-size:${fs+1}pt;font-weight:800;border-radius:4px 4px 0 0">
           ⚙ ${wc}${wcType?' ['+wcType+']':''} · <b>${rows.length} comp</b> · <b>${fmtN(totalProd)} buc</b> · <b>${totalH.toFixed(1)}h</b>
         </div>
@@ -11580,14 +11580,19 @@ function printPV2(st){
     #pv2-print-overlay table{width:100%;border-collapse:collapse}
     #pv2-print-overlay th{background:#334155;color:#fff;padding:3px 6px;font-size:${fs}pt;font-weight:700;text-align:left;border:1px solid #0f172a}
     #pv2-print-overlay td{padding:2px 6px;border:1px solid #e2e8f0;font-size:${fs}pt;vertical-align:middle}
-    .pv2-print-hdr{font-size:${fs+3}pt;font-weight:800;margin:0 0 2px;padding:0;page-break-before:avoid;break-before:avoid}
-    .pv2-print-sub{font-size:${fs-1}pt;color:#555;margin:0 0 8px;padding:0;page-break-after:avoid;break-after:avoid}
-    #pv2-print-overlay > .wc-block:first-of-type{page-break-before:avoid;break-before:avoid}
+    .pv2-print-hdr{font-size:${fs+3}pt;font-weight:800;margin:0 0 2px;padding:0}
+    .pv2-print-sub{font-size:${fs-1}pt;color:#555;margin:0 0 6px;padding:0}
+    .wc-block{margin-bottom:14px}
     @page{size:A3 landscape;margin:7mm}
     @media print{
       #pv2-print-overlay{padding:0!important;margin:0!important}
-      #pv2-print-overlay > *:first-child{margin-top:0!important;page-break-before:avoid!important}
       .po-close{display:none!important}
+      /* Blocks and tables flow freely; only individual rows stay intact */
+      .wc-block{page-break-inside:auto!important;break-inside:auto!important}
+      #pv2-print-overlay table{page-break-inside:auto!important;break-inside:auto!important}
+      #pv2-print-overlay tr{page-break-inside:avoid!important;break-inside:avoid!important}
+      #pv2-print-overlay thead{display:table-header-group!important}
+      #pv2-print-overlay tbody{display:table-row-group!important}
     }
   </style><div class="pv2-print-hdr">Plan de lucru pentru workshop: ${workshopLabel}</div><div class="pv2-print-sub">${tabLabel} · Transport: ${st.transportDays}z · Producție: ${st.prodDays}z · Eficiență: ${st.efficiency}% · Zoom: ${zoom}% · ${new Date().toLocaleDateString('ro-RO')}${filterInfo?' · Filtre: '+filterInfo:''}</div>${html}`;
   // Buttons in a fixed-position wrapper — never in document flow
