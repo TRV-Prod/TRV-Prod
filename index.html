@@ -1323,9 +1323,9 @@ const S={
   planFilter:{
     colFilters:{},
     realizarePct:'all',
-    colOrder:['prio','itemNo','itemName','customer','qty','valoare','realizare','obs','_del'],
-    colWidths:{prio:60,itemNo:140,itemName:200,customer:200,qty:110,valoare:120,realizare:140,obs:200,_del:80},
-    visibleCols:new Set(['prio','itemNo','itemName','customer','qty','valoare','realizare','obs','_del']),
+    colOrder:['prio','itemNo','itemName','customer','qty','valoare','realizare','_subco','obs','_del'],
+    colWidths:{prio:60,itemNo:140,itemName:200,customer:200,qty:110,valoare:120,realizare:140,_subco:150,obs:200,_del:80},
+    visibleCols:new Set(['prio','itemNo','itemName','customer','qty','valoare','realizare','_subco','obs','_del']),
   },
   dispozitiiFilter:{
     q:'',wcFilter:null,fpFilter:'',onlyNeeded:true,
@@ -5831,6 +5831,29 @@ function _buildPlanTbody(wrap){
         });
         td.appendChild(ta);
       }
+      else if(colId==='_subco'){
+        // Aggregate all subcontractors used in this FP's BOM
+        const subs=new Set();
+        if(S.bowIdx){
+          for(const [k,rowsB] of S.bowIdx){
+            if(!k.startsWith(itemNo+'__'))continue;
+            for(const bo of rowsB){
+              const on=str(bo['Ope name']||bo['Ope descr']||'').toLowerCase();
+              if(on==='subcontracting'||on.includes('subco')){
+                const sup=str(bo['Supplier']||'').trim();
+                const t1=str(bo['Text_line1']||'').trim();
+                if(sup)subs.add(sup);else if(t1)subs.add(t1);
+              }
+            }
+          }
+        }
+        if(subs.size){
+          td.style.cssText+=';white-space:normal;line-height:1.4';
+          td.innerHTML=[...subs].slice(0,4).map(s=>`<span style="display:inline-block;padding:1px 5px;margin:1px;border-radius:8px;font-size:9px;font-weight:700;background:#fef3c7;color:#92400e;border:1px solid #fde047">${s}</span>`).join('');
+          if(subs.size>4)td.innerHTML+=`<span style="font-size:9px;color:#94a3b8"> +${subs.size-4}</span>`;
+          td.title=[...subs].join(', ');
+        } else {td.textContent='—';td.style.color='#cbd5e1';}
+      }
       else if(colId==='_del'){
         const btn=el('button','plan-del-btn');btn.textContent='✕ Sterge';
         btn.addEventListener('click',()=>{
@@ -5851,11 +5874,16 @@ function _buildPlanTbody(wrap){
     if(S.planExpanded?.has(itemNo)&&S.bomIdx){
       const bomTree=buildTree(itemNo,itemNo);
       const planQtyVal=plan.totalQty||1;
+      // Use the SAME calculation as Structura: calcNeeds returns needed per component
+      const _prevIgn=S.structIgnoreStock;S.structIgnoreStock=true;
+      const needsMap=S.stockIdx?calcNeeds(itemNo,planQtyVal):new Map();
+      S.structIgnoreStock=_prevIgn;
+      const bomFilt=S.planBomFilter||'FULL';
       const renderBomRows=(nodes,depth,mult)=>{
         nodes.forEach(n=>{
           const unQty=n.qty!=null?n.qty:1;
-          const cumQty=mult*unQty;
-          const needed=cumQty*planQtyVal;
+          // Needed comes from calcNeeds (identical to Structura), not manual multiplication
+          const needed=needsMap.get(n.matNo)?.needed ?? (mult*unQty*planQtyVal);
           const st=S.stockIdx?.get(n.matNo)||{onHand:0,totalWIP:0,wipByWC:{}};
           const oh=st.onHand||0;
           const lipsa=Math.max(0,needed-oh);
@@ -5868,6 +5896,20 @@ function _buildPlanTbody(wrap){
               subcoSup=str(bo['Supplier']||'').trim();
               if(subcoTxt||subcoSup)break;
             }
+          }
+          // Type filter (FULL / MAKE / PURCHASE)
+          const nType=n.isMake?'MAKE':'PURCHASE';
+          const hasMatchingChild=(node)=>{
+            if((node.isMake?'MAKE':'PURCHASE')===bomFilt)return true;
+            return (node.children||[]).some(hasMatchingChild);
+          };
+          const typeOk=bomFilt==='FULL'||nType===bomFilt||hasMatchingChild(n);
+          // Subco filter from column header
+          const scFilter=(pf2.colFilters?._subco||'').toLowerCase();
+          const scOk=!scFilter||(subcoTxt+' '+subcoSup).toLowerCase().includes(scFilter);
+          if(!typeOk||!scOk){
+            if(n.children&&n.children.length)renderBomRows(n.children,depth+1,mult*unQty);
+            return;
           }
           const btr=el('tr');
           btr.style.cssText=lipsa>0?'background:#fef7f7':'background:#fafbfc';
@@ -5915,6 +5957,11 @@ function _buildPlanTbody(wrap){
 
 function renderPlanPage(wrap){
   wrap.innerHTML='';
+  // Migration: add _subco column
+  {const p0=S.planFilter;
+   if(!p0.colOrder.includes('_subco')){const i=p0.colOrder.indexOf('obs');p0.colOrder.splice(i<0?7:i,0,'_subco');}
+   if(!p0.colWidths._subco)p0.colWidths._subco=150;
+   if(!p0.visibleCols.has('_subco'))p0.visibleCols.add('_subco');}
   if(!S.planData.size){
     const empty=dv('');empty.style.cssText='padding:40px;text-align:center;color:var(--text3);font-size:13px';
     empty.innerHTML='<div style="font-size:32px;margin-bottom:12px">📋</div>Planul este gol.<br>Importa un fisier Excel sau adauga linii din <b>Order Book</b>.';
@@ -5923,10 +5970,40 @@ function renderPlanPage(wrap){
 
   const pf2=S.planFilter;
   const visCols=pf2.colOrder.filter(c=>pf2.visibleCols.has(c));
-  const COL_LABELS={prio:'Prio',itemNo:'Item no',itemName:'Denumire',customer:'Client',qty:'Cantitate',valoare:'Valoare EUR',realizare:'% Realizare',obs:'Observatii',_del:''};
-  const FILTERABLE=new Set(['prio','itemNo','itemName','customer','qty','valoare','obs']);
+  const COL_LABELS={prio:'Prio',itemNo:'Item no',itemName:'Denumire',customer:'Client',qty:'Cantitate',valoare:'Valoare EUR',realizare:'% Realizare',_subco:'Subcontractor',obs:'Observatii',_del:''};
+  const FILTERABLE=new Set(['prio','itemNo','itemName','customer','qty','valoare','obs','_subco']);
 
   // Summary bar
+  // BOM view selector
+  if(!S.planBomFilter)S.planBomFilter='FULL';
+  const bomSelBar=dv('');bomSelBar.style.cssText='display:flex;align-items:center;gap:8px;padding:6px 14px;background:#fff;border-bottom:1px solid var(--border);flex-shrink:0;flex-wrap:wrap';
+  bomSelBar.innerHTML='<span style="font-size:10px;font-weight:700;color:var(--text3);text-transform:uppercase">Structură BOM:</span>';
+  const mkBomBtn=(lbl,val,col)=>{
+    const b=el('button');b.textContent=lbl;b.dataset.bv=val;b.dataset.bc=col;
+    b.style.cssText=`height:26px;padding:0 12px;border-radius:13px;border:1.5px solid ${col};font-size:11px;font-weight:700;cursor:pointer;background:${S.planBomFilter===val?col:'#fff'};color:${S.planBomFilter===val?'#fff':col}`;
+    b.addEventListener('click',()=>{
+      S.planBomFilter=val;
+      bomSelBar.querySelectorAll('button').forEach(b2=>{const v=b2.dataset.bv,c=b2.dataset.bc;b2.style.background=v===val?c:'#fff';b2.style.color=v===val?'#fff':c;});
+      _rebuildPlanBody(wrap);
+    });
+    return b;
+  };
+  bomSelBar.appendChild(mkBomBtn('FULL','FULL','#475569'));
+  bomSelBar.appendChild(mkBomBtn('MAKE','MAKE','#6d28d9'));
+  bomSelBar.appendChild(mkBomBtn('PURCHASE','PURCHASE','#065f46'));
+  const expAllBtn=el('button');expAllBtn.textContent='⊞ Extinde tot';
+  expAllBtn.style.cssText='height:26px;padding:0 10px;border:1px solid var(--border);border-radius:4px;background:#f8f9fb;cursor:pointer;font-size:11px;margin-left:12px';
+  expAllBtn.addEventListener('click',()=>{
+    if(!S.planExpanded)S.planExpanded=new Set();
+    [...S.planData.keys()].forEach(k=>S.planExpanded.add(k));
+    _rebuildPlanBody(wrap);
+  });
+  const colAllBtn=el('button');colAllBtn.textContent='⊟ Colapsează';
+  colAllBtn.style.cssText='height:26px;padding:0 10px;border:1px solid var(--border);border-radius:4px;background:#f8f9fb;cursor:pointer;font-size:11px';
+  colAllBtn.addEventListener('click',()=>{S.planExpanded=new Set();_rebuildPlanBody(wrap);});
+  bomSelBar.appendChild(expAllBtn);bomSelBar.appendChild(colAllBtn);
+  wrap.appendChild(bomSelBar);
+
   const sum=dv('plan-summary');sum.className='plan-summary';
   sum.style.cssText='padding:6px 14px;background:#f0fdf4;border-bottom:1px solid #86efac;font-size:11px;color:#15803d;font-weight:600;flex-shrink:0';
   wrap.appendChild(sum);
@@ -5985,6 +6062,11 @@ function renderPlanPage(wrap){
         const col=e.target.getAttribute('data-plan-filter');
         const ss=e.target.selectionStart,se=e.target.selectionEnd;
         pf2.colFilters[col]=e.target.value;
+        // Subco filter: auto-expand all so matching components are visible
+        if(col==='_subco'&&e.target.value.trim()){
+          if(!S.planExpanded)S.planExpanded=new Set();
+          [...S.planData.keys()].forEach(k=>S.planExpanded.add(k));
+        }
         _rebuildPlanBody(wrap);
         const restored=wrap.querySelector(`input[data-plan-filter="${col}"]`);
         if(restored){restored.focus();try{restored.setSelectionRange(ss,se);}catch(_){}}
