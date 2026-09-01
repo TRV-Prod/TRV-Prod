@@ -5948,16 +5948,18 @@ function _buildPlanTbody(wrap){
           }
           // Type filter (FULL / MAKE / PURCHASE)
           const nType=n.isMake?'MAKE':'PURCHASE';
-          const hasMatchingChild=(node)=>{
-            if((node.isMake?'MAKE':'PURCHASE')===bomFilt)return true;
-            return (node.children||[]).some(hasMatchingChild);
+          // Show node if: FULL, OR node matches type, OR any descendant matches type
+          const subtreeHas=(node,want)=>{
+            if((node.isMake?'MAKE':'PURCHASE')===want)return true;
+            return (node.children||[]).some(ch=>subtreeHas(ch,want));
           };
-          const typeOk=bomFilt==='FULL'||nType===bomFilt||hasMatchingChild(n);
+          const typeOk=(bomFilt==='FULL')||(nType===bomFilt)||subtreeHas(n,bomFilt);
           // Subco filter from column header
-          const scFilter=(pf2.colFilters?._subco||'').toLowerCase();
-          const scOk=!scFilter||(subcoTxt+' '+subcoSup).toLowerCase().includes(scFilter);
+          const scFilter=(pf2.colFilters&&pf2.colFilters._subco?String(pf2.colFilters._subco):'').toLowerCase().trim();
+          const scOk=!scFilter||((subcoTxt+' '+subcoSup).toLowerCase().includes(scFilter));
           if(!typeOk||!scOk){
-            if(n.children&&n.children.length)renderBomRows(n.children,depth+1,mult*unQty);
+            // Skip this row but still walk children (a match may exist deeper)
+            if(n.children&&n.children.length)renderBomRows(n.children,depth,mult*unQty);
             return;
           }
           const btr=el('tr');
@@ -6033,7 +6035,11 @@ function renderPlanPage(wrap){
     b.addEventListener('click',()=>{
       S.planBomFilter=val;
       bomSelBar.querySelectorAll('button').forEach(b2=>{const v=b2.dataset.bv,c=b2.dataset.bc;b2.style.background=v===val?c:'#fff';b2.style.color=v===val?'#fff':c;});
-      _rebuildPlanBody(wrap);
+      // Preserve expanded state — rebuild only the tbody
+      const tblEl=document.querySelector('.plan-table');
+      const oldTb=tblEl?.querySelector('tbody');
+      if(tblEl&&oldTb){tblEl.replaceChild(_buildPlanTbody(wrap),oldTb);}
+      else{_rebuildPlanBody(wrap);}
     });
     return b;
   };
