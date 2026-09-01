@@ -5892,7 +5892,15 @@ function _buildPlanTbody(wrap){
       }
     }
     if(S.planExpanded.has(itemNo)&&S.bomIdx){
-      const bomTree=buildTree(itemNo,itemNo);
+      let bomTree=[];
+      try{bomTree=buildTree(itemNo,itemNo)||[];}
+      catch(err){console.error('[Plan expand] buildTree error:',err);}
+      if(!bomTree.length){
+        const btr0=el('tr');const btd0=el('td');btd0.colSpan=visCols.length;
+        btd0.style.cssText='padding:8px 20px;font-size:11px;color:#92400e;background:#fef9c3;font-style:italic';
+        btd0.textContent='Nicio componentă BOM pentru '+itemNo+' (cheie: '+itemNo+'__'+itemNo+'). Verificați dacă produsul există în BOM.';
+        btr0.appendChild(btd0);tbody.appendChild(btr0);
+      }
       const planQtyVal=plan.totalQty||1;
       // Use the SAME calculation as Structura: calcNeeds returns needed per component
       const _prevIgn=S.structIgnoreStock;S.structIgnoreStock=true;
@@ -5901,9 +5909,10 @@ function _buildPlanTbody(wrap){
       const bomFilt=S.planBomFilter||'FULL';
       const renderBomRows=(nodes,depth,mult)=>{
         nodes.forEach(n=>{
-          const unQty=n.qty!=null?n.qty:1;
+          const unQty=parseFloat(String(n.qty??1).replace(',','.'))||1;
           // Needed comes from calcNeeds (identical to Structura), not manual multiplication
-          const needed=needsMap.get(n.matNo)?.needed ?? (mult*unQty*planQtyVal);
+          const nd=needsMap.get(n.matNo);
+          const needed=(nd&&nd.needed!=null)?nd.needed:(mult*unQty*planQtyVal);
           const st=S.stockIdx?.get(n.matNo)||{onHand:0,totalWIP:0,wipByWC:{}};
           const oh=st.onHand||0;
           const lipsa=Math.max(0,needed-oh);
@@ -5955,7 +5964,7 @@ function _buildPlanTbody(wrap){
             '<div style="min-width:130px;flex-shrink:0"><div style="font-size:8.5px;color:#94a3b8;text-transform:uppercase">WIP</div>'+wipHtml+'</div>'+
             '<div style="text-align:right;min-width:56px;flex-shrink:0"><div style="font-size:8.5px;color:#94a3b8;text-transform:uppercase">Lipsă</div><div style="font-weight:800;font-size:12px;color:'+(lipsa>0?'#dc2626':'#15803d')+'">'+(lipsa>0?fmtN(Math.round(lipsa*1000)/1000):'✓')+'</div></div>';
           btd.appendChild(inner);btr.appendChild(btd);tbody.appendChild(btr);
-          if(n.children&&n.children.length)renderBomRows(n.children,depth+1,cumQty);
+          if(n.children&&n.children.length)renderBomRows(n.children,depth+1,mult*unQty);
         });
       };
       if(bomTree.length)renderBomRows(bomTree,0,1);
