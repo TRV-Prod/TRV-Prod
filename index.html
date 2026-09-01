@@ -5709,6 +5709,26 @@ function getPlanRows(){
       if(pf.itemName&&!(first.itemName||'').toLowerCase().includes(pf.itemName.toLowerCase()))return false;
       if(pf.customer&&!customer.toLowerCase().includes(pf.customer.toLowerCase()))return false;
       if(pf.obs&&!(S.planObs[itemNo]||'').toLowerCase().includes(pf.obs.toLowerCase()))return false;
+      // Subcontractor filter — search all BOW subco entries for this FP
+      if(pf._subco&&pf._subco.trim()){
+        const q=pf._subco.toLowerCase().trim();
+        let found=false;
+        if(S.bowIdx){
+          for(const [k,rowsB] of S.bowIdx){
+            if(!k.startsWith(itemNo+'__'))continue;
+            for(const bo of rowsB){
+              const on=str(bo['Ope name']||bo['Ope descr']||'').toLowerCase();
+              if(on==='subcontracting'||on.includes('subco')){
+                const sup=str(bo['Supplier']||'').toLowerCase();
+                const t1=str(bo['Text_line1']||'').toLowerCase();
+                if(sup.includes(q)||t1.includes(q)){found=true;break;}
+              }
+            }
+            if(found)break;
+          }
+        }
+        if(!found)return false;
+      }
       // Numeric filters — contains/starts-with match on formatted value
       if(pf.qty&&!plan.totalQty.toString().includes(pf.qty.replace(',','.')))return false;
       if(pf.valoare&&!valoare.toFixed(2).includes(pf.valoare.replace(',','.')))return false;
