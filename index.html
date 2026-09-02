@@ -5946,14 +5946,9 @@ function _buildPlanTbody(wrap){
               if(subcoTxt||subcoSup)break;
             }
           }
-          // Type filter (FULL / MAKE / PURCHASE)
+          // Type filter (FULL / MAKE / PURCHASE) — strict: only matching type is shown
           const nType=n.isMake?'MAKE':'PURCHASE';
-          // Show node if: FULL, OR node matches type, OR any descendant matches type
-          const subtreeHas=(node,want)=>{
-            if((node.isMake?'MAKE':'PURCHASE')===want)return true;
-            return (node.children||[]).some(ch=>subtreeHas(ch,want));
-          };
-          const typeOk=(bomFilt==='FULL')||(nType===bomFilt)||subtreeHas(n,bomFilt);
+          const typeOk=(bomFilt==='FULL')||(nType===bomFilt);
           // Subco filter from column header
           const scFilter=(pf2.colFilters&&pf2.colFilters._subco?String(pf2.colFilters._subco):'').toLowerCase().trim();
           const scOk=!scFilter||((subcoTxt+' '+subcoSup).toLowerCase().includes(scFilter));
