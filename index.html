@@ -1527,6 +1527,7 @@ async function sbLoadAllData(){
     {k:'po', label:'Planning Overview',apply:(r,t)=>applyPo(r,t)},
     {k:'ob', label:'Order Book',apply:(r,t)=>applyOb(r,t)},
     {k:'wcs',label:'Workcenter Setup',apply:(r,t)=>applyWcSetup(r,t)},
+    {k:'stocklist',label:'TRV-Stocklist',apply:(r,t)=>applyStocklist(r,t)},
     {k:'intransit',label:'In Transit',apply:(r,t)=>applyInTransit(r,t)},
   ]){
     S.loadMsg=`Se incarca ${label}...`;setLoadMsg(S.loadMsg);await yieldFrame();
@@ -3569,6 +3570,7 @@ function renderFisiereTab(){
    {key:'ob',icon:'📦',title:'Open Order Lines',desc:'Comenzi deschise: Entry/Confirm/Request dt, cantitati, clienti, preturi'},
    {key:'wcs',icon:'🔧',title:'Workcenter Setup',desc:'Workcenter Type (Initial/Intermediary/Final Op), numarul de echipe (Prod Team) pentru calculul capacitatii'},
    {key:'scanari',icon:'📡',title:'QV Start-Stop History',desc:'Date de scanare productie: timpi efectivi per operator, workcenter si operatie'},
+   {key:'stocklist',icon:'📦',title:'TRV-Stocklist',desc:'Stocuri fizice pe locatii: ITEM NR, ITEM NAME, ITEM DESCRIPTION, LOCATION, STANDARD QTY, STANDARD U/M. Inlocuieste On Hand din Planning Overview.'},
    {key:'intransit',icon:'🚚',title:'In Transit',desc:'Produse finite expediate, neinca receptionate de client. Se scad din stocul On Hand al produselor finale.'},
    {key:'molist',icon:'🏭',title:'MO List (PMO/MO)',desc:'Lista Manufacturing Orders cu operatii: MO, produs, workcenter, cantitati raportate'}]
   .forEach(fc=>{
