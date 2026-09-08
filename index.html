@@ -13062,12 +13062,15 @@ function buildDispozitiiData(){
     }
     for(let i=0;i<ops.length;i++){
       const op=ops[i];
-      let alreadyDone=onHand;
-      let wipBefore=0,wipAtWC=wipAtIdx.get(i)||0;
+      let wipDownstream=0,wipBefore=0;
+      const wipAtWC=wipAtIdx.get(i)||0;
       for(const [seqIdx,wq] of wipAtIdx){
-        if(seqIdx>i)alreadyDone+=wq;
+        if(seqIdx>i)wipDownstream+=wq;
         if(seqIdx<i)wipBefore+=wq;
       }
+      // Pieces already past this operation = on-hand + WIP at later stages,
+      // capped at what's actually needed (cannot "over-cover")
+      const alreadyDone=Math.min(unitsNeeded,onHand+wipDownstream);
       const dePrelucrat=Math.max(0,unitsNeeded-alreadyDone);
       const execTimeMin=dePrelucrat>0?(dePrelucrat*op.runT+op.setupT)/eff:0;
       const totalMin=unitsNeeded>0?(unitsNeeded*op.runT+op.setupT)/eff:0;
@@ -13076,7 +13079,9 @@ function buildDispozitiiData(){
         wcName:op.wcName,opNo:op.opNo,opSeq:op.seq,opNoNum:op.opNoNum,
         totalNec:unitsNeeded,onHand,
         wipAtWC,wipBefore,wipTotal:Math.max(0,stock.totalWIP||0),
+        wipDownstream,
         dePrelucrat,execTimeMin,totalMin,
+        _calcNote:'Necesar '+fmtN(unitsNeeded)+' − OnHand '+fmtN(onHand)+' − WIP după această op.: '+fmtN(wipDownstream)+' = '+fmtN(dePrelucrat),
         wipByWC,
       });
     }
@@ -13097,12 +13102,15 @@ function buildDispozitiiData(){
       const bomRows=S.bomIdx?.get(key)||[];
       for(const row of bomRows){
         const matNo=str(row['Material no']);if(!matNo)continue;
-        const unQty=parseFloat(row['Material qty'])||1;
+        const unQty=parseFloat(String(row['Material qty']||'1').replace(',','.'))||1;
         const neededQty=parentQty*unQty;
-        const st=S.stockIdx?.get(matNo)||{onHand:0,type:'',name:''};
+        const st=S.stockIdx?.get(matNo)||{onHand:0,type:'',name:'',totalWIP:0};
         if(st.type!=='P')processComp(itemNo,prio,matNo,st.name||'',st.type||'',neededQty);
-        if(!vis.has(matNo)&&(S.bomIdx?.get(`${itemNo}__${matNo}`)||[]).length>0)
-          walkBOM(matNo,neededQty,new Set([...vis,matNo]));
+        // Children need only the NET quantity (same rule as Structura's _calcNodeNeeds)
+        const availHere=Math.max(0,st.onHand||0)+Math.max(0,st.totalWIP||0);
+        const netForChildren=Math.max(0,neededQty-availHere);
+        if(netForChildren>0&&!vis.has(matNo)&&(S.bomIdx?.get(`${itemNo}__${matNo}`)||[]).length>0)
+          walkBOM(matNo,netForChildren,new Set([...vis,matNo]));
       }
     };
     walkBOM(itemNo,effectiveQty,new Set([itemNo]));
@@ -13347,7 +13355,7 @@ function renderSubcomponentePanel(container){
           if(r.wipBefore>0){const s=sp('pdm-num',fmtN(r.wipBefore));s.style.cssText='display:block;text-align:right;color:#d97706;font-weight:600';td.appendChild(s);}
           else{td.style.color='var(--text4)';td.textContent='—';}
         }
-        else if(colId==='dePrelucrat'){const s=sp('pdm-num',fmtN(r.dePrelucrat));s.style.cssText=`display:block;text-align:right;font-weight:800;color:${r.dePrelucrat>0?'#dc2626':'#15803d'}`;td.appendChild(s);}
+        else if(colId==='dePrelucrat'){const s=sp('pdm-num',fmtN(r.dePrelucrat));s.style.cssText=`display:block;text-align:right;font-weight:800;color:${r.dePrelucrat>0?'#dc2626':'#15803d'}`;if(r._calcNote){s.title=r._calcNote;s.style.cursor='help';}td.appendChild(s);}
         else if(colId==='execTimeMin'){
           if(r.execTimeMin>0.01){const s=sp('pdm-num',fmtMin(r.execTimeMin));s.style.cssText='display:block;text-align:right;font-weight:700;color:#7c3aed';td.appendChild(s);}
           else{const s=sp('pdm-done',done?'✓':'—');td.appendChild(s);}
