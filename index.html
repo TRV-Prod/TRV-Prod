@@ -8044,16 +8044,34 @@ function openNecesarComponenteModal(prefix){
     renderNec();
   },50);
 
-  const getFiltered=()=>[...compMap.values()].filter(c=>{
-    if(ncFilter!=='all'&&(c.isMake?'MAKE':'BUY')!==ncFilter)return false;
-    const st=S.stockIdx.get(c.matNo)||{onHand:0};
-    if(ncOnlyMissing&&(st.onHand||0)>=c.total)return false;
-    return true;
-  }).sort((a,b)=>{
-    const sa=S.stockIdx.get(a.matNo)||{onHand:0},sb=S.stockIdx.get(b.matNo)||{onHand:0};
-    const da=a.total-(sa.onHand||0),db=b.total-(sb.onHand||0);
-    return db-da;  // biggest shortage first
-  });
+  let ncSortCol='diff',ncSortDir=-1;  // default: biggest shortage first
+  const getFiltered=()=>{
+    const arr=[...compMap.values()].filter(c=>{
+      if(ncFilter!=='all'&&(c.isMake?'MAKE':'BUY')!==ncFilter)return false;
+      const st=S.stockIdx.get(c.matNo)||{onHand:0};
+      if(ncOnlyMissing&&(st.onHand||0)>=c.total)return false;
+      return true;
+    });
+    const getVal=(c,col)=>{
+      const st=S.stockIdx.get(c.matNo)||{onHand:0,totalWIP:0};
+      switch(col){
+        case 'matNo':  return c.matNo||'';
+        case 'name':   return c.name||'';
+        case 'type':   return c.isMake?'MAKE':'BUY';
+        case 'total':  return c.total||0;
+        case 'stock':  return st.onHand||0;
+        case 'diff':   return (c.total||0)-(st.onHand||0);
+        case 'detail': return c.sources?.length||0;
+        default:       return '';
+      }
+    };
+    arr.sort((a,b)=>{
+      const va=getVal(a,ncSortCol),vb=getVal(b,ncSortCol);
+      if(typeof va==='number'&&typeof vb==='number')return ncSortDir*(va-vb);
+      return ncSortDir*String(va).localeCompare(String(vb),'ro');
+    });
+    return arr;
+  };
 
   function renderNec(){
     body.innerHTML='';
@@ -8063,15 +8081,25 @@ function openNecesarComponenteModal(prefix){
     const tbl=el('table');tbl.style.cssText='width:100%;border-collapse:collapse;font-size:11.5px';
     const thead=el('thead');const hr=el('tr');hr.style.cssText='background:#0e7490;color:#fff;position:sticky;top:0;z-index:2';
     [
-      {l:'Componentă',a:'left',w:''},
-      {l:'Tip',a:'center',w:'52px'},
-      {l:'Necesar Total',a:'right',w:'95px'},
-      {l:'În Stoc',a:'right',w:'82px'},
-      {l:'Diferență',a:'right',w:'90px'},
-      {l:'Detaliu calcul',a:'left',w:'300px'},
-    ].forEach(({l,a,w})=>{
-      const th=el('th');th.style.cssText=`padding:8px 10px;text-align:${a};font-size:9.5px;font-weight:800;text-transform:uppercase;letter-spacing:.05em;${w?'width:'+w+';min-width:'+w:''}`;
-      th.textContent=l;hr.appendChild(th);
+      {l:'Componentă',a:'left',w:'',k:'matNo'},
+      {l:'Tip',a:'center',w:'52px',k:'type'},
+      {l:'Necesar Total',a:'right',w:'95px',k:'total'},
+      {l:'În Stoc',a:'right',w:'82px',k:'stock'},
+      {l:'Diferență',a:'right',w:'90px',k:'diff'},
+      {l:'Detaliu calcul',a:'left',w:'300px',k:'detail'},
+    ].forEach(({l,a,w,k})=>{
+      const th=el('th');
+      th.style.cssText=`padding:8px 10px;text-align:${a};font-size:9.5px;font-weight:800;text-transform:uppercase;letter-spacing:.05em;cursor:pointer;user-select:none;${w?'width:'+w+';min-width:'+w:''}`;
+      const active=ncSortCol===k;
+      const arrow=active?(ncSortDir===1?' ▲':' ▼'):' ⇅';
+      th.innerHTML=`${l}<span style="opacity:${active?1:.35};margin-left:3px;font-size:9px">${arrow}</span>`;
+      th.title='Click pentru sortare';
+      th.addEventListener('click',()=>{
+        if(ncSortCol===k)ncSortDir=-ncSortDir;
+        else{ncSortCol=k;ncSortDir=(k==='matNo'||k==='name'||k==='type')?1:-1;}
+        renderNec();
+      });
+      hr.appendChild(th);
     });
     thead.appendChild(hr);tbl.appendChild(thead);
 
@@ -8159,7 +8187,7 @@ function openNecesarComponenteModal(prefix){
       @media print{#nec-print-overlay{padding:0!important}.spo-close{display:none!important}}
     </style>
     <div style="font-size:14pt;font-weight:800;color:#0e7490;margin-bottom:2px">📊 Necesar Componente${prefix?' — '+prefix:''}</div>
-    <div style="font-size:9pt;color:#555;margin-bottom:8px">${rows.length} componente${ncFilter!=='all'?' · Filtru: '+ncFilter:''} · ${new Date().toLocaleDateString('ro-RO')}</div>
+    <div style="font-size:9pt;color:#555;margin-bottom:8px">${rows.length} componente${ncFilter!=='all'?' · Filtru: '+ncFilter:''}${ncOnlyMissing?' · doar cu lipsă':''} · Sortare: ${({matNo:'Cod',type:'Tip',total:'Necesar',stock:'Stoc',diff:'Diferență',detail:'Detaliu'})[ncSortCol]||ncSortCol} ${ncSortDir===1?'crescător':'descrescător'} · ${new Date().toLocaleDateString('ro-RO')}</div>
     <table><thead><tr>
       <th>Componentă</th><th style="width:45px;text-align:center">Tip</th>
       <th style="width:70px;text-align:right">Necesar Total</th><th style="width:60px;text-align:right">În Stoc</th>
