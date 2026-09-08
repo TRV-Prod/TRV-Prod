@@ -1278,6 +1278,8 @@ const S={
   perfWcGroups:[],
   perfLivrari:[],  // raw rows saved to Supabase
   paintIdx:null,
+  stocklistData:null,
+  stocklistIdx:null,
   asmFP:null,
   asmQty:1,
   asmExp:new Set(),
@@ -1288,9 +1290,9 @@ const S={
   perfWcGroups:[],  // [{groupName, wcs:[wcName,...]}]
   efficienta:100,
   stockFilter:{q:'',type:'all',onlyWip:false,onlyZero:false,onlyNeg:false,sortCol:'fp',sortDir:1,
-    colOrder:['fp','code','name','type','oh','mo','wip','wc'],
-    colWidths:{fp:155,code:145,name:240,type:55,oh:90,mo:90,wip:90,wc:220},
-    visibleCols:new Set(['fp','code','name','type','oh','mo','wip','wc']),
+    colOrder:['code','name','desc','um','loc','fp','type','oh','mo','wip','wc'],
+    colWidths:{code:145,name:220,desc:220,um:55,loc:120,fp:150,type:55,oh:90,mo:90,wip:90,wc:220},
+    visibleCols:new Set(['code','name','desc','um','loc','fp','type','oh','mo','wip','wc']),
     colFilters:{},
   },
   obFilter:{
@@ -1386,6 +1388,7 @@ const GH_COLS={
   ob: ['Entry dt','Confirm dt','Request dt','Request_week','Confirm_week','Item_no','Alias_no','Item_name',
        'Customer_no','Customer_name','Sales_price','Currency','Sales price EUR','Ordered','Allocated',
        'Delivered','Invoiced','Open qty','Net weight','CO_no','CO_line','Cust order no','Valoare de livrat EUR'],
+  stocklist: ['ITEM NR','ITEM NAME','ITEM DESCRIPTION','LOCATION','STANDARD QTY','STANDARD U/M'],
   scanari: ['Transaction dt','MO','Product','Workcenter','Workcenter name','Op no','Employee name','Manufact qty','Scrapped qty','Start_MS','Finish_MS','Used_tm_MS'],
   molist:  ['MO','Product','Prod name','Whs','MO start','MO finish','MO st','MO tp','Op no','Seq no','W/C-Comp','Name','U/M','Status','Order qty','Report qty','Report dt','Hrs'],
 };
@@ -1649,6 +1652,67 @@ function applyWcSetup(rows,ts){
 }
 
 
+
+// ── Stocklist: physical stock from TRV-Stocklist.xlsx (replaces PO on-hand) ──
+function applyStocklist(rows,ts){
+  S.stocklistData=rows;
+  // Aggregate by ITEM NR (an item can exist in multiple locations)
+  const idx=new Map();
+  for(const r of rows){
+    const itemNo=str(r['ITEM NR']||'').trim();
+    if(!itemNo)continue;
+    const qty=parseFloat(String(r['STANDARD QTY']??'0').replace(',','.'))||0;
+    const loc=str(r['LOCATION']||'').trim();
+    const um=str(r['STANDARD U/M']||'').trim();
+    if(!idx.has(itemNo)){
+      idx.set(itemNo,{
+        itemNo,
+        name:str(r['ITEM NAME']||'').trim(),
+        desc:str(r['ITEM DESCRIPTION']||'').trim(),
+        um,
+        totalQty:0,
+        locations:[],
+      });
+    }
+    const e=idx.get(itemNo);
+    e.totalQty+=qty;
+    if(loc)e.locations.push({loc,qty,um});
+    if(!e.um&&um)e.um=um;
+  }
+  S.stocklistIdx=idx;
+  S.meta.stocklist={rows:rows.length,items:idx.size,ts};
+  // Merge into stockIdx: stocklist qty overrides PO on-hand
+  mergeStocklistIntoStockIdx();
+  console.log('[Stocklist] items:',idx.size,'rows:',rows.length);
+}
+
+function mergeStocklistIntoStockIdx(){
+  if(!S.stocklistIdx)return;
+  if(!S.stockIdx)S.stockIdx=new Map();
+  for(const [itemNo,sl] of S.stocklistIdx){
+    const existing=S.stockIdx.get(itemNo);
+    if(existing){
+      // Keep PO's WIP/FP/type info, replace on-hand with stocklist qty
+      existing.onHand=sl.totalQty;
+      existing.slName=sl.name;
+      existing.slDesc=sl.desc;
+      existing.slUm=sl.um;
+      existing.slLocations=sl.locations;
+      if(!existing.name)existing.name=sl.name;
+    } else {
+      // Item exists only in stocklist (no PO row) — create entry
+      S.stockIdx.set(itemNo,{
+        itemNo,name:sl.name,desc:sl.desc,
+        onHand:sl.totalQty,onMO:0,totalWIP:0,wipByWC:{},
+        fps:[],type:'',group:'',itemGroup:'',unit:sl.um,
+        slName:sl.name,slDesc:sl.desc,slUm:sl.um,slLocations:sl.locations,
+        _fromStocklist:true,
+      });
+    }
+  }
+  console.log('[Stocklist] merged into stockIdx, total items:',S.stockIdx.size);
+}
+
 function applyScanari(rows,ts){
   // Ensure scanData is always a plain array (robust against IDB/Supabase deserialization)
   const arr=Array.isArray(rows)?rows:[];
@@ -1885,6 +1949,7 @@ function applyBom(rows,ts){
 }
 function applyBow(rows,ts){S.bowData=rows;S.bowIdx=buildBowIdx(rows);S.meta.bow={rows:rows.length,ts};}
 function applyPo(rows,ts){
+  // (stocklist merge happens at the end of this function)
   S.poData=rows;
   S.meta.po={rows:rows.length,ts};
   // Build stock index keyed by clean material code.
@@ -1924,6 +1989,7 @@ function applyPo(rows,ts){
   S.stockIdx=idx;
   // Apply any already-loaded transit corrections
   applyInTransitToStock();
+  if(S.stocklistIdx)mergeStocklistIntoStockIdx();
 }
 
 function applyOb(rows,ts){
@@ -3542,7 +3608,7 @@ function renderFisiereTab(){
         const fileCrTs=file.lastModified||ts;  // file creation/modification date
         S.meta._fileCrTs=S.meta._fileCrTs||{};
         S.meta._fileCrTs[fc.key]=fileCrTs;
-        if(fc.key==='bom')applyBom(rows,ts);else if(fc.key==='bow')applyBow(rows,ts);else if(fc.key==='po')applyPo(rows,ts);else if(fc.key==='wcs'){applyWcSetup(rows,ts);rows._ts=ts;}else if(fc.key==='intransit'){applyInTransit(rows,ts);rows._ts=ts;}else if(fc.key==='molist'){applyMoList(rows,ts);await dbSave(fc.key,{rows,ts});if(S.sbCfg&&S.session?.role==='admin'){lbl.innerHTML='';lbl.appendChild(el('span','spin-sm'));lbl.appendChild(document.createTextNode(' Upload Supabase (.xlsx)...'));try{const xlsxBlob=new Blob([buf],{type:'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'});const moUrl=`${S.sbCfg.url}/storage/v1/object/${S.sbCfg.bucket}/data-molist.xlsx`;const moR=await fetch(moUrl,{method:'POST',headers:{'Authorization':'Bearer '+S.sbCfg.key,'apikey':S.sbCfg.key,'x-upsert':'true','Content-Type':'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'},body:xlsxBlob});if(!moR.ok)throw new Error(await moR.text());await sbUpload(S.sbCfg,'data-molist-meta.json',{ts,rowCount:rows.length});}catch(e){console.warn('Supabase molist upload:',e);showToast('⚠ Supabase molist upload esuat: '+e.message,'err',4000);}}}else if(fc.key==='scanari'){applyScanari(rows,ts);}else applyOb(rows,ts);
+        if(fc.key==='bom')applyBom(rows,ts);else if(fc.key==='bow')applyBow(rows,ts);else if(fc.key==='po')applyPo(rows,ts);else if(fc.key==='wcs'){applyWcSetup(rows,ts);rows._ts=ts;}else if(fc.key==='stocklist'){applyStocklist(rows,ts);rows._ts=ts;}else if(fc.key==='intransit'){applyInTransit(rows,ts);rows._ts=ts;}else if(fc.key==='molist'){applyMoList(rows,ts);await dbSave(fc.key,{rows,ts});if(S.sbCfg&&S.session?.role==='admin'){lbl.innerHTML='';lbl.appendChild(el('span','spin-sm'));lbl.appendChild(document.createTextNode(' Upload Supabase (.xlsx)...'));try{const xlsxBlob=new Blob([buf],{type:'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'});const moUrl=`${S.sbCfg.url}/storage/v1/object/${S.sbCfg.bucket}/data-molist.xlsx`;const moR=await fetch(moUrl,{method:'POST',headers:{'Authorization':'Bearer '+S.sbCfg.key,'apikey':S.sbCfg.key,'x-upsert':'true','Content-Type':'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'},body:xlsxBlob});if(!moR.ok)throw new Error(await moR.text());await sbUpload(S.sbCfg,'data-molist-meta.json',{ts,rowCount:rows.length});}catch(e){console.warn('Supabase molist upload:',e);showToast('⚠ Supabase molist upload esuat: '+e.message,'err',4000);}}}else if(fc.key==='scanari'){applyScanari(rows,ts);}else applyOb(rows,ts);
         if(fc.key==='scanari'){
           // Large file: split by month in IDB, binary in Supabase
           lbl.innerHTML='';lbl.appendChild(el('span','spin-sm'));lbl.appendChild(document.createTextNode(' Se salveaza local...'));
@@ -3757,6 +3823,13 @@ function renderStructura(){
 
 /* ── STOCURI TAB ── */
 function renderStocuriTab(){
+  // Migration: add stocklist columns
+  {const sf=S.stockFilter;
+   [['desc',220],['um',55],['loc',120]].forEach(([k,w])=>{
+     if(!sf.colOrder.includes(k)){const i=sf.colOrder.indexOf('fp');sf.colOrder.splice(i<0?3:i,0,k);}
+     if(!sf.colWidths[k])sf.colWidths[k]=w;
+     if(!sf.visibleCols.has(k))sf.visibleCols.add(k);
+   });}
   const page=dv('stocuri-page');
   if(!S.stockIdx){
     page.style.flex='1';
@@ -3916,11 +3989,14 @@ function renderStocuriTab(){
 
 /* ── Column definitions (mutable order & widths live in S.stockFilter) ── */
 const COL_DEFS={
-  fp:  {label:'Final Product',  sortable:true,  numeric:false},
   code:{label:'Cod material',   sortable:true,  numeric:false},
-  name:{label:'Denumire',       sortable:true,  numeric:false},
+  name:{label:'Item Name',      sortable:true,  numeric:false},
+  desc:{label:'Item Description',sortable:true, numeric:false},
+  um:  {label:'U/M',            sortable:true,  numeric:false},
+  loc: {label:'Locație / Qty',  sortable:false, numeric:false},
+  fp:  {label:'Final Product',  sortable:true,  numeric:false},
   type:{label:'Tip',            sortable:true,  numeric:false},
-  oh:  {label:'On Hand',        sortable:true,  numeric:true},
+  oh:  {label:'Standard Qty',   sortable:true,  numeric:true},
   mo:  {label:'On MO',          sortable:true,  numeric:true},
   wip: {label:'Total WIP',      sortable:true,  numeric:true},
   wc:  {label:'WIP / Workcenter',sortable:false, numeric:false},
@@ -3957,6 +4033,9 @@ function getFilteredStock(){
     if(col==='oh')return dir*(a[1].onHand-b[1].onHand);
     if(col==='wip')return dir*(a[1].totalWIP-b[1].totalWIP);
     if(col==='mo')return dir*(a[1].onMO-b[1].onMO);
+    if(col==='desc')return dir*String(a[1].slDesc||a[1].desc||'').localeCompare(String(b[1].slDesc||b[1].desc||''),'ro');
+    if(col==='um')return dir*String(a[1].slUm||a[1].unit||'').localeCompare(String(b[1].slUm||b[1].unit||''),'ro');
+    if(col==='type')return dir*String(a[1].type||'').localeCompare(String(b[1].type||''));
     return 0;
   });
 }
@@ -4001,6 +4080,29 @@ function _buildStkTbody(){
         td.appendChild(sp('stk-code',code));
       } else if(colId==='name'){
         const nm=sp('stk-name',st.name||'—');nm.title=st.name||'';td.appendChild(nm);
+      } else if(colId==='desc'){
+        const d=st.slDesc||st.desc||'';
+        const dd=sp('stk-name',d||'—');dd.title=d;dd.style.color='#6b7280';td.appendChild(dd);
+      } else if(colId==='um'){
+        td.textContent=st.slUm||st.unit||'—';
+        td.style.cssText+=';text-align:center;font-size:10.5px;color:#6b7280';
+      } else if(colId==='loc'){
+        const locs=st.slLocations||[];
+        if(locs.length){
+          const lw=dv('');lw.style.cssText='display:flex;flex-wrap:wrap;gap:3px';
+          locs.slice(0,3).forEach(l=>{
+            const lp=sp('');lp.textContent=`${l.loc}: ${fmtN(l.qty)}`;
+            lp.style.cssText='display:inline-block;padding:1px 5px;border-radius:8px;font-size:9px;font-weight:600;background:#e0f2fe;color:#0369a1;border:1px solid #7dd3fc;white-space:nowrap';
+            lw.appendChild(lp);
+          });
+          if(locs.length>3){
+            const m=sp('');m.textContent=`+${locs.length-3}`;
+            m.style.cssText='font-size:9px;color:#94a3b8';
+            m.title=locs.slice(3).map(l=>`${l.loc}: ${fmtN(l.qty)}`).join(', ');
+            lw.appendChild(m);
+          }
+          td.appendChild(lw);
+        } else td.textContent='—';
       } else if(colId==='type'){
         const cls=st.type==='M'?'stk-type-m':st.type==='P'?'stk-type-b':'stk-type-d';
         td.appendChild(sp(cls,st.type||'—'));
