@@ -2643,6 +2643,8 @@ function exportStructuraPDF(){
   cloned.id='struct-print-clone';
   cloned.querySelectorAll('input,textarea').forEach(e=>e.remove());
   cloned.querySelectorAll('button').forEach(e=>{if(!e.classList.contains('n-tog'))e.remove();});
+  // Remove empty action wrappers left behind
+  cloned.querySelectorAll('div').forEach(e=>{if(!e.children.length&&!e.textContent.trim()&&e.style.display==='inline-flex')e.remove();});
   cloned.querySelectorAll('[style*="cursor"]').forEach(e=>{e.style.cursor='default';});
   // Strip nested IDs so print CSS selectors don't match twice
   cloned.querySelectorAll('[id]').forEach(e=>{if(e!==cloned)e.removeAttribute('id');});
@@ -2842,7 +2844,9 @@ function mkNode(node){
   row.appendChild(inner);
 
   if(hasCh){
-    row.addEventListener('click',()=>{
+    row.addEventListener('click',(e)=>{
+      // Ignore clicks on action buttons
+      if(e.target.closest('button'))return;
       S.exp.has(node.id)?S.exp.delete(node.id):S.exp.add(node.id);
       reTree();
     });
@@ -2985,6 +2989,17 @@ function reTree(){
   const fpr=el('div','fp-hdr-row');
   fpr.appendChild(sp('fp-hdr-code',S.selFP));
   if(fp?.drawing)fpr.appendChild(sp('fp-hdr-draw',fp.drawing));
+  // Action icons for the final product
+  const fpAct=el('div');fpAct.style.cssText='display:inline-flex;align-items:center;gap:5px;margin-left:6px';
+  const fpDwg=mkDrawingBtn(S.selFP,false);
+  fpDwg.style.height='24px';fpDwg.style.fontSize='11px';fpDwg.style.padding='0 9px';
+  fpAct.appendChild(fpDwg);
+  const fpStk=el('button');fpStk.innerHTML='📦 Stoc';
+  fpStk.title='Detalii stoc produs final';
+  fpStk.style.cssText='height:24px;padding:0 9px;border:1px solid #86efac;border-radius:4px;background:#f0fdf4;color:#15803d;cursor:pointer;font-size:11px;font-weight:700';
+  fpStk.addEventListener('click',e=>{e.stopPropagation();openCompStockPopup(S.selFP,S.qtyInput,true);});
+  fpAct.appendChild(fpStk);
+  fpr.appendChild(fpAct);
   fph.appendChild(fpr);
 
   // Stock row (hidden entirely when ignoring stock)
