@@ -1321,6 +1321,7 @@ const S={
   planData:new Map(),
   planObs:{},
   planExpanded:new Set(),
+  planCompObs:{},  // shared notes per component: key = 'FP|matNo'
   planPrio:{},  // itemNo → priority string (persisted)
   planFilter:{
     colFilters:{},
@@ -6133,6 +6134,142 @@ function openDrawingsPathSettings(){
   document.body.appendChild(ov);
 }
 
+
+// ── Shared component notes in Planificare (Supabase) ──
+async function savePlanCompObs(){
+  if(!S.sbCfg)return;
+  try{await sbUpload(S.sbCfg,'data-plan-comp-obs.json',S.planCompObs||{});}catch(e){console.warn('savePlanCompObs',e);}
+}
+async function loadPlanCompObs(){
+  if(!S.sbCfg)return;
+  try{const d=await sbDownload(S.sbCfg,'data-plan-comp-obs.json');if(d&&typeof d==='object')S.planCompObs=d;}
+  catch(e){console.warn('loadPlanCompObs',e);}
+}
+
+
+/* ═══════════════════════════════════════════════════════════════
+   POPUP STOC COMPONENTĂ — detalii stoc / locații / WIP / BOM
+═══════════════════════════════════════════════════════════════ */
+function openCompStockPopup(matNo,neededQty,showBom){
+  document.getElementById('comp-stock-overlay')?.remove();
+  const st=S.stockIdx?.get(matNo)||{onHand:0,onMO:0,totalWIP:0,wipByWC:{},name:'',fps:[]};
+  const oh=st.onHand||0, wip=st.totalWIP||0, mo=st.onMO||0;
+  const lipsa=neededQty!=null?Math.max(0,neededQty-oh):null;
+
+  const ov=dv('');ov.id='comp-stock-overlay';
+  ov.style.cssText='position:fixed;inset:0;background:rgba(0,0,0,.5);z-index:9450;display:flex;align-items:center;justify-content:center;padding:14px';
+  const modal=dv('');modal.style.cssText='background:#fff;border-radius:12px;box-shadow:0 24px 70px rgba(0,0,0,.35);width:min(720px,96vw);max-height:88vh;display:flex;flex-direction:column;overflow:hidden';
+
+  const hdr=dv('');hdr.style.cssText='background:#15803d;color:#fff;padding:12px 18px;display:flex;justify-content:space-between;align-items:center;flex-shrink:0';
+  hdr.innerHTML='<div><div style="font-weight:900;font-size:14px;font-family:monospace">'+matNo+'</div>'+
+    '<div style="font-size:10.5px;opacity:.88;margin-top:2px">'+(st.slName||st.name||'')+'</div></div>';
+  const cb=el('button');cb.textContent='✕';cb.style.cssText='border:none;background:rgba(255,255,255,.2);color:#fff;width:30px;height:30px;border-radius:5px;cursor:pointer;font-size:15px';
+  cb.addEventListener('click',()=>ov.remove());hdr.appendChild(cb);modal.appendChild(hdr);
+
+  const body=dv('');body.style.cssText='flex:1;overflow-y:auto;padding:16px 20px';
+
+  // KPI cards
+  const kpi=dv('');kpi.style.cssText='display:grid;grid-template-columns:repeat(auto-fit,minmax(110px,1fr));gap:10px;margin-bottom:16px';
+  const mkKpi=(lbl,val,col,sub)=>{
+    const c=dv('');c.style.cssText='background:#f8f9fb;border:1.5px solid var(--border);border-radius:8px;padding:10px 12px;text-align:center';
+    c.innerHTML='<div style="font-size:9px;color:#94a3b8;text-transform:uppercase;font-weight:700;letter-spacing:.04em">'+lbl+'</div>'+
+      '<div style="font-size:22px;font-weight:900;color:'+col+';margin-top:2px">'+val+'</div>'+
+      (sub?'<div style="font-size:9px;color:#94a3b8;margin-top:1px">'+sub+'</div>':'');
+    return c;
+  };
+  if(neededQty!=null)kpi.appendChild(mkKpi('Necesar',fmtN(Math.round(neededQty*1000)/1000),'#1d4ed8'));
+  kpi.appendChild(mkKpi('On Hand',fmtN(oh),oh>0?'#15803d':'#dc2626',st.slUm||st.unit||''));
+  kpi.appendChild(mkKpi('Total WIP',fmtN(wip),wip>0?'#7c3aed':'#94a3b8'));
+  if(mo)kpi.appendChild(mkKpi('On MO',fmtN(mo),'#475569'));
+  if(lipsa!=null)kpi.appendChild(mkKpi('Lipsă',lipsa>0?fmtN(Math.round(lipsa*1000)/1000):'✓',lipsa>0?'#dc2626':'#15803d'));
+  body.appendChild(kpi);
+
+  const mkSection=(title,contentEl)=>{
+    const s=dv('');s.style.cssText='margin-bottom:14px';
+    const t=dv('');t.style.cssText='font-size:10px;font-weight:800;color:#475569;text-transform:uppercase;letter-spacing:.05em;margin-bottom:6px';
+    t.textContent=title;s.appendChild(t);s.appendChild(contentEl);return s;
+  };
+
+  // Locations
+  const locs=st.slLocations||[];
+  if(locs.length){
+    const lw=dv('');lw.style.cssText='display:flex;flex-wrap:wrap;gap:5px';
+    locs.sort((a,b)=>b.qty-a.qty).forEach(l=>{
+      const p=sp('');p.innerHTML='<b>'+l.loc+'</b>: '+fmtN(l.qty)+(l.um?' '+l.um:'');
+      p.style.cssText='display:inline-block;padding:3px 9px;border-radius:12px;font-size:11px;background:#e0f2fe;color:#0369a1;border:1px solid #7dd3fc';
+      lw.appendChild(p);
+    });
+    body.appendChild(mkSection('📍 Locații stoc',lw));
+  }
+
+  // WIP per workcenter
+  const wipE=Object.entries(st.wipByWC||{}).filter(([,q])=>q>0).sort((a,b)=>b[1]-a[1]);
+  if(wipE.length){
+    const ww=dv('');ww.style.cssText='display:flex;flex-direction:column;gap:4px';
+    wipE.forEach(([wc,q])=>{
+      const r=dv('');r.style.cssText='display:flex;justify-content:space-between;align-items:center;padding:5px 10px;background:#faf5ff;border:1px solid #e9d5ff;border-radius:5px;font-size:11.5px';
+      r.innerHTML='<span style="color:#475569">'+wcLabel(wc)+'</span><b style="color:#7c3aed;font-size:13px">'+fmtN(q)+'</b>';
+      ww.appendChild(r);
+    });
+    body.appendChild(mkSection('🔄 WIP pe workcentere',ww));
+  }
+
+  // Used in FPs
+  const fpsArr=st.fps instanceof Set?[...st.fps]:(Array.isArray(st.fps)?st.fps:[]);
+  if(fpsArr.length){
+    const fw=dv('');fw.style.cssText='display:flex;flex-wrap:wrap;gap:4px';
+    fpsArr.slice(0,20).forEach(fp=>{
+      const p=sp('');p.textContent=fp;
+      p.style.cssText='display:inline-block;padding:2px 7px;border-radius:10px;font-size:10px;font-family:monospace;background:#eff6ff;color:#1d4ed8;border:1px solid #bfdbfe';
+      fw.appendChild(p);
+    });
+    if(fpsArr.length>20){const m=sp('');m.textContent='+'+(fpsArr.length-20);m.style.cssText='font-size:10px;color:#94a3b8;align-self:center';fw.appendChild(m);}
+    body.appendChild(mkSection('🏭 Folosit în produse finale ('+fpsArr.length+')',fw));
+  }
+
+  // BOM sub-structure
+  if(showBom&&S.bomIdx){
+    let subTree=[];
+    try{subTree=buildTree(matNo,matNo)||[];}catch(_){}
+    if(subTree.length){
+      const tw=dv('');tw.style.cssText='font-size:11px';
+      const walk=(nodes,d)=>{
+        nodes.forEach(n2=>{
+          const s2=S.stockIdx?.get(n2.matNo)||{onHand:0};
+          const r=dv('');r.style.cssText='display:flex;justify-content:space-between;padding:4px 8px;padding-left:'+(8+d*16)+'px;border-bottom:1px solid #f1f5f9';
+          r.innerHTML='<span>'+(d>0?'<span style="color:#cbd5e1;font-family:monospace">└─ </span>':'')+
+            '<b style="font-family:monospace;color:'+(n2.isMake?'#6d28d9':'#065f46')+'">'+n2.matNo+'</b>'+
+            (n2.matName?'<span style="color:#6b7280;font-size:10px;margin-left:5px">'+n2.matName+'</span>':'')+'</span>'+
+            '<span style="white-space:nowrap"><span style="color:#94a3b8;font-size:10px">×'+fmtN(n2.qty||1)+'</span>'+
+            ' <b style="color:'+((s2.onHand||0)>0?'#15803d':'#dc2626')+'">'+fmtN(s2.onHand||0)+'</b></span>';
+          tw.appendChild(r);
+          if(n2.children&&n2.children.length)walk(n2.children,d+1);
+        });
+      };
+      walk(subTree,0);
+      body.appendChild(mkSection('🌳 Structura componentei',tw));
+    }
+  }
+
+  modal.appendChild(body);
+
+  // Footer with drawing shortcut
+  const foot=dv('');foot.style.cssText='padding:10px 20px;border-top:1px solid var(--border);display:flex;gap:8px;justify-content:flex-end;flex-shrink:0';
+  const dwgF=mkDrawingBtn(matNo,false);
+  dwgF.style.height='32px';dwgF.style.fontSize='11.5px';dwgF.style.padding='0 14px';
+  foot.appendChild(dwgF);
+  const okB=el('button');okB.textContent='✓ Închide';
+  okB.style.cssText='height:32px;padding:0 18px;border:none;background:#15803d;color:#fff;border-radius:5px;cursor:pointer;font-size:12px;font-weight:700';
+  okB.addEventListener('click',()=>ov.remove());
+  foot.appendChild(okB);modal.appendChild(foot);
+
+  ov.appendChild(modal);
+  ov.addEventListener('click',e=>{if(e.target===ov)ov.remove();});
+  document.body.appendChild(ov);
+  const esc=e=>{if(e.key==='Escape'){ov.remove();document.removeEventListener('keydown',esc);}};
+  document.addEventListener('keydown',esc);
+}
+
 function renderPlanificare(){
   const page=dv('plan-page');
 
@@ -6591,11 +6728,52 @@ function _buildPlanTbody(wrap){
             '<div style="text-align:right;min-width:58px;flex-shrink:0"><div style="font-size:8.5px;color:#94a3b8;text-transform:uppercase">On Hand</div><div style="font-weight:800;color:'+(oh>=needed?'#15803d':oh>0?'#ca8a04':'#dc2626')+';font-size:12px">'+fmtN(oh)+'</div></div>'+
             '<div style="min-width:130px;flex-shrink:0"><div style="font-size:8.5px;color:#94a3b8;text-transform:uppercase">WIP</div>'+wipHtml+'</div>'+
             '<div style="text-align:right;min-width:56px;flex-shrink:0"><div style="font-size:8.5px;color:#94a3b8;text-transform:uppercase">Lipsă</div><div style="font-weight:800;font-size:12px;color:'+(lipsa>0?'#dc2626':'#15803d')+'">'+(lipsa>0?fmtN(Math.round(lipsa*1000)/1000):'✓')+'</div></div>';
-          // Add drawing button for MAKE components
-          if(n.isMake){
-            const dwgWrap=dv('');dwgWrap.style.cssText='flex-shrink:0;display:flex;align-items:center';
-            dwgWrap.appendChild(mkDrawingBtn(n.matNo,true));
-            inner.insertBefore(dwgWrap,inner.children[1]||null);
+          // ── Icons + shared note, inserted right after the component name block ──
+          const nameBlock=inner.firstElementChild;
+          if(nameBlock){
+            const iconRow=dv('');
+            iconRow.style.cssText='display:flex;align-items:center;gap:4px;margin-top:3px;padding-left:18px;flex-wrap:wrap';
+            // 📐 Drawing (all components that have a drawing number)
+            const dwgB=mkDrawingBtn(n.matNo,true);
+            dwgB.title='Desene tehnice pentru '+n.matNo;
+            iconRow.appendChild(dwgB);
+            // 📦 Stock info popup
+            const stkB=el('button');stkB.textContent='📦';
+            stkB.title='Detalii stoc pentru '+n.matNo;
+            stkB.style.cssText='height:20px;padding:0 5px;border:1px solid #86efac;border-radius:4px;background:#f0fdf4;color:#15803d;cursor:pointer;font-size:10px';
+            stkB.addEventListener('click',e=>{e.stopPropagation();openCompStockPopup(n.matNo,needed);});
+            iconRow.appendChild(stkB);
+            // 🌳 BOM sub-structure (only if it has children)
+            if(n.children&&n.children.length){
+              const bomB=el('button');bomB.textContent='🌳';
+              bomB.title='Structura BOM a componentei';
+              bomB.style.cssText='height:20px;padding:0 5px;border:1px solid #c4b5fd;border-radius:4px;background:#ede9fe;color:#7c3aed;cursor:pointer;font-size:10px';
+              bomB.addEventListener('click',e=>{e.stopPropagation();openCompStockPopup(n.matNo,needed,true);});
+              iconRow.appendChild(bomB);
+            }
+            // ✎ Shared note (visible to all users)
+            const obsKey=itemNo+'|'+n.matNo;
+            const obsInp=el('input');obsInp.type='text';
+            obsInp.value=(S.planCompObs&&S.planCompObs[obsKey])||'';
+            obsInp.placeholder='✎ Observație (vizibilă pentru toți)...';
+            obsInp.setAttribute('data-plan-comp-obs',obsKey);
+            const hasVal=!!obsInp.value;
+            obsInp.style.cssText='flex:1;min-width:150px;max-width:340px;height:22px;padding:0 7px;border:1px solid '+(hasVal?'#fbbf24':'#e2e8f0')+';border-radius:4px;font-size:10.5px;background:'+(hasVal?'#fffbeb':'#fff');
+            ['input','keydown','keyup','change','click','focus','paste'].forEach(ev2=>
+              obsInp.addEventListener(ev2,e=>e.stopPropagation()));
+            const saveObs=()=>{
+              const v=obsInp.value.trim();
+              if(!S.planCompObs)S.planCompObs={};
+              if(v)S.planCompObs[obsKey]=v;else delete S.planCompObs[obsKey];
+              obsInp.style.borderColor=v?'#fbbf24':'#e2e8f0';
+              obsInp.style.background=v?'#fffbeb':'#fff';
+              savePlanCompObs();
+            };
+            obsInp.addEventListener('change',saveObs);
+            obsInp.addEventListener('blur',saveObs);
+            obsInp.addEventListener('keydown',e=>{if(e.key==='Enter'){e.preventDefault();saveObs();obsInp.blur();}});
+            iconRow.appendChild(obsInp);
+            nameBlock.appendChild(iconRow);
           }
           btd.appendChild(inner);btr.appendChild(btd);tbody.appendChild(btr);
           if(n.children&&n.children.length)renderBomRows(n.children,depth+1,mult*unQty);
@@ -6620,6 +6798,7 @@ function _buildPlanTbody(wrap){
 
 function renderPlanPage(wrap){
   wrap.innerHTML='';
+  if(!S._planObsLoaded){S._planObsLoaded=true;loadPlanCompObs();}
   // Migration: add _subco column
   {const p0=S.planFilter;
    if(!p0.colOrder.includes('_dwg')){const i=p0.colOrder.indexOf('itemName');p0.colOrder.splice(i<0?2:i,0,'_dwg');}
@@ -11849,7 +12028,7 @@ function renderPlanV2(){
     function rebuildAllTbodies(){
       // Don't destroy inputs while user is editing priority/obs/qty fields
       const fa=document.activeElement;
-      if(fa&&(fa.getAttribute('data-pv2-prio-key')||fa.getAttribute('data-pv2-obs-key')||fa.getAttribute('data-pv2-qty-key')||fa.tagName==='INPUT'||fa.tagName==='TEXTAREA'))return;
+      if(fa&&(fa.getAttribute('data-pv2-prio-key')||fa.getAttribute('data-pv2-obs-key')||fa.getAttribute('data-pv2-qty-key')||fa.getAttribute('data-plan-comp-obs')||fa.tagName==='INPUT'||fa.tagName==='TEXTAREA'))return;
       document.querySelectorAll('#pv2-content table[id^="pv2-tbl-"]').forEach(tbl=>{
         const wc=tbl._wc;const visCols_=tbl._visCols;
         if(!wc||!visCols_)return;
