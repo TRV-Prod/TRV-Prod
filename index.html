@@ -2816,6 +2816,23 @@ function mkNode(node){
   if(q)inner.appendChild(sp('n-qty',' '+q));
   inner.appendChild(sp(`n-tag ${node.isMake?'make':'buy'}`,node.matType||'BUY'));
 
+  // ── Action icons: drawing + stock details ──
+  const actWrap=el('div');
+  actWrap.style.cssText='display:inline-flex;align-items:center;gap:4px;margin-left:8px;vertical-align:middle';
+  const dwgB=mkDrawingBtn(node.matNo,true);
+  dwgB.title='Desene tehnice pentru '+node.matNo;
+  actWrap.appendChild(dwgB);
+  const stkB=el('button');stkB.textContent='📦';
+  stkB.title='Detalii stoc / locații / WIP pentru '+node.matNo;
+  stkB.style.cssText='height:19px;padding:0 5px;border:1px solid #86efac;border-radius:4px;background:#f0fdf4;color:#15803d;cursor:pointer;font-size:9.5px;line-height:1';
+  stkB.addEventListener('click',e=>{
+    e.stopPropagation();
+    const nd=_needs?.get(node.matNo);
+    openCompStockPopup(node.matNo,nd?nd.needed:null,node.children.length>0);
+  });
+  actWrap.appendChild(stkB);
+  inner.appendChild(actWrap);
+
   // ── Stock + Requirement badges (hidden entirely when ignoring stock) ──
   if(S.stockIdx&&!S.structIgnoreStock){
     const stock=S.stockIdx.get(node.matNo);
