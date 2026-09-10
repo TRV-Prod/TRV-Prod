@@ -1290,9 +1290,9 @@ const S={
   perfWcGroups:[],  // [{groupName, wcs:[wcName,...]}]
   efficienta:100,
   stockFilter:{q:'',type:'all',onlyWip:false,onlyZero:false,onlyNeg:false,sortCol:'fp',sortDir:1,
-    colOrder:['code','name','desc','um','loc','fp','type','oh','mo','wip','wc'],
+    colOrder:['fp','code','name','desc','um','loc','type','oh','mo','wip','wc'],
     colWidths:{code:145,name:220,desc:220,um:55,loc:120,fp:150,type:55,oh:90,mo:90,wip:90,wc:220},
-    visibleCols:new Set(['code','name','desc','um','loc','fp','type','oh','mo','wip','wc']),
+    visibleCols:new Set(['fp','code','name','desc','um','loc','type','oh','mo','wip','wc']),
     colFilters:{},
   },
   obFilter:{
@@ -1687,6 +1687,43 @@ function applyStocklist(rows,ts){
   console.log('[Stocklist] items:',idx.size,'rows:',rows.length);
 }
 
+// Fill missing FP list and Type from BOM data
+function enrichStockFromBom(){
+  if(!S.bomData||!S.stockIdx)return;
+  // Build: matNo -> {fps:Set, type}
+  const bomInfo=new Map();
+  for(const br of S.bomData){
+    const matNo=str(br['Material no']||'').trim();
+    if(!matNo)continue;
+    const fp=str(br['Final product']||'').trim();
+    const mtype=str(br['Material type']||'').trim().toUpperCase();
+    if(!bomInfo.has(matNo))bomInfo.set(matNo,{fps:new Set(),type:''});
+    const e=bomInfo.get(matNo);
+    if(fp)e.fps.add(fp);
+    if(!e.type&&mtype)e.type=mtype;
+  }
+  // Also treat Final product codes themselves as items
+  for(const br of S.bomData){
+    const fp=str(br['Final product']||'').trim();
+    if(!fp)continue;
+    if(!bomInfo.has(fp))bomInfo.set(fp,{fps:new Set([fp]),type:'M'});
+  }
+  let enrichedFp=0,enrichedType=0;
+  for(const [code,st] of S.stockIdx){
+    const bi=bomInfo.get(code);
+    if(!bi)continue;
+    const curFps=st.fps instanceof Set?[...st.fps]:(Array.isArray(st.fps)?st.fps:[]);
+    if(!curFps.length&&bi.fps.size){st.fps=[...bi.fps];enrichedFp++;}
+    if(!st.type&&bi.type){
+      // Normalize: M/MAKE -> M, P/BUY/PURCHASE -> P
+      const t=bi.type;
+      st.type=(t==='M'||t.startsWith('MAKE'))?'M':(t==='P'||t.startsWith('BUY')||t.startsWith('PURCH'))?'P':t.charAt(0);
+      enrichedType++;
+    }
+  }
+  console.log('[BOM enrich] FP added:',enrichedFp,'Type added:',enrichedType);
+}
+
 function mergeStocklistIntoStockIdx(){
   if(!S.stocklistIdx)return;
   if(!S.stockIdx)S.stockIdx=new Map();
@@ -1711,6 +1748,7 @@ function mergeStocklistIntoStockIdx(){
       });
     }
   }
+  enrichStockFromBom();
   console.log('[Stocklist] merged into stockIdx, total items:',S.stockIdx.size);
 }
 
@@ -1945,6 +1983,7 @@ function applyBom(rows,ts){
       S.paintIdx.get(comp).push({no:matNo,desc});
   }
   console.log('[BOM] paintIdx: keys=',S.paintIdx.size, [...S.paintIdx.entries()].slice(0,3));
+  if(S.stockIdx)enrichStockFromBom();
   // If PV2 has already been rendered, force re-computation so paint cols get populated
   if(S.tab==='planv2'&&typeof render==='function')setTimeout(()=>render(),100);
 }
@@ -1991,6 +2030,7 @@ function applyPo(rows,ts){
   // Apply any already-loaded transit corrections
   applyInTransitToStock();
   if(S.stocklistIdx)mergeStocklistIntoStockIdx();
+  else if(S.bomData)enrichStockFromBom();
 }
 
 function applyOb(rows,ts){
@@ -3828,10 +3868,16 @@ function renderStocuriTab(){
   // Migration: add stocklist columns
   {const sf=S.stockFilter;
    [['desc',220],['um',55],['loc',120]].forEach(([k,w])=>{
-     if(!sf.colOrder.includes(k)){const i=sf.colOrder.indexOf('fp');sf.colOrder.splice(i<0?3:i,0,k);}
+     if(!sf.colOrder.includes(k)){const i=sf.colOrder.indexOf('type');sf.colOrder.splice(i<0?3:i,0,k);}
      if(!sf.colWidths[k])sf.colWidths[k]=w;
      if(!sf.visibleCols.has(k))sf.visibleCols.add(k);
-   });}
+   });
+   // Ensure FP is first column
+   if(sf.colOrder[0]!=='fp'){
+     sf.colOrder=sf.colOrder.filter(c=>c!=='fp');
+     sf.colOrder.unshift('fp');
+   }
+   if(!sf.visibleCols.has('fp'))sf.visibleCols.add('fp');}
   const page=dv('stocuri-page');
   if(!S.stockIdx){
     page.style.flex='1';
