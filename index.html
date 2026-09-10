@@ -5826,31 +5826,56 @@ async function _loadDwgIndex(){
   return null;
 }
 
-async function _buildDwgIndex(handle,onProgress){
-  const names=[];
+// Full or incremental index build.
+// incremental=true → keeps existing names, adds only files not already indexed.
+async function _buildDwgIndex(handle,onProgress,incremental){
+  let existing=[];
+  if(incremental){
+    const stored=await _dwgIdbGet('dwgIndex');
+    if(stored&&Array.isArray(stored.names))existing=stored.names;
+  }
+  const known=new Set(existing.map(s=>s.toLowerCase()));
+  const added=[];
+  const seen=new Set();
   let n=0;
   for await(const entry of handle.values()){
-    if(entry.kind==='file'){
-      names.push(entry.name);
-      if(++n%3000===0&&onProgress)onProgress(n);
-    }
+    if(entry.kind!=='file')continue;
+    n++;
+    const nm=entry.name;
+    const lo=nm.toLowerCase();
+    seen.add(lo);
+    if(!known.has(lo))added.push(nm);
+    if(n%3000===0&&onProgress)onProgress(n,added.length);
   }
-  names.sort((a,b)=>a.localeCompare(b,'ro',{numeric:true}));
+  // Drop names that no longer exist on disk (deleted files)
+  const kept=incremental?existing.filter(s=>seen.has(s.toLowerCase())):[];
+  const names=incremental?kept.concat(added):added;
+  names.sort((a,b)=>{const x=a.toLowerCase(),y=b.toLowerCase();return x<y?-1:x>y?1:0;});
   _dwgFileCache=names;
   await _dwgIdbSet('dwgIndex',{names,ts:Date.now(),folder:handle.name});
-  return names;
+  return {names,total:n,added:added.length,removed:incremental?(existing.length-kept.length):0};
 }
 
-// Binary search for prefix range in a sorted array — O(log n) instead of O(n)
+// Prefix search — plain code-unit comparison (must match the sort used when indexing).
+// Locale/numeric collation breaks prefix ranges, so we use simple lowercase ordering.
 function _prefixRange(sorted,prefix){
-  const p=prefix.toLowerCase();
-  const cmp=(s)=>s.toLowerCase().slice(0,p.length).localeCompare(p,'ro',{numeric:true});
+  const p=String(prefix).toLowerCase();
+  if(!p)return [];
+  const key=(s)=>String(s).toLowerCase();
+  // Lower bound: first index where key(s) >= p
   let lo=0,hi=sorted.length;
-  while(lo<hi){const mid=(lo+hi)>>1;if(cmp(sorted[mid])<0)lo=mid+1;else hi=mid;}
+  while(lo<hi){const mid=(lo+hi)>>1;if(key(sorted[mid])<p)lo=mid+1;else hi=mid;}
   const start=lo;
-  hi=sorted.length;
-  while(lo<hi){const mid=(lo+hi)>>1;if(cmp(sorted[mid])<=0)lo=mid+1;else hi=mid;}
-  return sorted.slice(start,lo);
+  // Upper bound: first index where key(s) does NOT start with p
+  hi=sorted.length;lo=start;
+  while(lo<hi){const mid=(lo+hi)>>1;if(key(sorted[mid]).startsWith(p))lo=mid+1;else hi=mid;}
+  const res=sorted.slice(start,lo);
+  // Safety net: if binary search found nothing but the index is not sorted as expected,
+  // fall back to a linear scan (guarantees correctness).
+  if(!res.length){
+    return sorted.filter(s=>key(s).startsWith(p));
+  }
+  return res;
 }
 
 // Open browser popup with matching drawing files
@@ -5863,8 +5888,17 @@ async function openDrawingSearch(drawingNo){
   const modal=dv('');modal.style.cssText='background:#fff;border-radius:12px;box-shadow:0 24px 70px rgba(0,0,0,.4);width:min(1000px,97vw);height:min(88vh,900px);display:flex;flex-direction:column;overflow:hidden';
 
   const hdr=dv('');hdr.style.cssText='background:#0369a1;color:#fff;padding:11px 18px;display:flex;justify-content:space-between;align-items:center;flex-shrink:0;gap:10px';
-  hdr.innerHTML='<div><div style="font-weight:800;font-size:14px;font-family:monospace">📐 '+drawingNo+'</div>'+
-    '<div style="font-size:10px;opacity:.85" id="dwg-status">…</div></div>';
+  const hdrLeft=dv('');hdrLeft.style.cssText='flex:1;min-width:0';
+  hdrLeft.innerHTML='<div style="font-size:10px;opacity:.85;margin-bottom:3px" id="dwg-status">…</div>';
+  const srchWrap=dv('');srchWrap.style.cssText='display:flex;gap:5px;align-items:center';
+  const srchInp=el('input');srchInp.type='text';srchInp.value=drawingNo;
+  srchInp.style.cssText='flex:1;max-width:320px;height:28px;padding:0 9px;border:none;border-radius:5px;font-size:12.5px;font-family:monospace;font-weight:700;background:rgba(255,255,255,.95);color:#0369a1';
+  srchInp.placeholder='Caută după prefix...';
+  const srchBtn=el('button');srchBtn.textContent='🔍';
+  srchBtn.style.cssText='height:28px;padding:0 10px;border:none;border-radius:5px;background:rgba(255,255,255,.25);color:#fff;cursor:pointer;font-size:12px';
+  srchWrap.appendChild(srchInp);srchWrap.appendChild(srchBtn);
+  hdrLeft.insertBefore(srchWrap,hdrLeft.firstChild);
+  hdr.appendChild(hdrLeft);
   const cb=el('button');cb.textContent='✕';cb.style.cssText='border:none;background:rgba(255,255,255,.2);color:#fff;width:30px;height:30px;border-radius:5px;cursor:pointer;font-size:15px;flex-shrink:0';
   cb.addEventListener('click',()=>ov.remove());hdr.appendChild(cb);modal.appendChild(hdr);
 
@@ -5901,11 +5935,12 @@ async function openDrawingSearch(drawingNo){
       listInner.innerHTML='<div style="padding:20px;text-align:center;color:#475569;font-size:12px">⏳ Se indexează folderul...<br><span id="dwg-prog" style="font-size:10px;color:#94a3b8"></span></div>';
       if(st())st().textContent='Indexare...';
       try{
-        names=await _buildDwgIndex(h,n=>{
-          const p=document.getElementById('dwg-prog');if(p)p.textContent=n.toLocaleString('ro-RO')+' fișiere';
+        const res=await _buildDwgIndex(h,(n,add)=>{
+          const p=document.getElementById('dwg-prog');
+          if(p)p.textContent=n.toLocaleString('ro-RO')+' fișiere'+(add?' · '+add+' noi':'');
           if(st())st().textContent='Indexare... '+n.toLocaleString('ro-RO');
-        });
-        handle=h;renderResults();
+        },false);
+        names=res.names;handle=h;renderResults();
       }catch(e){listInner.innerHTML='<div style="padding:20px;color:#dc2626;font-size:12px">Eroare: '+e.message+'</div>';}
     });
     msg.appendChild(pb);
@@ -5919,15 +5954,17 @@ async function openDrawingSearch(drawingNo){
 
   // ── 2. Render results from cached index (instant, binary search) ──
   function renderResults(){
+    const q=(document.getElementById('dwg-result-overlay')?.querySelector('input')?.value||drawingNo).trim();
     const t0=performance.now();
-    const matches=_prefixRange(names,drawingNo);
+    const matches=_prefixRange(names,q);
     const ms=Math.round(performance.now()-t0);
     if(st())st().textContent=matches.length+' din '+names.length.toLocaleString('ro-RO')+' fișiere · '+ms+'ms';
 
     listInner.innerHTML='';
     if(!matches.length){
       const nf=dv('');nf.style.cssText='padding:20px;text-align:center;color:#94a3b8;font-size:12px';
-      nf.innerHTML='<div style="font-size:30px;margin-bottom:8px">🔍</div>Niciun fișier care începe cu<br><b style="font-family:monospace;color:#475569">'+drawingNo+'</b>';
+      nf.innerHTML='<div style="font-size:30px;margin-bottom:8px">🔍</div>Niciun fișier care începe cu<br><b style="font-family:monospace;color:#475569">'+q+'</b>'+
+        '<div style="margin-top:12px;font-size:10.5px;color:#94a3b8;line-height:1.5">Încercați un prefix mai scurt sau apăsați<br><b>🔄 Actualizează index</b> dacă desenele sunt noi.</div>';
       listInner.appendChild(nf);
       return;
     }
@@ -5973,18 +6010,38 @@ async function openDrawingSearch(drawingNo){
       listInner.appendChild(item);
     });
   }
+  srchBtn.addEventListener('click',()=>renderResults());
+  srchInp.addEventListener('keydown',e=>{if(e.key==='Enter')renderResults();});
   renderResults();
 
   // Footer: reindex
   const foot=dv('');foot.style.cssText='padding:8px 10px;border-top:1px solid var(--border);background:#fff;flex-shrink:0;display:flex;gap:6px';
-  const ri=el('button');ri.textContent='🔄 Reindexează';
-  ri.style.cssText='flex:1;height:28px;border:1px solid var(--border);border-radius:5px;background:#f8f9fb;cursor:pointer;font-size:10.5px';
-  ri.title='Rescanează folderul (după adăugarea de desene noi)';
+  const ri=el('button');ri.innerHTML='🔄 Actualizează index';
+  ri.style.cssText='flex:1;height:28px;border:1px solid #0369a1;color:#0369a1;border-radius:5px;background:#eff6ff;cursor:pointer;font-size:10.5px;font-weight:700';
+  ri.title='Scanează folderul și adaugă doar fișierele noi (incremental)';
   ri.addEventListener('click',async()=>{
+    ri.disabled=true;ri.innerHTML='⏳ Se actualizează...';
+    try{
+      if(!handle)handle=await _ensureDwgHandle();
+      if(!handle){const h=await pickDrawingsFolder();if(!h){ri.disabled=false;ri.innerHTML='🔄 Actualizează index';return;}handle=h;}
+      const res=await _buildDwgIndex(handle,(n,add)=>{
+        if(st())st().textContent='Scanare... '+n.toLocaleString('ro-RO')+(add?' · '+add+' noi':'');
+      },true);
+      names=res.names;
+      showToast('✓ Index actualizat: +'+res.added+' noi'+(res.removed?', −'+res.removed+' șterse':'')+' · total '+res.names.length.toLocaleString('ro-RO'),'ok',3500);
+      renderResults();
+    }catch(e){showToast('Eroare: '+e.message,'err',3000);}
+    ri.disabled=false;ri.innerHTML='🔄 Actualizează index';
+  });
+  const rf=el('button');rf.textContent='⟲';
+  rf.style.cssText='width:32px;height:28px;border:1px solid var(--border);border-radius:5px;background:#f8f9fb;cursor:pointer;font-size:11px';
+  rf.title='Reindexare completă (de la zero)';
+  rf.addEventListener('click',async()=>{
+    if(!confirm('Reindexare completă? Poate dura câteva minute pentru foldere mari.'))return;
     _dwgFileCache=null;await _dwgIdbSet('dwgIndex',null);
     ov.remove();openDrawingSearch(drawingNo);
   });
-  foot.appendChild(ri);
+  foot.appendChild(ri);foot.appendChild(rf);
   listPane.appendChild(foot);
 }
 // Create the small "Nr. desen" link button
