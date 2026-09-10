@@ -6797,12 +6797,25 @@ function _buildPlanTbody(wrap){
               '<span style="font-family:monospace;font-weight:700;font-size:11px;color:'+(n.isMake?'#6d28d9':'#065f46')+'">'+n.matNo+'</span>'+
               '<span style="display:inline-block;margin-left:4px;padding:0 4px;border-radius:2px;font-size:8px;font-weight:700;background:'+(n.isMake?'rgba(109,40,217,.1)':'rgba(6,95,70,.1)')+';color:'+(n.isMake?'#6d28d9':'#065f46')+'">'+(n.isMake?'MAKE':'BUY')+'</span>'+
               (n.matName?'<span style="color:#6b7280;margin-left:6px;font-size:10px">'+n.matName+'</span>':'')+
-              // Inline stock badges right after the name
-              '<span style="display:inline-flex;align-items:center;gap:4px;margin-left:8px;vertical-align:middle">'+
-                '<span style="padding:1px 6px;border-radius:9px;font-size:9.5px;font-weight:700;background:'+(oh>=needed?'#dcfce7':oh>0?'#fef9c3':'#fee2e2')+';color:'+(oh>=needed?'#15803d':oh>0?'#854d0e':'#991b1b')+';border:1px solid '+(oh>=needed?'#86efac':oh>0?'#fde047':'#fca5a5')+'">📦 '+fmtN(oh)+'</span>'+
-                (st.totalWIP>0?'<span style="padding:1px 6px;border-radius:9px;font-size:9.5px;font-weight:700;background:#ede9fe;color:#7c3aed;border:1px solid #c4b5fd" title="'+(wipE.map(function(e){return wcLabel(e[0])+': '+fmtN(e[1]);}).join(', '))+'">🔄 '+fmtN(st.totalWIP)+'</span>':'')+
-                ((st.slLocations&&st.slLocations.length)?'<span style="padding:1px 6px;border-radius:9px;font-size:9.5px;font-weight:600;background:#e0f2fe;color:#0369a1;border:1px solid #7dd3fc" title="'+st.slLocations.map(function(l){return l.loc+': '+fmtN(l.qty);}).join(', ')+'">📍 '+st.slLocations.length+'</span>':'')+
-                (lipsa>0?'<span style="padding:1px 6px;border-radius:9px;font-size:9.5px;font-weight:800;background:#fee2e2;color:#991b1b;border:1px solid #fca5a5">⚠ −'+fmtN(Math.round(lipsa*1000)/1000)+'</span>':'<span style="padding:1px 6px;border-radius:9px;font-size:9.5px;font-weight:800;background:#dcfce7;color:#15803d;border:1px solid #86efac">✓</span>')+
+              // Inline stock info with explicit labels
+              '<span style="display:inline-flex;align-items:center;gap:7px;margin-left:10px;vertical-align:middle;font-size:10px">'+
+                '<span style="padding:1px 7px;border-radius:4px;background:#eff6ff;border:1px solid #bfdbfe;white-space:nowrap">'+
+                  '<span style="color:#64748b;font-weight:600">Necesar:</span> <b style="color:#1d4ed8;font-size:11.5px">'+fmtN(Math.round(needed*1000)/1000)+'</b></span>'+
+                '<span style="padding:1px 7px;border-radius:4px;background:'+(oh>=needed?'#f0fdf4':oh>0?'#fefce8':'#fef2f2')+';border:1px solid '+(oh>=needed?'#86efac':oh>0?'#fde047':'#fca5a5')+';white-space:nowrap">'+
+                  '<span style="color:#64748b;font-weight:600">On Hand:</span> <b style="color:'+(oh>=needed?'#15803d':oh>0?'#854d0e':'#991b1b')+';font-size:11.5px">'+fmtN(oh)+'</b></span>'+
+                (st.totalWIP>0
+                  ?'<span style="padding:1px 7px;border-radius:4px;background:#faf5ff;border:1px solid #d8b4fe;white-space:nowrap" title="'+(wipE.map(function(e){return wcLabel(e[0])+': '+fmtN(e[1]);}).join(' · '))+'">'+
+                     '<span style="color:#64748b;font-weight:600">WIP:</span> <b style="color:#7c3aed;font-size:11.5px">'+fmtN(st.totalWIP)+'</b>'+
+                     '<span style="color:#a78bfa;font-size:9px;margin-left:3px">('+wipE.length+' WC)</span></span>'
+                  :'')+
+                ((st.slLocations&&st.slLocations.length)
+                  ?'<span style="padding:1px 7px;border-radius:4px;background:#f0f9ff;border:1px solid #7dd3fc;white-space:nowrap" title="'+st.slLocations.map(function(l){return l.loc+': '+fmtN(l.qty);}).join(' · ')+'">'+
+                     '<span style="color:#64748b;font-weight:600">Locații:</span> <b style="color:#0369a1">'+st.slLocations.map(function(l){return l.loc;}).slice(0,2).join(', ')+(st.slLocations.length>2?' +'+(st.slLocations.length-2):'')+'</b></span>'
+                  :'')+
+                (lipsa>0
+                  ?'<span style="padding:1px 7px;border-radius:4px;background:#fef2f2;border:1.5px solid #fca5a5;white-space:nowrap">'+
+                     '<span style="color:#991b1b;font-weight:700">LIPSĂ:</span> <b style="color:#dc2626;font-size:12px">'+fmtN(Math.round(lipsa*1000)/1000)+'</b></span>'
+                  :'<span style="padding:1px 7px;border-radius:4px;background:#f0fdf4;border:1px solid #86efac;color:#15803d;font-weight:700;white-space:nowrap">✓ Acoperit</span>')+
               '</span>'+
               ((subcoTxt||subcoSup)?'<div style="margin-top:2px;padding-left:18px"><span style="display:inline-block;padding:1px 6px;border-radius:8px;font-size:9px;font-weight:700;background:#fef3c7;color:#92400e;border:1px solid #fde047">🏭 SUBCO'+(subcoTxt?': '+subcoTxt:'')+(subcoSup?' · '+subcoSup:'')+'</span></div>':'')+
             '</div>'+
@@ -11071,12 +11084,35 @@ function showUniversalCtxMenu(ev, colKey, cellText, filterAttr, colLabel){
   document.getElementById('u-ctx-active')?.remove();
   if(!cellText||cellText==='—'||cellText==='') return;
 
-  const cfg=getCtxMenuConfig(filterAttr, colKey);
-  if(!cfg) return;
+  const cfg=filterAttr?getCtxMenuConfig(filterAttr, colKey):null;
 
   const menu=dv('u-ctx-menu');menu.id='u-ctx-active';
   menu.style.top=Math.min(ev.clientY, window.innerHeight-180)+'px';
   menu.style.left=Math.min(ev.clientX, window.innerWidth-245)+'px';
+
+  if(!cfg){
+    // Minimal menu: copy + drawings/stock only
+    const iC=dv('u-ctx-item');iC.innerHTML='<span class="u-ctx-icon">📋</span><span>Copiează valoarea</span>';
+    iC.addEventListener('click',()=>copyToClipboard(cellText,menu));
+    menu.appendChild(iC);
+    const code0=String(cellText||'').trim().split(/\s+/)[0].replace(/[▶▼]/g,'').trim();
+    if(code0&&code0.length>3){
+      menu.appendChild(dv('u-ctx-sep'));
+      const dn0=getDrawingNoFor(code0);
+      const iD=dv('u-ctx-item');
+      iD.innerHTML='<span class="u-ctx-icon">📐</span><span>Desene tehnice'+(dn0?' <b>'+dn0+'</b>':'')+'</span>';
+      iD.addEventListener('click',()=>{menu.remove();openDrawingSearch(dn0||code0);});
+      menu.appendChild(iD);
+      const iS=dv('u-ctx-item');
+      iS.innerHTML='<span class="u-ctx-icon">📦</span><span>Detalii stoc</span>';
+      iS.addEventListener('click',()=>{menu.remove();openCompStockPopup(code0,null,true);});
+      menu.appendChild(iS);
+    }
+    document.body.appendChild(menu);
+    const cl0=e=>{if(!menu.contains(e.target)){menu.remove();document.removeEventListener('mousedown',cl0);}};
+    setTimeout(()=>document.addEventListener('mousedown',cl0),10);
+    return;
+  }
 
   // ── Filter by value ──
   const item1=dv('u-ctx-item');
@@ -11121,6 +11157,24 @@ function showUniversalCtxMenu(ev, colKey, cellText, filterAttr, colLabel){
     menu.appendChild(item3);
   }
 
+  // ── Drawings + stock for item-code columns ──
+  const ITEM_COLS=new Set(['Item_no','code','matNo','itemNo','fpItemNo','product','Product','matName','fp']);
+  if(ITEM_COLS.has(colKey)){
+    const code=String(cellText||'').trim().split(/\s+/)[0].replace(/\(\d+\)$/,'').replace(/[▶▼]/g,'').trim();
+    if(code&&code!=='—'&&code.length>3){
+      const sepD=dv('u-ctx-sep');menu.appendChild(sepD);
+      const dn=getDrawingNoFor(code);
+      const iDwg=dv('u-ctx-item');
+      iDwg.innerHTML='<span class="u-ctx-icon">📐</span><span>Desene tehnice'+(dn?' <b>'+dn+'</b>':'')+'</span>';
+      iDwg.addEventListener('click',()=>{menu.remove();openDrawingSearch(dn||code);});
+      menu.appendChild(iDwg);
+      const iStk=dv('u-ctx-item');
+      iStk.innerHTML='<span class="u-ctx-icon">📦</span><span>Detalii stoc</span>';
+      iStk.addEventListener('click',()=>{menu.remove();openCompStockPopup(code,null,true);});
+      menu.appendChild(iStk);
+    }
+  }
+
   document.body.appendChild(menu);
   const close=e=>{if(!menu.contains(e.target)){menu.remove();document.removeEventListener('mousedown',close);}};
   setTimeout(()=>document.addEventListener('mousedown',close),10);
@@ -11142,7 +11196,12 @@ document.addEventListener('contextmenu', ev=>{
     // Check if this table has ANY input with this attr (for the right column or any column)
     if(table.querySelector(`input[${attr}]`)){foundAttr=attr;break;}
   }
-  if(!foundAttr) return;  // not a filterable table
+  if(!foundAttr){
+    // Not a filterable table — still offer copy + drawings for item columns
+    const ITEM_COLS2=new Set(['Item_no','code','matNo','itemNo','fpItemNo','product','Product']);
+    if(!ITEM_COLS2.has(colKey))return;
+    foundAttr='';  // continue with a minimal menu
+  }
 
   // Get column label from th
   const th=table.querySelector(`th[data-col="${colKey}"]`);
