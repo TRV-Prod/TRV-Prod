@@ -1985,6 +1985,7 @@ function applyBom(rows,ts){
   }
   console.log('[BOM] paintIdx: keys=',S.paintIdx.size, [...S.paintIdx.entries()].slice(0,3));
   if(S.stockIdx)enrichStockFromBom();
+  _dwgNameIdx=null;  // force rebuild of drawing-name index
   // If PV2 has already been rendered, force re-computation so paint cols get populated
   if(S.tab==='planv2'&&typeof render==='function')setTimeout(()=>render(),100);
 }
@@ -5736,32 +5737,54 @@ function extractDrawingNo(name){
 }
 
 // Get drawing number for an item (FP or component) using BOM data
+// Index: itemNo -> raw name used for drawing extraction. Built once from BOM.
+let _dwgNameIdx=null;
+function _buildDwgNameIdx(){
+  const idx=new Map();
+  if(S.bomData){
+    // Detect the "Mat name"/"Mat desc" column once (header spelling varies)
+    let matNameCol='';
+    if(S.bomData.length){
+      matNameCol=Object.keys(S.bomData[0]).find(k=>{
+        const kl=k.toLowerCase().replace(/[.\s]/g,'');
+        return kl==='matname'||kl==='matdesc'||kl==='matdescription';
+      })||'';
+    }
+    for(const br of S.bomData){
+      // Component
+      const matNo=str(br['Material no']||'').trim();
+      if(matNo&&!idx.has(matNo)){
+        const mn=matNameCol?str(br[matNameCol]||'').trim():'';
+        if(mn)idx.set(matNo,mn);
+      }
+      // Final product
+      const fpNo=str(br['Final product']||'').trim();
+      if(fpNo&&!idx.has(fpNo)){
+        const fn=str(br['FP name']||'').trim();
+        if(fn)idx.set(fpNo,fn);
+      }
+    }
+  }
+  // FP list as extra source
+  if(S.fps){
+    for(const f of S.fps){
+      if(f.code&&f.name&&!idx.has(f.code))idx.set(f.code,f.name);
+    }
+  }
+  _dwgNameIdx=idx;
+  console.log('[Drawings] name index:',idx.size,'items');
+  return idx;
+}
+
 function getDrawingNoFor(itemNo){
   if(!itemNo)return '';
-  // 1) Try FP Name (item is a final product)
-  if(S.fps){
-    const fp=S.fps.find(f=>f.code===itemNo);
-    if(fp&&fp.name)return extractDrawingNo(fp.name);
-  }
-  // 2) Try Mat name from BOM (item is a component)
-  if(S.bomData){
-    for(const br of S.bomData){
-      if(str(br['Material no']||'').trim()===itemNo){
-        const mn=str(br['Mat. name']||br['Mat name']||br['Mat desc']||'').trim();
-        if(mn)return extractDrawingNo(mn);
-      }
-    }
-    // 3) Fallback: item appears as Final product in BOM
-    for(const br of S.bomData){
-      if(str(br['Final product']||'').trim()===itemNo){
-        const fn=str(br['FP name']||'').trim();
-        if(fn)return extractDrawingNo(fn);
-      }
-    }
-  }
-  // 4) Fallback: stockIdx name
+  if(!_dwgNameIdx)_buildDwgNameIdx();
+  const raw=_dwgNameIdx.get(itemNo);
+  if(raw)return extractDrawingNo(raw);
+  // Fallback: stocklist / PO name
   const st=S.stockIdx?.get(itemNo);
-  if(st&&(st.slName||st.name))return extractDrawingNo(st.slName||st.name);
+  const n2=st&&(st.slName||st.name);
+  if(n2)return extractDrawingNo(n2);
   return '';
 }
 
@@ -6065,15 +6088,23 @@ function mkDrawingBtn(itemNo,compact){
   const dn=getDrawingNoFor(itemNo);
   const b=el('button');
   b.textContent=compact?'📐':('📐 '+(dn||'—'));
-  b.title=dn?('Deschide desenele care încep cu: '+dn):'Nu s-a găsit numărul de desen';
+  b.title=dn
+    ?('Deschide desenele care încep cu: '+dn+'\n(din denumire: '+(_dwgNameIdx?.get(itemNo)||'—')+')')
+    :('Nu s-a găsit denumirea în BOM pentru '+itemNo+'.\nClick pentru căutare manuală.');
   b.style.cssText='display:inline-flex;align-items:center;gap:3px;height:'+(compact?'20px':'22px')+
     ';padding:0 '+(compact?'5px':'7px')+';border:1px solid '+(dn?'#7dd3fc':'#e2e8f0')+
     ';border-radius:4px;background:'+(dn?'#e0f2fe':'#f8f9fb')+';color:'+(dn?'#0369a1':'#94a3b8')+
     ';cursor:'+(dn?'pointer':'default')+';font-size:'+(compact?'10px':'10.5px')+
     ';font-weight:700;font-family:monospace;white-space:nowrap';
-  if(dn){
-    b.addEventListener('click',e=>{e.stopPropagation();openDrawingSearch(dn);});
-  } else b.disabled=true;
+  b.addEventListener('click',e=>{
+    e.stopPropagation();
+    if(dn){openDrawingSearch(dn);}
+    else{
+      // No drawing number derived — let the user search manually, prefilled with the code
+      openDrawingSearch(itemNo);
+    }
+  });
+  if(!dn){b.style.cursor='pointer';b.style.opacity='.7';}
   return b;
 }
 
