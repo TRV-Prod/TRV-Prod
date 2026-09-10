@@ -1325,9 +1325,9 @@ const S={
   planFilter:{
     colFilters:{},
     realizarePct:'all',
-    colOrder:['prio','itemNo','itemName','customer','qty','valoare','realizare','_subco','obs','_del'],
-    colWidths:{prio:60,itemNo:140,itemName:200,customer:200,qty:110,valoare:120,realizare:140,_subco:150,obs:200,_del:80},
-    visibleCols:new Set(['prio','itemNo','itemName','customer','qty','valoare','realizare','_subco','obs','_del']),
+    colOrder:['prio','itemNo','_dwg','itemName','customer','qty','valoare','realizare','_subco','obs','_del'],
+    colWidths:{prio:60,itemNo:140,_dwg:120,itemName:200,customer:200,qty:110,valoare:120,realizare:140,_subco:150,obs:200,_del:80},
+    visibleCols:new Set(['prio','itemNo','_dwg','itemName','customer','qty','valoare','realizare','_subco','obs','_del']),
   },
   dispozitiiFilter:{
     q:'',wcFilter:null,fpFilter:'',onlyNeeded:true,
@@ -3594,6 +3594,12 @@ function renderFisiereTab(){
   const hh=dv('');
   hh.appendChild(dv('files-page-title','Managementul fisierelor'));
   hh.appendChild(dv('files-page-sub','Incarcati fisierele Excel zilnic. Aplicatia retine ultimele versiuni intre sesiuni, in stocarea locala a browserului.'));
+  const dwgBtn=el('button','tbtn');
+  dwgBtn.innerHTML='📐 Cale desene tehnice';
+  dwgBtn.style.cssText='border-color:#0369a1;color:#0369a1;background:#eff6ff;margin-top:8px;font-weight:700';
+  dwgBtn.title='Configurează folderul cu desene PDF';
+  dwgBtn.addEventListener('click',()=>openDrawingsPathSettings());
+  hh.appendChild(dwgBtn);
   hhBar.appendChild(hh);
   hhBar.appendChild(mkZoomCtrl('fisiere'));
   page.appendChild(hhBar);
@@ -3610,6 +3616,7 @@ function renderFisiereTab(){
    {key:'ob',icon:'📦',title:'Open Order Lines',desc:'Comenzi deschise: Entry/Confirm/Request dt, cantitati, clienti, preturi'},
    {key:'wcs',icon:'🔧',title:'Workcenter Setup',desc:'Workcenter Type (Initial/Intermediary/Final Op), numarul de echipe (Prod Team) pentru calculul capacitatii'},
    {key:'scanari',icon:'📡',title:'QV Start-Stop History',desc:'Date de scanare productie: timpi efectivi per operator, workcenter si operatie'},
+   {key:'_dwgpath',icon:'📐',title:'Cale desene tehnice',desc:'Configurează folderul local/rețea unde sunt stocate desenele PDF. Butoanele 📐 din Planificare deschid Explorer cu rezultatele căutării.',_isConfig:true},
    {key:'stocklist',icon:'📦',title:'TRV-Stocklist',desc:'Stocuri fizice pe locatii: ITEM NR, ITEM NAME, ITEM DESCRIPTION, LOCATION, STANDARD QTY, STANDARD U/M. Inlocuieste On Hand din Planning Overview.'},
    {key:'intransit',icon:'🚚',title:'In Transit',desc:'Produse finite expediate, neinca receptionate de client. Se scad din stocul On Hand al produselor finale.'},
    {key:'molist',icon:'🏭',title:'MO List (PMO/MO)',desc:'Lista Manufacturing Orders cu operatii: MO, produs, workcenter, cantitati raportate'}]
@@ -5674,6 +5681,144 @@ function openPlanBomPopup(itemNo, planQtyVal){
   document.addEventListener('keydown',esc);
 }
 
+
+/* ═══════════════════════════════════════════════════════════════
+   DESENE TEHNICE — deschidere în File Explorer (search-ms:)
+═══════════════════════════════════════════════════════════════ */
+const DRAWINGS_DEFAULT_PATH='\\\\10.40.18.5\\trv-public\\Documents\\PDF_DRAWINGS';
+
+function getDrawingsPath(){
+  try{return localStorage.getItem('trv_drawings_path')||DRAWINGS_DEFAULT_PATH;}
+  catch(_){return DRAWINGS_DEFAULT_PATH;}
+}
+function setDrawingsPath(p){
+  try{localStorage.setItem('trv_drawings_path',p||DRAWINGS_DEFAULT_PATH);}catch(_){}
+}
+
+// Extract drawing number from item name
+//  '1830114394-P8'        -> '1830114394P8'
+//  '1830163803 ED.01'     -> '1830163803'
+//  'AD00006394577 REV.A'  -> 'AD00006394577'
+//  'AD00006394577NG REV.A'-> 'AD00006394577'
+//  'AD00006394578 ED.0'   -> 'AD00006394578'
+function extractDrawingNo(name){
+  if(!name)return '';
+  let s=String(name).trim();
+  // Take everything before the first space (drops REV.x / ED.xx suffixes)
+  s=s.split(/\s+/)[0];
+  // Remove dashes
+  s=s.replace(/-/g,'');
+  // Strip trailing NG marker (non-galvanized variant shares the same drawing)
+  s=s.replace(/NG$/i,'');
+  return s.trim();
+}
+
+// Get drawing number for an item (FP or component) using BOM data
+function getDrawingNoFor(itemNo){
+  if(!itemNo)return '';
+  // 1) Try FP Name (item is a final product)
+  if(S.fps){
+    const fp=S.fps.find(f=>f.code===itemNo);
+    if(fp&&fp.name)return extractDrawingNo(fp.name);
+  }
+  // 2) Try Mat name from BOM (item is a component)
+  if(S.bomData){
+    for(const br of S.bomData){
+      if(str(br['Material no']||'').trim()===itemNo){
+        const mn=str(br['Mat. name']||br['Mat name']||br['Mat desc']||'').trim();
+        if(mn)return extractDrawingNo(mn);
+      }
+    }
+    // 3) Fallback: item appears as Final product in BOM
+    for(const br of S.bomData){
+      if(str(br['Final product']||'').trim()===itemNo){
+        const fn=str(br['FP name']||'').trim();
+        if(fn)return extractDrawingNo(fn);
+      }
+    }
+  }
+  // 4) Fallback: stockIdx name
+  const st=S.stockIdx?.get(itemNo);
+  if(st&&(st.slName||st.name))return extractDrawingNo(st.slName||st.name);
+  return '';
+}
+
+// Open Windows Explorer search for files starting with drawingNo
+function openDrawingSearch(drawingNo){
+  if(!drawingNo){showToast('Nu s-a putut determina numărul de desen','err',2500);return;}
+  const base=getDrawingsPath();
+  // search-ms: protocol — registered by Windows Explorer
+  const url='search-ms:query='+encodeURIComponent(drawingNo)+
+            '&crumb='+encodeURIComponent('location:'+base)+
+            '&displayname='+encodeURIComponent('Desen '+drawingNo);
+  try{
+    window.location.href=url;
+    showToast('Se deschide Explorer pentru: '+drawingNo,'ok',2000);
+  }catch(e){
+    // Fallback: copy full path to clipboard
+    const full=base+'\\'+drawingNo;
+    copyToClipboard(full,null);
+    showToast('Protocol blocat. Cale copiată: '+full,'err',4000);
+  }
+}
+
+// Create the small "Nr. desen" link button
+function mkDrawingBtn(itemNo,compact){
+  const dn=getDrawingNoFor(itemNo);
+  const b=el('button');
+  b.textContent=compact?'📐':('📐 '+(dn||'—'));
+  b.title=dn?('Deschide desenele care încep cu: '+dn+'\nCale: '+getDrawingsPath()):'Nu s-a găsit numărul de desen';
+  b.style.cssText='display:inline-flex;align-items:center;gap:3px;height:'+(compact?'20px':'22px')+
+    ';padding:0 '+(compact?'5px':'7px')+';border:1px solid '+(dn?'#7dd3fc':'#e2e8f0')+
+    ';border-radius:4px;background:'+(dn?'#e0f2fe':'#f8f9fb')+';color:'+(dn?'#0369a1':'#94a3b8')+
+    ';cursor:'+(dn?'pointer':'default')+';font-size:'+(compact?'10px':'10.5px')+
+    ';font-weight:700;font-family:monospace;white-space:nowrap';
+  if(dn){
+    b.addEventListener('click',e=>{e.stopPropagation();openDrawingSearch(dn);});
+  } else b.disabled=true;
+  return b;
+}
+
+// Settings modal for drawings path
+function openDrawingsPathSettings(){
+  document.getElementById('dwg-path-overlay')?.remove();
+  const ov=dv('');ov.id='dwg-path-overlay';
+  ov.style.cssText='position:fixed;inset:0;background:rgba(0,0,0,.5);z-index:9400;display:flex;align-items:center;justify-content:center;padding:16px';
+  const modal=dv('');modal.style.cssText='background:#fff;border-radius:10px;box-shadow:0 20px 60px rgba(0,0,0,.3);width:min(620px,95vw);overflow:hidden';
+  const hdr=dv('');hdr.style.cssText='background:#0369a1;color:#fff;padding:12px 18px;font-weight:800;font-size:14px;display:flex;justify-content:space-between;align-items:center';
+  hdr.innerHTML='<span>📐 Cale folder desene</span>';
+  const cb=el('button');cb.textContent='✕';cb.style.cssText='border:none;background:rgba(255,255,255,.2);color:#fff;width:28px;height:28px;border-radius:4px;cursor:pointer';
+  cb.addEventListener('click',()=>ov.remove());hdr.appendChild(cb);modal.appendChild(hdr);
+  const body=dv('');body.style.cssText='padding:16px 20px';
+  body.innerHTML='<div style="font-size:11.5px;color:#475569;margin-bottom:10px;line-height:1.6">'+
+    'Calea către folderul cu desene tehnice (locală sau rețea). Se salvează doar pe acest device.'+
+    '</div>';
+  const inp=el('input');inp.type='text';inp.value=getDrawingsPath();
+  inp.style.cssText='width:100%;height:36px;padding:0 10px;border:1.5px solid var(--border);border-radius:5px;font-size:12px;font-family:monospace';
+  body.appendChild(inp);
+  const hint=dv('');hint.style.cssText='margin-top:10px;padding:10px 12px;background:#f0f9ff;border:1px solid #bae6fd;border-radius:6px;font-size:10.5px;color:#0c4a6e;line-height:1.6';
+  hint.innerHTML='<b>Cum funcționează:</b><br>'+
+    '• Butonul 📐 deschide Windows Explorer cu rezultatele căutării<br>'+
+    '• Browserul va cere confirmare pentru deschiderea Explorer — bifați "Permite întotdeauna"<br>'+
+    '• Dacă protocolul e blocat, calea se copiază în clipboard<br>'+
+    '<b>Exemple de extragere:</b><br>'+
+    '<code>1830114394-P8</code> → <code>1830114394P8</code><br>'+
+    '<code>AD00006394577NG REV.A</code> → <code>AD00006394577</code><br>'+
+    '<code>1830163803 ED.01</code> → <code>1830163803</code>';
+  body.appendChild(hint);
+  modal.appendChild(body);
+  const foot=dv('');foot.style.cssText='padding:10px 20px;border-top:1px solid var(--border);display:flex;justify-content:space-between;gap:8px';
+  const rst=el('button');rst.textContent='↺ Cale implicită';
+  rst.style.cssText='height:32px;padding:0 12px;border:1px solid var(--border);background:#f8f9fb;border-radius:5px;cursor:pointer;font-size:11px';
+  rst.addEventListener('click',()=>{inp.value=DRAWINGS_DEFAULT_PATH;});
+  const sv=el('button');sv.textContent='✓ Salvează';
+  sv.style.cssText='height:32px;padding:0 20px;border:none;background:#0369a1;color:#fff;border-radius:5px;cursor:pointer;font-size:12px;font-weight:700';
+  sv.addEventListener('click',()=>{setDrawingsPath(inp.value.trim());showToast('✓ Cale salvată','ok',2000);ov.remove();});
+  foot.appendChild(rst);foot.appendChild(sv);modal.appendChild(foot);
+  ov.appendChild(modal);ov.addEventListener('click',e=>{if(e.target===ov)ov.remove();});
+  document.body.appendChild(ov);
+}
+
 function renderPlanificare(){
   const page=dv('plan-page');
 
@@ -6013,6 +6158,7 @@ function _buildPlanTbody(wrap){
         });
         td.appendChild(ta);
       }
+      else if(colId==='_dwg'){td.appendChild(mkDrawingBtn(itemNo,false));}
       else if(colId==='_subco'){
         // Aggregate all subcontractors used in this FP's BOM
         const subs=new Set();
@@ -6118,6 +6264,7 @@ function _buildPlanTbody(wrap){
           const wipHtml=wipE.length
             ? '<div style="font-size:9.5px;line-height:1.4;color:#7c3aed">'+wipE.slice(0,3).map(function(e){return wcLabel(e[0])+': <b>'+fmtN(e[1])+'</b>';}).join('<br>')+(wipE.length>3?'<div style="color:#a78bfa">+'+(wipE.length-3)+'</div>':'')+'</div>'
             : '<div style="color:#cbd5e1;font-size:10px">—</div>';
+          // Drawing button will be appended after innerHTML is set
           inner.innerHTML=
             '<div style="flex:1;min-width:180px">'+conn+
               '<span style="font-family:monospace;font-weight:700;font-size:11px;color:'+(n.isMake?'#6d28d9':'#065f46')+'">'+n.matNo+'</span>'+
@@ -6130,6 +6277,12 @@ function _buildPlanTbody(wrap){
             '<div style="text-align:right;min-width:58px;flex-shrink:0"><div style="font-size:8.5px;color:#94a3b8;text-transform:uppercase">On Hand</div><div style="font-weight:800;color:'+(oh>=needed?'#15803d':oh>0?'#ca8a04':'#dc2626')+';font-size:12px">'+fmtN(oh)+'</div></div>'+
             '<div style="min-width:130px;flex-shrink:0"><div style="font-size:8.5px;color:#94a3b8;text-transform:uppercase">WIP</div>'+wipHtml+'</div>'+
             '<div style="text-align:right;min-width:56px;flex-shrink:0"><div style="font-size:8.5px;color:#94a3b8;text-transform:uppercase">Lipsă</div><div style="font-weight:800;font-size:12px;color:'+(lipsa>0?'#dc2626':'#15803d')+'">'+(lipsa>0?fmtN(Math.round(lipsa*1000)/1000):'✓')+'</div></div>';
+          // Add drawing button for MAKE components
+          if(n.isMake){
+            const dwgWrap=dv('');dwgWrap.style.cssText='flex-shrink:0;display:flex;align-items:center';
+            dwgWrap.appendChild(mkDrawingBtn(n.matNo,true));
+            inner.insertBefore(dwgWrap,inner.children[1]||null);
+          }
           btd.appendChild(inner);btr.appendChild(btd);tbody.appendChild(btr);
           if(n.children&&n.children.length)renderBomRows(n.children,depth+1,mult*unQty);
         });
@@ -6155,6 +6308,9 @@ function renderPlanPage(wrap){
   wrap.innerHTML='';
   // Migration: add _subco column
   {const p0=S.planFilter;
+   if(!p0.colOrder.includes('_dwg')){const i=p0.colOrder.indexOf('itemName');p0.colOrder.splice(i<0?2:i,0,'_dwg');}
+   if(!p0.colWidths._dwg)p0.colWidths._dwg=120;
+   if(!p0.visibleCols.has('_dwg'))p0.visibleCols.add('_dwg');
    if(!p0.colOrder.includes('_subco')){const i=p0.colOrder.indexOf('obs');p0.colOrder.splice(i<0?7:i,0,'_subco');}
    if(!p0.colWidths._subco)p0.colWidths._subco=150;
    if(!p0.visibleCols.has('_subco'))p0.visibleCols.add('_subco');}
@@ -6166,7 +6322,7 @@ function renderPlanPage(wrap){
 
   const pf2=S.planFilter;
   const visCols=pf2.colOrder.filter(c=>pf2.visibleCols.has(c));
-  const COL_LABELS={prio:'Prio',itemNo:'Item no',itemName:'Denumire',customer:'Client',qty:'Cantitate',valoare:'Valoare EUR',realizare:'% Realizare',_subco:'Subcontractor',obs:'Observatii',_del:''};
+  const COL_LABELS={prio:'Prio',itemNo:'Item no',_dwg:'Nr. desen',itemName:'Denumire',customer:'Client',qty:'Cantitate',valoare:'Valoare EUR',realizare:'% Realizare',_subco:'Subcontractor',obs:'Observatii',_del:''};
   const FILTERABLE=new Set(['prio','itemNo','itemName','customer','qty','valoare','obs','_subco']);
 
   // Summary bar
@@ -11234,6 +11390,7 @@ function renderPlanV2(){
       {key:'wcMinutes',label:'Timp BOW'},{key:'fpConfirmDt',label:'Livrare'},
       {key:'obs',label:'Observații'},
       {key:'paintMatNo',label:'Cod Vopsea'},{key:'paintMatDesc',label:'Den. Vopsea'},
+      {key:'_dwg',label:'Nr. desen'},
     ];
     // Enforce colOrder: priority first, matDrawing present
     if(!st.colOrder)st.colOrder=ALL_PV2_COLS.map(c=>c.key);
@@ -11241,6 +11398,7 @@ function renderPlanV2(){
     if(!st.colOrder.includes('matDrawing')){const mi=st.colOrder.indexOf('matNo');st.colOrder.splice(mi<0?1:mi+1,0,'matDrawing');}
     if(!st.colOrder.includes('paintMatNo')){st.colOrder.push('paintMatNo');}
     if(!st.colOrder.includes('paintMatDesc')){st.colOrder.push('paintMatDesc');}
+    if(!st.colOrder.includes('_dwg')){const i=st.colOrder.indexOf('matDrawing');st.colOrder.splice(i<0?4:i+1,0,'_dwg');}
 
     const gCols=dv('');gCols.style.cssText='display:flex;align-items:center;gap:5px;padding-right:12px;border-right:1px solid #e2e8f0';
     const colPickBtn=el('button','tbtn');colPickBtn.innerHTML='⚙ Coloane';
@@ -11514,6 +11672,7 @@ function renderPlanV2(){
         {key:'obs',        label:'Observații',      w:170,align:'left'},
         {key:'paintMatNo',  label:'Cod Vopsea',       w:140,align:'left'},
         {key:'paintMatDesc',label:'Den. Vopsea',       w:180,align:'left'},
+        {key:'_dwg',        label:'Nr. desen',        w:120,align:'left'},
       ];
 
       _currentWcGroups=wcGroups;_currentAllRows=filteredComps;
@@ -11717,6 +11876,7 @@ function renderPlanV2(){
               });
               td.appendChild(inp);
             }
+            else if(c.key==='_dwg'){td.style.padding='2px 4px';td.appendChild(mkDrawingBtn(r.matNo,false));}
             else if(c.key==='paintMatNo'||c.key==='paintMatDesc'){
               // Use r.paintMatNo if set by button, fallback to direct lookup
               let v='';
