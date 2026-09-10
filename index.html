@@ -5706,8 +5706,14 @@ function extractDrawingNo(name){
   let s=String(name).trim();
   // Take everything before the first space (drops REV.x / ED.xx suffixes)
   s=s.split(/\s+/)[0];
-  // Remove dashes
+  // Remove dashes:  1830114394-P8 -> 1830114394P8
   s=s.replace(/-/g,'');
+  // Cut everything after a P<digits> block:
+  //   1639120014P8LNB -> 1639120014P8
+  //   1639120014P8L   -> 1639120014P8
+  //   1639120014P8    -> 1639120014P8
+  const mP=s.match(/^(.*?P\d+)/i);
+  if(mP)s=mP[1];
   // Strip trailing NG marker (non-galvanized variant shares the same drawing)
   s=s.replace(/NG$/i,'');
   return s.trim();
@@ -5743,23 +5749,214 @@ function getDrawingNoFor(itemNo){
   return '';
 }
 
-// Open Windows Explorer search for files starting with drawingNo
-function openDrawingSearch(drawingNo){
-  if(!drawingNo){showToast('Nu s-a putut determina numărul de desen','err',2500);return;}
-  const base=getDrawingsPath();
-  // search-ms: protocol — registered by Windows Explorer
-  const url='search-ms:query='+encodeURIComponent(drawingNo)+
-            '&crumb='+encodeURIComponent('location:'+base)+
-            '&displayname='+encodeURIComponent('Desen '+drawingNo);
-  try{
-    window.location.href=url;
-    showToast('Se deschide Explorer pentru: '+drawingNo,'ok',2000);
-  }catch(e){
-    // Fallback: copy full path to clipboard
-    const full=base+'\\'+drawingNo;
-    copyToClipboard(full,null);
-    showToast('Protocol blocat. Cale copiată: '+full,'err',4000);
+// ── File System Access API: folder handle persisted in IndexedDB ──
+let _dwgDirHandle=null;
+let _dwgFileCache=null;  // Array<{name, handle}>
+
+async function _dwgIdbGet(key){
+  return new Promise((res)=>{
+    const req=indexedDB.open('trv_dwg_db',1);
+    req.onupgradeneeded=()=>{req.result.createObjectStore('handles');};
+    req.onsuccess=()=>{
+      const tx=req.result.transaction('handles','readonly');
+      const g=tx.objectStore('handles').get(key);
+      g.onsuccess=()=>res(g.result||null);
+      g.onerror=()=>res(null);
+    };
+    req.onerror=()=>res(null);
+  });
+}
+async function _dwgIdbSet(key,val){
+  return new Promise((res)=>{
+    const req=indexedDB.open('trv_dwg_db',1);
+    req.onupgradeneeded=()=>{req.result.createObjectStore('handles');};
+    req.onsuccess=()=>{
+      const tx=req.result.transaction('handles','readwrite');
+      tx.objectStore('handles').put(val,key);
+      tx.oncomplete=()=>res(true);
+      tx.onerror=()=>res(false);
+    };
+    req.onerror=()=>res(false);
+  });
+}
+
+async function pickDrawingsFolder(){
+  if(!window.showDirectoryPicker){
+    alert('Browserul nu suportă File System Access API.\nFolosiți Chrome sau Edge (desktop).');
+    return null;
   }
+  try{
+    const h=await window.showDirectoryPicker({mode:'read',startIn:'documents'});
+    _dwgDirHandle=h;_dwgFileCache=null;
+    await _dwgIdbSet('dwgDir',h);
+    showToast('✓ Folder desene selectat: '+h.name,'ok',2500);
+    return h;
+  }catch(e){
+    if(e.name!=='AbortError')showToast('Selectare anulată','err',2000);
+    return null;
+  }
+}
+
+async function _ensureDwgHandle(){
+  if(_dwgDirHandle){
+    const perm=await _dwgDirHandle.queryPermission({mode:'read'});
+    if(perm==='granted')return _dwgDirHandle;
+    const req=await _dwgDirHandle.requestPermission({mode:'read'});
+    if(req==='granted')return _dwgDirHandle;
+  }
+  const stored=await _dwgIdbGet('dwgDir');
+  if(stored){
+    const perm=await stored.queryPermission({mode:'read'});
+    if(perm==='granted'){_dwgDirHandle=stored;return stored;}
+    const req=await stored.requestPermission({mode:'read'});
+    if(req==='granted'){_dwgDirHandle=stored;return stored;}
+  }
+  return null;
+}
+
+// Scan folder once and cache file names
+async function _scanDwgFolder(handle,onProgress){
+  if(_dwgFileCache)return _dwgFileCache;
+  const files=[];
+  let n=0;
+  for await(const entry of handle.values()){
+    if(entry.kind==='file'){
+      files.push({name:entry.name,handle:entry});
+      if(++n%2000===0&&onProgress)onProgress(n);
+    }
+  }
+  _dwgFileCache=files;
+  return files;
+}
+
+// Open browser popup with matching drawing files
+async function openDrawingSearch(drawingNo){
+  if(!drawingNo){showToast('Nu s-a putut determina numărul de desen','err',2500);return;}
+
+  document.getElementById('dwg-result-overlay')?.remove();
+  const ov=dv('');ov.id='dwg-result-overlay';
+  ov.style.cssText='position:fixed;inset:0;background:rgba(0,0,0,.55);z-index:9500;display:flex;align-items:center;justify-content:center;padding:14px';
+  const modal=dv('');modal.style.cssText='background:#fff;border-radius:12px;box-shadow:0 24px 70px rgba(0,0,0,.4);width:min(1000px,97vw);height:min(88vh,900px);display:flex;flex-direction:column;overflow:hidden';
+
+  const hdr=dv('');hdr.style.cssText='background:#0369a1;color:#fff;padding:11px 18px;display:flex;justify-content:space-between;align-items:center;flex-shrink:0;gap:10px';
+  hdr.innerHTML='<div><div style="font-weight:800;font-size:14px;font-family:monospace">📐 '+drawingNo+'</div>'+
+    '<div style="font-size:10px;opacity:.85" id="dwg-status">Se caută...</div></div>';
+  const cb=el('button');cb.textContent='✕';cb.style.cssText='border:none;background:rgba(255,255,255,.2);color:#fff;width:30px;height:30px;border-radius:5px;cursor:pointer;font-size:15px;flex-shrink:0';
+  cb.addEventListener('click',()=>ov.remove());hdr.appendChild(cb);modal.appendChild(hdr);
+
+  const body=dv('');body.style.cssText='flex:1;display:flex;overflow:hidden';
+  modal.appendChild(body);
+
+  // Left: file list
+  const listPane=dv('');listPane.style.cssText='width:290px;min-width:200px;border-right:2px solid var(--border);overflow-y:auto;background:#f8f9fb;flex-shrink:0';
+  // Right: PDF viewer
+  const viewPane=dv('');viewPane.style.cssText='flex:1;background:#1a1a2e;display:flex;align-items:center;justify-content:center;color:#64748b;font-size:13px;overflow:hidden;position:relative';
+  viewPane.innerHTML='<div style="text-align:center"><div style="font-size:36px;margin-bottom:8px">📄</div>Selectați un fișier</div>';
+  body.appendChild(listPane);body.appendChild(viewPane);
+
+  ov.appendChild(modal);
+  ov.addEventListener('click',e=>{if(e.target===ov)ov.remove();});
+  document.body.appendChild(ov);
+  const esc=e=>{if(e.key==='Escape'){ov.remove();document.removeEventListener('keydown',esc);}};
+  document.addEventListener('keydown',esc);
+
+  const statusEl=()=>document.getElementById('dwg-status');
+
+  // Get folder handle
+  let handle=await _ensureDwgHandle();
+  if(!handle){
+    listPane.innerHTML='';
+    const msg=dv('');msg.style.cssText='padding:20px;text-align:center';
+    msg.innerHTML='<div style="font-size:32px;margin-bottom:10px">📁</div>'+
+      '<div style="font-size:12px;color:#475569;margin-bottom:14px;line-height:1.6">Selectați folderul cu desene tehnice.<br><span style="font-size:10.5px;color:#94a3b8">Se cere o singură dată; browserul reține permisiunea.</span></div>';
+    const pickBtn=el('button');pickBtn.textContent='📂 Alege folderul';
+    pickBtn.style.cssText='height:36px;padding:0 18px;border:none;border-radius:6px;background:#0369a1;color:#fff;font-size:12px;font-weight:700;cursor:pointer';
+    pickBtn.addEventListener('click',async()=>{
+      const h=await pickDrawingsFolder();
+      if(h){ov.remove();openDrawingSearch(drawingNo);}
+    });
+    msg.appendChild(pickBtn);
+    const hint=dv('');hint.style.cssText='margin-top:14px;font-size:10px;color:#94a3b8;line-height:1.5';
+    hint.textContent='Pentru foldere de rețea, mapați mai întâi o literă de disc (ex: Z:) în Windows Explorer.';
+    msg.appendChild(hint);
+    listPane.appendChild(msg);
+    if(statusEl())statusEl().textContent='Folder neselectat';
+    return;
+  }
+
+  // Scan + filter
+  if(statusEl())statusEl().textContent='Se scanează folderul...';
+  let allFiles;
+  try{
+    allFiles=await _scanDwgFolder(handle,n=>{if(statusEl())statusEl().textContent='Se scanează... '+n+' fișiere';});
+  }catch(e){
+    listPane.innerHTML='<div style="padding:20px;color:#dc2626;font-size:12px">Eroare la citirea folderului: '+e.message+'</div>';
+    return;
+  }
+
+  const q=drawingNo.toLowerCase();
+  const matches=allFiles.filter(f=>f.name.toLowerCase().startsWith(q));
+  if(statusEl())statusEl().textContent=matches.length+' fișiere găsite din '+allFiles.length+' · '+handle.name;
+
+  listPane.innerHTML='';
+  if(!matches.length){
+    const nf=dv('');nf.style.cssText='padding:20px;text-align:center;color:#94a3b8;font-size:12px';
+    nf.innerHTML='<div style="font-size:30px;margin-bottom:8px">🔍</div>Niciun fișier care începe cu<br><b style="font-family:monospace;color:#475569">'+drawingNo+'</b>';
+    listPane.appendChild(nf);
+    // Offer re-pick
+    const rp=el('button');rp.textContent='📂 Schimbă folderul';
+    rp.style.cssText='margin:14px auto 0;display:block;height:30px;padding:0 12px;border:1px solid var(--border);border-radius:5px;background:#fff;cursor:pointer;font-size:11px';
+    rp.addEventListener('click',async()=>{const h=await pickDrawingsFolder();if(h){ov.remove();openDrawingSearch(drawingNo);}});
+    listPane.appendChild(rp);
+    return;
+  }
+
+  matches.sort((a,b)=>a.name.localeCompare(b.name,'ro',{numeric:true}));
+  let activeItem=null;
+  matches.forEach((f,i)=>{
+    const item=dv('');
+    item.style.cssText='padding:9px 12px;cursor:pointer;border-bottom:1px solid #f1f5f9;font-size:11px;font-family:monospace;word-break:break-all;transition:background .1s';
+    item.textContent=f.name;
+    item.addEventListener('mouseenter',()=>{if(item!==activeItem)item.style.background='#eff6ff';});
+    item.addEventListener('mouseleave',()=>{if(item!==activeItem)item.style.background='';});
+    item.addEventListener('click',async()=>{
+      if(activeItem){activeItem.style.background='';activeItem.style.borderLeft='';activeItem.style.fontWeight='';}
+      activeItem=item;
+      item.style.background='#dbeafe';item.style.borderLeft='3px solid #1d4ed8';item.style.fontWeight='700';
+      viewPane.innerHTML='<div style="color:#64748b">⏳ Se încarcă...</div>';
+      try{
+        const file=await f.handle.getFile();
+        const url=URL.createObjectURL(file);
+        viewPane.innerHTML='';
+        if(/\.pdf$/i.test(f.name)){
+          const em=el('embed');em.setAttribute('type','application/pdf');em.src=url;
+          em.style.cssText='width:100%;height:100%;border:none;background:#fff';
+          viewPane.appendChild(em);
+        } else if(/\.(png|jpe?g|gif|webp|bmp|tiff?)$/i.test(f.name)){
+          const img=el('img');img.src=url;
+          img.style.cssText='max-width:100%;max-height:100%;object-fit:contain';
+          viewPane.appendChild(img);
+        } else {
+          const dl=dv('');dl.style.cssText='text-align:center;color:#94a3b8';
+          dl.innerHTML='<div style="font-size:34px;margin-bottom:10px">📄</div><div style="margin-bottom:12px">Previzualizare indisponibilă</div>';
+          const a=el('a');a.href=url;a.download=f.name;a.textContent='⬇ Descarcă '+f.name;
+          a.style.cssText='display:inline-block;padding:8px 16px;background:#0369a1;color:#fff;border-radius:5px;text-decoration:none;font-size:12px;font-weight:700';
+          dl.appendChild(a);viewPane.appendChild(dl);
+        }
+      }catch(e){
+        viewPane.innerHTML='<div style="color:#dc2626;padding:20px">Eroare: '+e.message+'</div>';
+      }
+    });
+    listPane.appendChild(item);
+    if(i===0)setTimeout(()=>item.click(),50);
+  });
+
+  // Footer: re-pick folder
+  const foot=dv('');foot.style.cssText='padding:8px 12px;border-top:1px solid var(--border);background:#fff';
+  const rp2=el('button');rp2.textContent='📂 Schimbă folderul';
+  rp2.style.cssText='width:100%;height:28px;border:1px solid var(--border);border-radius:5px;background:#f8f9fb;cursor:pointer;font-size:10.5px';
+  rp2.addEventListener('click',async()=>{const h=await pickDrawingsFolder();if(h){ov.remove();openDrawingSearch(drawingNo);}});
+  foot.appendChild(rp2);listPane.appendChild(foot);
 }
 
 // Create the small "Nr. desen" link button
@@ -5767,7 +5964,7 @@ function mkDrawingBtn(itemNo,compact){
   const dn=getDrawingNoFor(itemNo);
   const b=el('button');
   b.textContent=compact?'📐':('📐 '+(dn||'—'));
-  b.title=dn?('Deschide desenele care încep cu: '+dn+'\nCale: '+getDrawingsPath()):'Nu s-a găsit numărul de desen';
+  b.title=dn?('Deschide desenele care încep cu: '+dn):'Nu s-a găsit numărul de desen';
   b.style.cssText='display:inline-flex;align-items:center;gap:3px;height:'+(compact?'20px':'22px')+
     ';padding:0 '+(compact?'5px':'7px')+';border:1px solid '+(dn?'#7dd3fc':'#e2e8f0')+
     ';border-radius:4px;background:'+(dn?'#e0f2fe':'#f8f9fb')+';color:'+(dn?'#0369a1':'#94a3b8')+
@@ -5793,28 +5990,52 @@ function openDrawingsPathSettings(){
   body.innerHTML='<div style="font-size:11.5px;color:#475569;margin-bottom:10px;line-height:1.6">'+
     'Calea către folderul cu desene tehnice (locală sau rețea). Se salvează doar pe acest device.'+
     '</div>';
-  const inp=el('input');inp.type='text';inp.value=getDrawingsPath();
-  inp.style.cssText='width:100%;height:36px;padding:0 10px;border:1.5px solid var(--border);border-radius:5px;font-size:12px;font-family:monospace';
-  body.appendChild(inp);
-  const hint=dv('');hint.style.cssText='margin-top:10px;padding:10px 12px;background:#f0f9ff;border:1px solid #bae6fd;border-radius:6px;font-size:10.5px;color:#0c4a6e;line-height:1.6';
+  const cur=dv('');cur.id='dwg-cur-folder';
+  cur.style.cssText='padding:10px 14px;background:#f8f9fb;border:1.5px solid var(--border);border-radius:6px;font-size:12px;font-family:monospace;margin-bottom:12px;min-height:20px';
+  cur.textContent='Se verifică...';
+  body.appendChild(cur);
+  _ensureDwgHandle().then(h=>{
+    const c=document.getElementById('dwg-cur-folder');
+    if(!c)return;
+    if(h){c.innerHTML='<span style="color:#15803d;font-weight:700">✓ '+h.name+'</span>';}
+    else{c.innerHTML='<span style="color:#dc2626">Niciun folder selectat</span>';}
+  });
+  const pickB=el('button');pickB.textContent='📂 Selectează folderul cu desene';
+  pickB.style.cssText='width:100%;height:38px;border:none;border-radius:6px;background:#0369a1;color:#fff;font-size:12.5px;font-weight:700;cursor:pointer';
+  pickB.addEventListener('click',async()=>{
+    const h=await pickDrawingsFolder();
+    const c=document.getElementById('dwg-cur-folder');
+    if(h&&c)c.innerHTML='<span style="color:#15803d;font-weight:700">✓ '+h.name+'</span>';
+  });
+  body.appendChild(pickB);
+  const hint=dv('');hint.style.cssText='margin-top:12px;padding:10px 12px;background:#f0f9ff;border:1px solid #bae6fd;border-radius:6px;font-size:10.5px;color:#0c4a6e;line-height:1.6';
   hint.innerHTML='<b>Cum funcționează:</b><br>'+
-    '• Butonul 📐 deschide Windows Explorer cu rezultatele căutării<br>'+
-    '• Browserul va cere confirmare pentru deschiderea Explorer — bifați "Permite întotdeauna"<br>'+
-    '• Dacă protocolul e blocat, calea se copiază în clipboard<br>'+
-    '<b>Exemple de extragere:</b><br>'+
+    '• Butonul 📐 deschide un popup <b>în browser</b> cu fișierele găsite<br>'+
+    '• PDF-urile și imaginile se previzualizează direct — fără File Explorer<br>'+
+    '• Permisiunea se cere o singură dată; browserul o reține între sesiuni<br>'+
+    '• Pentru foldere de rețea, mapați o literă de disc (ex: <code>Z:</code>) în Windows<br>'+
+    '<b>Extragerea numărului de desen:</b><br>'+
     '<code>1830114394-P8</code> → <code>1830114394P8</code><br>'+
+    '<code>1639120014P8LNB</code> → <code>1639120014P8</code><br>'+
+    '<code>1639120014P8L</code> → <code>1639120014P8</code><br>'+
     '<code>AD00006394577NG REV.A</code> → <code>AD00006394577</code><br>'+
     '<code>1830163803 ED.01</code> → <code>1830163803</code>';
   body.appendChild(hint);
   modal.appendChild(body);
   const foot=dv('');foot.style.cssText='padding:10px 20px;border-top:1px solid var(--border);display:flex;justify-content:space-between;gap:8px';
-  const rst=el('button');rst.textContent='↺ Cale implicită';
-  rst.style.cssText='height:32px;padding:0 12px;border:1px solid var(--border);background:#f8f9fb;border-radius:5px;cursor:pointer;font-size:11px';
-  rst.addEventListener('click',()=>{inp.value=DRAWINGS_DEFAULT_PATH;});
-  const sv=el('button');sv.textContent='✓ Salvează';
-  sv.style.cssText='height:32px;padding:0 20px;border:none;background:#0369a1;color:#fff;border-radius:5px;cursor:pointer;font-size:12px;font-weight:700';
-  sv.addEventListener('click',()=>{setDrawingsPath(inp.value.trim());showToast('✓ Cale salvată','ok',2000);ov.remove();});
-  foot.appendChild(rst);foot.appendChild(sv);modal.appendChild(foot);
+  const clr=el('button');clr.textContent='🗑 Șterge folderul';
+  clr.style.cssText='height:32px;padding:0 12px;border:1px solid #fca5a5;background:#fef2f2;color:#dc2626;border-radius:5px;cursor:pointer;font-size:11px';
+  clr.addEventListener('click',async()=>{
+    _dwgDirHandle=null;_dwgFileCache=null;
+    await _dwgIdbSet('dwgDir',null);
+    const c=document.getElementById('dwg-cur-folder');
+    if(c)c.innerHTML='<span style="color:#dc2626">Niciun folder selectat</span>';
+    showToast('Folder deselectat','ok',2000);
+  });
+  const ok=el('button');ok.textContent='✓ Închide';
+  ok.style.cssText='height:32px;padding:0 20px;border:none;background:#0369a1;color:#fff;border-radius:5px;cursor:pointer;font-size:12px;font-weight:700';
+  ok.addEventListener('click',()=>ov.remove());
+  foot.appendChild(clr);foot.appendChild(ok);modal.appendChild(foot);
   ov.appendChild(modal);ov.addEventListener('click',e=>{if(e.target===ov)ov.remove();});
   document.body.appendChild(ov);
 }
