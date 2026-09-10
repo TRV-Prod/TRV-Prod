@@ -5814,19 +5814,43 @@ async function _ensureDwgHandle(){
   return null;
 }
 
-// Scan folder once and cache file names
-async function _scanDwgFolder(handle,onProgress){
+// ── Persistent file-name index (survives page reloads) ──
+// Handles can't be serialized, so we store only names + re-resolve handle on click.
+async function _loadDwgIndex(){
   if(_dwgFileCache)return _dwgFileCache;
-  const files=[];
+  const stored=await _dwgIdbGet('dwgIndex');
+  if(stored&&Array.isArray(stored.names)&&stored.names.length){
+    _dwgFileCache=stored.names;
+    return _dwgFileCache;
+  }
+  return null;
+}
+
+async function _buildDwgIndex(handle,onProgress){
+  const names=[];
   let n=0;
   for await(const entry of handle.values()){
     if(entry.kind==='file'){
-      files.push({name:entry.name,handle:entry});
-      if(++n%2000===0&&onProgress)onProgress(n);
+      names.push(entry.name);
+      if(++n%3000===0&&onProgress)onProgress(n);
     }
   }
-  _dwgFileCache=files;
-  return files;
+  names.sort((a,b)=>a.localeCompare(b,'ro',{numeric:true}));
+  _dwgFileCache=names;
+  await _dwgIdbSet('dwgIndex',{names,ts:Date.now(),folder:handle.name});
+  return names;
+}
+
+// Binary search for prefix range in a sorted array — O(log n) instead of O(n)
+function _prefixRange(sorted,prefix){
+  const p=prefix.toLowerCase();
+  const cmp=(s)=>s.toLowerCase().slice(0,p.length).localeCompare(p,'ro',{numeric:true});
+  let lo=0,hi=sorted.length;
+  while(lo<hi){const mid=(lo+hi)>>1;if(cmp(sorted[mid])<0)lo=mid+1;else hi=mid;}
+  const start=lo;
+  hi=sorted.length;
+  while(lo<hi){const mid=(lo+hi)>>1;if(cmp(sorted[mid])<=0)lo=mid+1;else hi=mid;}
+  return sorted.slice(start,lo);
 }
 
 // Open browser popup with matching drawing files
@@ -5840,18 +5864,17 @@ async function openDrawingSearch(drawingNo){
 
   const hdr=dv('');hdr.style.cssText='background:#0369a1;color:#fff;padding:11px 18px;display:flex;justify-content:space-between;align-items:center;flex-shrink:0;gap:10px';
   hdr.innerHTML='<div><div style="font-weight:800;font-size:14px;font-family:monospace">📐 '+drawingNo+'</div>'+
-    '<div style="font-size:10px;opacity:.85" id="dwg-status">Se caută...</div></div>';
+    '<div style="font-size:10px;opacity:.85" id="dwg-status">…</div></div>';
   const cb=el('button');cb.textContent='✕';cb.style.cssText='border:none;background:rgba(255,255,255,.2);color:#fff;width:30px;height:30px;border-radius:5px;cursor:pointer;font-size:15px;flex-shrink:0';
   cb.addEventListener('click',()=>ov.remove());hdr.appendChild(cb);modal.appendChild(hdr);
 
   const body=dv('');body.style.cssText='flex:1;display:flex;overflow:hidden';
   modal.appendChild(body);
-
-  // Left: file list
-  const listPane=dv('');listPane.style.cssText='width:290px;min-width:200px;border-right:2px solid var(--border);overflow-y:auto;background:#f8f9fb;flex-shrink:0';
-  // Right: PDF viewer
+  const listPane=dv('');listPane.style.cssText='width:300px;min-width:210px;border-right:2px solid var(--border);display:flex;flex-direction:column;background:#f8f9fb;flex-shrink:0';
+  const listInner=dv('');listInner.style.cssText='flex:1;overflow-y:auto';
+  listPane.appendChild(listInner);
   const viewPane=dv('');viewPane.style.cssText='flex:1;background:#1a1a2e;display:flex;align-items:center;justify-content:center;color:#64748b;font-size:13px;overflow:hidden;position:relative';
-  viewPane.innerHTML='<div style="text-align:center"><div style="font-size:36px;margin-bottom:8px">📄</div>Selectați un fișier</div>';
+  viewPane.innerHTML='<div style="text-align:center"><div style="font-size:36px;margin-bottom:8px">📄</div>Click pe un fișier pentru previzualizare</div>';
   body.appendChild(listPane);body.appendChild(viewPane);
 
   ov.appendChild(modal);
@@ -5859,106 +5882,111 @@ async function openDrawingSearch(drawingNo){
   document.body.appendChild(ov);
   const esc=e=>{if(e.key==='Escape'){ov.remove();document.removeEventListener('keydown',esc);}};
   document.addEventListener('keydown',esc);
+  const st=()=>document.getElementById('dwg-status');
 
-  const statusEl=()=>document.getElementById('dwg-status');
+  // ── 1. Try cached index first (instant) ──
+  let names=await _loadDwgIndex();
+  let handle=null;
 
-  // Get folder handle
-  let handle=await _ensureDwgHandle();
-  if(!handle){
-    listPane.innerHTML='';
+  const showPicker=(msgTxt)=>{
+    listInner.innerHTML='';
     const msg=dv('');msg.style.cssText='padding:20px;text-align:center';
     msg.innerHTML='<div style="font-size:32px;margin-bottom:10px">📁</div>'+
-      '<div style="font-size:12px;color:#475569;margin-bottom:14px;line-height:1.6">Selectați folderul cu desene tehnice.<br><span style="font-size:10.5px;color:#94a3b8">Se cere o singură dată; browserul reține permisiunea.</span></div>';
-    const pickBtn=el('button');pickBtn.textContent='📂 Alege folderul';
-    pickBtn.style.cssText='height:36px;padding:0 18px;border:none;border-radius:6px;background:#0369a1;color:#fff;font-size:12px;font-weight:700;cursor:pointer';
-    pickBtn.addEventListener('click',async()=>{
+      '<div style="font-size:12px;color:#475569;margin-bottom:14px;line-height:1.6">'+(msgTxt||'Selectați folderul cu desene.')+'</div>';
+    const pb=el('button');pb.textContent='📂 Alege folderul';
+    pb.style.cssText='height:36px;padding:0 18px;border:none;border-radius:6px;background:#0369a1;color:#fff;font-size:12px;font-weight:700;cursor:pointer';
+    pb.addEventListener('click',async()=>{
       const h=await pickDrawingsFolder();
-      if(h){ov.remove();openDrawingSearch(drawingNo);}
-    });
-    msg.appendChild(pickBtn);
-    const hint=dv('');hint.style.cssText='margin-top:14px;font-size:10px;color:#94a3b8;line-height:1.5';
-    hint.textContent='Pentru foldere de rețea, mapați mai întâi o literă de disc (ex: Z:) în Windows Explorer.';
-    msg.appendChild(hint);
-    listPane.appendChild(msg);
-    if(statusEl())statusEl().textContent='Folder neselectat';
-    return;
-  }
-
-  // Scan + filter
-  if(statusEl())statusEl().textContent='Se scanează folderul...';
-  let allFiles;
-  try{
-    allFiles=await _scanDwgFolder(handle,n=>{if(statusEl())statusEl().textContent='Se scanează... '+n+' fișiere';});
-  }catch(e){
-    listPane.innerHTML='<div style="padding:20px;color:#dc2626;font-size:12px">Eroare la citirea folderului: '+e.message+'</div>';
-    return;
-  }
-
-  const q=drawingNo.toLowerCase();
-  const matches=allFiles.filter(f=>f.name.toLowerCase().startsWith(q));
-  if(statusEl())statusEl().textContent=matches.length+' fișiere găsite din '+allFiles.length+' · '+handle.name;
-
-  listPane.innerHTML='';
-  if(!matches.length){
-    const nf=dv('');nf.style.cssText='padding:20px;text-align:center;color:#94a3b8;font-size:12px';
-    nf.innerHTML='<div style="font-size:30px;margin-bottom:8px">🔍</div>Niciun fișier care începe cu<br><b style="font-family:monospace;color:#475569">'+drawingNo+'</b>';
-    listPane.appendChild(nf);
-    // Offer re-pick
-    const rp=el('button');rp.textContent='📂 Schimbă folderul';
-    rp.style.cssText='margin:14px auto 0;display:block;height:30px;padding:0 12px;border:1px solid var(--border);border-radius:5px;background:#fff;cursor:pointer;font-size:11px';
-    rp.addEventListener('click',async()=>{const h=await pickDrawingsFolder();if(h){ov.remove();openDrawingSearch(drawingNo);}});
-    listPane.appendChild(rp);
-    return;
-  }
-
-  matches.sort((a,b)=>a.name.localeCompare(b.name,'ro',{numeric:true}));
-  let activeItem=null;
-  matches.forEach((f,i)=>{
-    const item=dv('');
-    item.style.cssText='padding:9px 12px;cursor:pointer;border-bottom:1px solid #f1f5f9;font-size:11px;font-family:monospace;word-break:break-all;transition:background .1s';
-    item.textContent=f.name;
-    item.addEventListener('mouseenter',()=>{if(item!==activeItem)item.style.background='#eff6ff';});
-    item.addEventListener('mouseleave',()=>{if(item!==activeItem)item.style.background='';});
-    item.addEventListener('click',async()=>{
-      if(activeItem){activeItem.style.background='';activeItem.style.borderLeft='';activeItem.style.fontWeight='';}
-      activeItem=item;
-      item.style.background='#dbeafe';item.style.borderLeft='3px solid #1d4ed8';item.style.fontWeight='700';
-      viewPane.innerHTML='<div style="color:#64748b">⏳ Se încarcă...</div>';
+      if(!h)return;
+      listInner.innerHTML='<div style="padding:20px;text-align:center;color:#475569;font-size:12px">⏳ Se indexează folderul...<br><span id="dwg-prog" style="font-size:10px;color:#94a3b8"></span></div>';
+      if(st())st().textContent='Indexare...';
       try{
-        const file=await f.handle.getFile();
-        const url=URL.createObjectURL(file);
-        viewPane.innerHTML='';
-        if(/\.pdf$/i.test(f.name)){
-          const em=el('embed');em.setAttribute('type','application/pdf');em.src=url;
-          em.style.cssText='width:100%;height:100%;border:none;background:#fff';
-          viewPane.appendChild(em);
-        } else if(/\.(png|jpe?g|gif|webp|bmp|tiff?)$/i.test(f.name)){
-          const img=el('img');img.src=url;
-          img.style.cssText='max-width:100%;max-height:100%;object-fit:contain';
-          viewPane.appendChild(img);
-        } else {
-          const dl=dv('');dl.style.cssText='text-align:center;color:#94a3b8';
-          dl.innerHTML='<div style="font-size:34px;margin-bottom:10px">📄</div><div style="margin-bottom:12px">Previzualizare indisponibilă</div>';
-          const a=el('a');a.href=url;a.download=f.name;a.textContent='⬇ Descarcă '+f.name;
-          a.style.cssText='display:inline-block;padding:8px 16px;background:#0369a1;color:#fff;border-radius:5px;text-decoration:none;font-size:12px;font-weight:700';
-          dl.appendChild(a);viewPane.appendChild(dl);
-        }
-      }catch(e){
-        viewPane.innerHTML='<div style="color:#dc2626;padding:20px">Eroare: '+e.message+'</div>';
-      }
+        names=await _buildDwgIndex(h,n=>{
+          const p=document.getElementById('dwg-prog');if(p)p.textContent=n.toLocaleString('ro-RO')+' fișiere';
+          if(st())st().textContent='Indexare... '+n.toLocaleString('ro-RO');
+        });
+        handle=h;renderResults();
+      }catch(e){listInner.innerHTML='<div style="padding:20px;color:#dc2626;font-size:12px">Eroare: '+e.message+'</div>';}
     });
-    listPane.appendChild(item);
-    if(i===0)setTimeout(()=>item.click(),50);
+    msg.appendChild(pb);
+    const hint=dv('');hint.style.cssText='margin-top:14px;font-size:10px;color:#94a3b8;line-height:1.5';
+    hint.textContent='Indexarea se face o singură dată. Pentru rețea, mapați o literă de disc (ex: Z:).';
+    msg.appendChild(hint);listInner.appendChild(msg);
+    if(st())st().textContent='Folder neindexat';
+  };
+
+  if(!names){showPicker('Folderul nu a fost indexat încă.');return;}
+
+  // ── 2. Render results from cached index (instant, binary search) ──
+  function renderResults(){
+    const t0=performance.now();
+    const matches=_prefixRange(names,drawingNo);
+    const ms=Math.round(performance.now()-t0);
+    if(st())st().textContent=matches.length+' din '+names.length.toLocaleString('ro-RO')+' fișiere · '+ms+'ms';
+
+    listInner.innerHTML='';
+    if(!matches.length){
+      const nf=dv('');nf.style.cssText='padding:20px;text-align:center;color:#94a3b8;font-size:12px';
+      nf.innerHTML='<div style="font-size:30px;margin-bottom:8px">🔍</div>Niciun fișier care începe cu<br><b style="font-family:monospace;color:#475569">'+drawingNo+'</b>';
+      listInner.appendChild(nf);
+      return;
+    }
+    let activeItem=null;
+    matches.forEach(fname=>{
+      const item=dv('');
+      item.style.cssText='padding:9px 12px;cursor:pointer;border-bottom:1px solid #f1f5f9;font-size:11px;font-family:monospace;word-break:break-all;transition:background .1s';
+      item.textContent=fname;
+      item.addEventListener('mouseenter',()=>{if(item!==activeItem)item.style.background='#eff6ff';});
+      item.addEventListener('mouseleave',()=>{if(item!==activeItem)item.style.background='';});
+      // Lazy load: only fetch file when clicked
+      item.addEventListener('click',async()=>{
+        if(activeItem){activeItem.style.background='';activeItem.style.borderLeft='';activeItem.style.fontWeight='';}
+        activeItem=item;
+        item.style.background='#dbeafe';item.style.borderLeft='3px solid #1d4ed8';item.style.fontWeight='700';
+        viewPane.innerHTML='<div style="color:#64748b">⏳ Se încarcă...</div>';
+        try{
+          if(!handle)handle=await _ensureDwgHandle();
+          if(!handle){viewPane.innerHTML='<div style="color:#f59e0b;padding:20px;text-align:center">Permisiune expirată.<br>Folosiți "Reindexează" pentru a reselecta folderul.</div>';return;}
+          const fh=await handle.getFileHandle(fname);
+          const file=await fh.getFile();
+          const url=URL.createObjectURL(file);
+          viewPane.innerHTML='';
+          if(/\.pdf$/i.test(fname)){
+            const em=el('embed');em.setAttribute('type','application/pdf');em.src=url;
+            em.style.cssText='width:100%;height:100%;border:none;background:#fff';
+            viewPane.appendChild(em);
+          } else if(/\.(png|jpe?g|gif|webp|bmp|tiff?)$/i.test(fname)){
+            const img=el('img');img.src=url;
+            img.style.cssText='max-width:100%;max-height:100%;object-fit:contain';
+            viewPane.appendChild(img);
+          } else {
+            const dl=dv('');dl.style.cssText='text-align:center;color:#94a3b8';
+            dl.innerHTML='<div style="font-size:34px;margin-bottom:10px">📄</div><div style="margin-bottom:12px">Previzualizare indisponibilă</div>';
+            const a=el('a');a.href=url;a.download=fname;a.textContent='⬇ Descarcă';
+            a.style.cssText='display:inline-block;padding:8px 16px;background:#0369a1;color:#fff;border-radius:5px;text-decoration:none;font-size:12px;font-weight:700';
+            dl.appendChild(a);viewPane.appendChild(dl);
+          }
+        }catch(e){
+          viewPane.innerHTML='<div style="color:#dc2626;padding:20px;text-align:center">Fișier inaccesibil:<br>'+e.message+'</div>';
+        }
+      });
+      listInner.appendChild(item);
+    });
+  }
+  renderResults();
+
+  // Footer: reindex
+  const foot=dv('');foot.style.cssText='padding:8px 10px;border-top:1px solid var(--border);background:#fff;flex-shrink:0;display:flex;gap:6px';
+  const ri=el('button');ri.textContent='🔄 Reindexează';
+  ri.style.cssText='flex:1;height:28px;border:1px solid var(--border);border-radius:5px;background:#f8f9fb;cursor:pointer;font-size:10.5px';
+  ri.title='Rescanează folderul (după adăugarea de desene noi)';
+  ri.addEventListener('click',async()=>{
+    _dwgFileCache=null;await _dwgIdbSet('dwgIndex',null);
+    ov.remove();openDrawingSearch(drawingNo);
   });
-
-  // Footer: re-pick folder
-  const foot=dv('');foot.style.cssText='padding:8px 12px;border-top:1px solid var(--border);background:#fff';
-  const rp2=el('button');rp2.textContent='📂 Schimbă folderul';
-  rp2.style.cssText='width:100%;height:28px;border:1px solid var(--border);border-radius:5px;background:#f8f9fb;cursor:pointer;font-size:10.5px';
-  rp2.addEventListener('click',async()=>{const h=await pickDrawingsFolder();if(h){ov.remove();openDrawingSearch(drawingNo);}});
-  foot.appendChild(rp2);listPane.appendChild(foot);
+  foot.appendChild(ri);
+  listPane.appendChild(foot);
 }
-
 // Create the small "Nr. desen" link button
 function mkDrawingBtn(itemNo,compact){
   const dn=getDrawingNoFor(itemNo);
@@ -5994,11 +6022,17 @@ function openDrawingsPathSettings(){
   cur.style.cssText='padding:10px 14px;background:#f8f9fb;border:1.5px solid var(--border);border-radius:6px;font-size:12px;font-family:monospace;margin-bottom:12px;min-height:20px';
   cur.textContent='Se verifică...';
   body.appendChild(cur);
-  _ensureDwgHandle().then(h=>{
+  Promise.all([_ensureDwgHandle(),_dwgIdbGet('dwgIndex')]).then(([h,idx])=>{
     const c=document.getElementById('dwg-cur-folder');
     if(!c)return;
-    if(h){c.innerHTML='<span style="color:#15803d;font-weight:700">✓ '+h.name+'</span>';}
-    else{c.innerHTML='<span style="color:#dc2626">Niciun folder selectat</span>';}
+    let html='';
+    if(h)html+='<div style="color:#15803d;font-weight:700">✓ Folder: '+h.name+'</div>';
+    else html+='<div style="color:#dc2626">Niciun folder selectat</div>';
+    if(idx&&idx.names){
+      const d=new Date(idx.ts||0);
+      html+='<div style="color:#0369a1;font-size:11px;margin-top:4px">📇 Index: <b>'+idx.names.length.toLocaleString('ro-RO')+'</b> fișiere · '+d.toLocaleDateString('ro-RO')+' '+d.toLocaleTimeString('ro-RO').slice(0,5)+'</div>';
+    } else html+='<div style="color:#94a3b8;font-size:11px;margin-top:4px">Niciun index — se creează la prima căutare</div>';
+    c.innerHTML=html;
   });
   const pickB=el('button');pickB.textContent='📂 Selectează folderul cu desene';
   pickB.style.cssText='width:100%;height:38px;border:none;border-radius:6px;background:#0369a1;color:#fff;font-size:12.5px;font-weight:700;cursor:pointer';
@@ -6010,9 +6044,10 @@ function openDrawingsPathSettings(){
   body.appendChild(pickB);
   const hint=dv('');hint.style.cssText='margin-top:12px;padding:10px 12px;background:#f0f9ff;border:1px solid #bae6fd;border-radius:6px;font-size:10.5px;color:#0c4a6e;line-height:1.6';
   hint.innerHTML='<b>Cum funcționează:</b><br>'+
-    '• Butonul 📐 deschide un popup <b>în browser</b> cu fișierele găsite<br>'+
-    '• PDF-urile și imaginile se previzualizează direct — fără File Explorer<br>'+
-    '• Permisiunea se cere o singură dată; browserul o reține între sesiuni<br>'+
+    '• Folderul se indexează <b>o singură dată</b> (nume fișiere salvate local)<br>'+
+    '• Căutările ulterioare sunt <b>instantanee</b> (căutare binară, ~1ms)<br>'+
+    '• Previzualizarea se încarcă doar la click pe un fișier<br>'+
+    '• Folosiți 🔄 Reindexează după ce adăugați desene noi<br>'+
     '• Pentru foldere de rețea, mapați o literă de disc (ex: <code>Z:</code>) în Windows<br>'+
     '<b>Extragerea numărului de desen:</b><br>'+
     '<code>1830114394-P8</code> → <code>1830114394P8</code><br>'+
@@ -6028,9 +6063,10 @@ function openDrawingsPathSettings(){
   clr.addEventListener('click',async()=>{
     _dwgDirHandle=null;_dwgFileCache=null;
     await _dwgIdbSet('dwgDir',null);
+    await _dwgIdbSet('dwgIndex',null);
     const c=document.getElementById('dwg-cur-folder');
     if(c)c.innerHTML='<span style="color:#dc2626">Niciun folder selectat</span>';
-    showToast('Folder deselectat','ok',2000);
+    showToast('Folder și index șterse','ok',2000);
   });
   const ok=el('button');ok.textContent='✓ Închide';
   ok.style.cssText='height:32px;padding:0 20px;border:none;background:#0369a1;color:#fff;border-radius:5px;cursor:pointer;font-size:12px;font-weight:700';
