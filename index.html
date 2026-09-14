@@ -5767,39 +5767,51 @@ function extractDrawingNo(name){
 }
 
 // Get drawing number for an item (FP or component) using BOM data
+// A usable drawing name must contain at least one digit.
+// 'ASSEMBLY HVAC BRACKET' -> not usable; fall back to the alias/drawing column.
+function _looksLikeDrawingName(s){
+  return !!s && /\d/.test(String(s).split(/\s+/)[0]);
+}
+
 // Index: itemNo -> raw name used for drawing extraction. Built once from BOM.
 let _dwgNameIdx=null;
 function _buildDwgNameIdx(){
   const idx=new Map();
-  if(S.bomData){
-    // Detect the "Mat name"/"Mat desc" column once (header spelling varies)
-    let matNameCol='';
-    if(S.bomData.length){
-      matNameCol=Object.keys(S.bomData[0]).find(k=>{
-        const kl=k.toLowerCase().replace(/[.\s]/g,'');
-        return kl==='matname'||kl==='matdesc'||kl==='matdescription';
-      })||'';
-    }
+  const pick=(code,primary,alias)=>{
+    if(!code||idx.has(code))return;
+    // Prefer the name only if it actually looks like a drawing number
+    if(_looksLikeDrawingName(primary)){idx.set(code,primary);return;}
+    if(_looksLikeDrawingName(alias)){idx.set(code,alias);return;}
+    // Last resort: keep whichever non-empty value exists
+    if(alias)idx.set(code,alias);
+    else if(primary)idx.set(code,primary);
+  };
+
+  if(S.bomData&&S.bomData.length){
+    const keys=Object.keys(S.bomData[0]);
+    const findCol=(...cands)=>keys.find(k=>{
+      const kl=k.toLowerCase().replace(/[.\s_]/g,'');
+      return cands.includes(kl);
+    })||'';
+    const matNameCol =findCol('matname','matdesc','matdescription');
+    const matAliasCol=findCol('matdrawing','matalias','aliasno','alias','matdrawingno');
+    const fpNameCol  =findCol('fpname');
+    const fpAliasCol =findCol('fpdrawing','fpalias','fpdrawingno');
+
     for(const br of S.bomData){
-      // Component
       const matNo=str(br['Material no']||'').trim();
-      if(matNo&&!idx.has(matNo)){
-        const mn=matNameCol?str(br[matNameCol]||'').trim():'';
-        if(mn)idx.set(matNo,mn);
-      }
-      // Final product
+      if(matNo)pick(matNo,
+        matNameCol ?str(br[matNameCol] ||'').trim():'',
+        matAliasCol?str(br[matAliasCol]||'').trim():'');
       const fpNo=str(br['Final product']||'').trim();
-      if(fpNo&&!idx.has(fpNo)){
-        const fn=str(br['FP name']||'').trim();
-        if(fn)idx.set(fpNo,fn);
-      }
+      if(fpNo)pick(fpNo,
+        fpNameCol ?str(br[fpNameCol] ||'').trim():'',
+        fpAliasCol?str(br[fpAliasCol]||'').trim():'');
     }
   }
-  // FP list as extra source
+  // FP list as extra source (has .name and .drawing)
   if(S.fps){
-    for(const f of S.fps){
-      if(f.code&&f.name&&!idx.has(f.code))idx.set(f.code,f.name);
-    }
+    for(const f of S.fps)pick(f.code,f.name||'',f.drawing||'');
   }
   _dwgNameIdx=idx;
   console.log('[Drawings] name index:',idx.size,'items');
@@ -5811,10 +5823,13 @@ function getDrawingNoFor(itemNo){
   if(!_dwgNameIdx)_buildDwgNameIdx();
   const raw=_dwgNameIdx.get(itemNo);
   if(raw)return extractDrawingNo(raw);
-  // Fallback: stocklist / PO name
+  // Fallback: stocklist / PO name or description
   const st=S.stockIdx?.get(itemNo);
-  const n2=st&&(st.slName||st.name);
-  if(n2)return extractDrawingNo(n2);
+  if(st){
+    for(const cand of [st.slName,st.name,st.slDesc,st.desc]){
+      if(_looksLikeDrawingName(cand))return extractDrawingNo(cand);
+    }
+  }
   return '';
 }
 
@@ -6163,8 +6178,8 @@ function mkDrawingBtn(itemNo,compact){
   const b=el('button');
   b.textContent=compact?'📐':('📐 '+(dn||'—'));
   b.title=dn
-    ?('Deschide desenele care încep cu: '+dn+'\n(din denumire: '+(_dwgNameIdx?.get(itemNo)||'—')+')')
-    :('Nu s-a găsit denumirea în BOM pentru '+itemNo+'.\nClick pentru căutare manuală.');
+    ?('Deschide desenele care încep cu: '+dn+'\nSursă: '+(_dwgNameIdx?.get(itemNo)||'—'))
+    :('Nicio denumire/alias cu cifre pentru '+itemNo+'.\nClick pentru căutare manuală.');
   b.style.cssText='display:inline-flex;align-items:center;gap:3px;height:'+(compact?'20px':'22px')+
     ';padding:0 '+(compact?'5px':'7px')+';border:1px solid '+(dn?'#7dd3fc':'#e2e8f0')+
     ';border-radius:4px;background:'+(dn?'#e0f2fe':'#f8f9fb')+';color:'+(dn?'#0369a1':'#94a3b8')+
