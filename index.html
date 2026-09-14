@@ -6023,80 +6023,39 @@ function _prefixRange(sorted,prefix){
 
 // Overlay the MOVEX code in the top-right corner of the drawing viewer.
 // The 🖨 button opens a print-ready page with the same watermark burned in.
-function _addDwgWatermark(pane,code,fname,fileUrl,isPdf){
+function _addDwgWatermark(pane,code,fname,fileUrl,isPdf,landscape){
   if(!code)return;
   const wm=dv('');
-  wm.style.cssText='position:absolute;top:10px;right:14px;z-index:20;display:flex;flex-direction:column;align-items:flex-end;gap:5px;pointer-events:none';
-  const badge=dv('');
-  badge.style.cssText='background:rgba(255,255,255,.94);border:2px solid #1e3a5f;border-radius:6px;padding:5px 12px;font-family:monospace;font-weight:900;font-size:15px;color:#1e3a5f;box-shadow:0 3px 12px rgba(0,0,0,.3);letter-spacing:.5px;white-space:nowrap';
-  badge.textContent=code;
-  wm.appendChild(badge);
-  // Print button
-  const pb=el('button');pb.innerHTML='🖨 Printează cu cod';
-  pb.style.cssText='pointer-events:auto;height:26px;padding:0 11px;border:1px solid #1e3a5f;border-radius:5px;background:rgba(255,255,255,.94);color:#1e3a5f;cursor:pointer;font-size:10.5px;font-weight:700;box-shadow:0 2px 8px rgba(0,0,0,.25)';
-  pb.addEventListener('click',e=>{
-    e.stopPropagation();
+  wm.style.cssText='position:absolute;top:10px;right:14px;z-index:20;display:flex;align-items:center;gap:6px';
+  if(landscape!==undefined){
+    const oB=dv('');
+    oB.textContent=(landscape?'⬛ Landscape':'▯ Portrait');
+    oB.style.cssText='padding:4px 9px;border-radius:5px;background:rgba(30,58,95,.9);color:#fff;font-size:10px;font-weight:700;white-space:nowrap';
+    wm.appendChild(oB);
+  }
+  const pb=el('button');pb.innerHTML='🖨 Printează';
+  pb.style.cssText='height:28px;padding:0 13px;border:1.5px solid #0369a1;border-radius:5px;background:#fff;color:#0369a1;cursor:pointer;font-size:11.5px;font-weight:800;box-shadow:0 2px 10px rgba(0,0,0,.3)';
+  pb.onclick=function(ev){
+    if(ev){ev.preventDefault();ev.stopPropagation();}
     _printDrawingWithCode(code,fname,fileUrl,isPdf);
-  });
+    return false;
+  };
   wm.appendChild(pb);
   pane.appendChild(wm);
 }
 
-// Print the drawing with the MOVEX code burned into the image.
-// <embed> PDFs don't print, so PDFs are rendered to <canvas> via PDF.js first.
-async function _printDrawingWithCode(code,fname,fileUrl,isPdf){
-  document.getElementById('dwg-print-overlay')?.remove();
-  const ov=dv('');ov.id='dwg-print-overlay';
-  ov.style.cssText='position:fixed;inset:0;z-index:99999;background:#fff;overflow:auto;display:block;padding:0';
-  ov.addEventListener('click',e=>e.stopPropagation());
-
-  // Screen-only controls
-  const bar=dv('spo-close');
-  bar.style.cssText='position:fixed;top:10px;left:14px;z-index:100002;display:flex;gap:8px;pointer-events:auto';
-  const cbtn=el('button');cbtn.textContent='✕ Închide';
-  cbtn.style.cssText='height:34px;padding:0 16px;border:1px solid #e2e8f0;border-radius:5px;background:#fff;cursor:pointer;font-size:12px;font-weight:700;box-shadow:0 3px 12px rgba(0,0,0,.2)';
-  cbtn.onclick=function(ev){if(ev){ev.preventDefault();ev.stopPropagation();}ov.remove();document.body.classList.remove('has-print-overlay');return false;};
-  const pbtn=el('button');pbtn.textContent='🖨 Printează';
-  pbtn.style.cssText='height:34px;padding:0 16px;border:1.5px solid #0369a1;border-radius:5px;background:#eff6ff;cursor:pointer;font-size:12px;font-weight:800;color:#0369a1;box-shadow:0 3px 12px rgba(0,0,0,.2)';
-  // Attach the handler right away so it always works, even if rendering is still running
-  pbtn.onclick=function(ev){
-    if(ev){ev.preventDefault();ev.stopPropagation();}
-    window.print();
-    return false;
-  };
-  bar.appendChild(cbtn);bar.appendChild(pbtn);
-  ov.appendChild(bar);
-
-  const pagesWrap=dv('');pagesWrap.id='dwg-print-pages';
-  pagesWrap.style.cssText='width:100%;text-align:center;padding:56px 16px 20px;background:#f1f5f9;min-height:100vh';
-  pagesWrap.innerHTML='<div style="padding:40px;color:#64748b;font-size:14px">⏳ Se pregătește pentru printare...</div>';
-  ov.appendChild(pagesWrap);
-
-  const stl=document.createElement('style');
-  // Replaced after rendering, once the page orientation is known
-  stl.textContent='@media print{@page{size:A3 landscape;margin:5mm}}';
-  ov.appendChild(stl);
-
-  document.body.appendChild(ov);
-  document.body.classList.add('has-print-overlay');
-  const esc=e=>{if(e.key==='Escape'){ov.remove();document.body.classList.remove('has-print-overlay');document.removeEventListener('keydown',esc);}};
-  document.addEventListener('keydown',esc);
-
-  // Draw the MOVEX code in the top-right corner of a canvas
-  // Add the MOVEX code in a dedicated strip appended BELOW the drawing,
-  // so nothing on the drawing itself is covered.
-  const stampCode=(srcCanvas,scale)=>{
+// Build stamped canvases (drawing + MOVEX code strip at bottom-right).
+// Returns {canvases:[...], landscape:bool}
+async function _buildStampedPages(code,fileUrl,isPdf,onProgress){
+  const stamp=(srcCanvas)=>{
+    const scale=srcCanvas.width/1200;
     const fs=Math.max(9,Math.round(15*scale));
     const stripH=Math.round(fs*2.1);
     const out=document.createElement('canvas');
-    out.width=srcCanvas.width;
-    out.height=srcCanvas.height+stripH;
+    out.width=srcCanvas.width;out.height=srcCanvas.height+stripH;
     const ctx=out.getContext('2d');
-    // White background for the whole sheet
     ctx.fillStyle='#fff';ctx.fillRect(0,0,out.width,out.height);
-    // Original drawing on top
     ctx.drawImage(srcCanvas,0,0);
-    // Bottom-right code box inside the strip
     ctx.save();
     ctx.font='900 '+fs+'px Arial, sans-serif';
     ctx.textBaseline='middle';
@@ -6106,73 +6065,77 @@ async function _printDrawingWithCode(code,fname,fileUrl,isPdf){
     const bx=out.width-bw-Math.round(fs*0.6);
     const by=srcCanvas.height+Math.round((stripH-bh)/2);
     ctx.fillStyle='#fff';ctx.fillRect(bx,by,bw,bh);
-    ctx.lineWidth=Math.max(2,Math.round(2.5*scale));
+    ctx.lineWidth=Math.max(1,Math.round(1.5*scale));
     ctx.strokeStyle='#000';ctx.strokeRect(bx,by,bw,bh);
-    ctx.fillStyle='#000';
-    ctx.fillText(code,bx+pad,by+bh/2);
+    ctx.fillStyle='#000';ctx.fillText(code,bx+pad,by+bh/2);
     ctx.restore();
     return out;
   };
 
-  let landscapeCount=0,portraitCount=0;
-  try{
-    pagesWrap.innerHTML='';
-    const addPage=(finalCv)=>{
-      if(finalCv.width>=finalCv.height)landscapeCount++;else portraitCount++;
-      finalCv.style.cssText='max-width:100%;height:auto;display:block;margin:0 auto;box-shadow:0 2px 12px rgba(0,0,0,.15)';
-      const pg=dv('dwg-page');pg.style.cssText='margin:0 auto 16px';
-      pg.appendChild(finalCv);pagesWrap.appendChild(pg);
-    };
-
-    if(isPdf){
-      const lib=await new Promise(res=>loadPdfJsGlobal(res));
-      if(!lib)throw new Error('PDF.js indisponibil');
-      const buf=await (await fetch(fileUrl)).arrayBuffer();
-      const doc=await lib.getDocument({data:new Uint8Array(buf)}).promise;
-      for(let p=1;p<=doc.numPages;p++){
-        const page=await doc.getPage(p);
-        const vp=page.getViewport({scale:2});
-        const cv=document.createElement('canvas');
-        cv.width=vp.width;cv.height=vp.height;
-        await page.render({canvasContext:cv.getContext('2d'),viewport:vp}).promise;
-        addPage(stampCode(cv,vp.width/1200));
-      }
-    } else {
-      const img=new Image();
-      await new Promise((res,rej)=>{img.onload=res;img.onerror=rej;img.src=fileUrl;});
+  const canvases=[];
+  if(isPdf){
+    const lib=await new Promise(res=>loadPdfJsGlobal(res));
+    if(!lib)throw new Error('PDF.js indisponibil');
+    const buf=await (await fetch(fileUrl)).arrayBuffer();
+    const doc=await lib.getDocument({data:new Uint8Array(buf)}).promise;
+    for(let p=1;p<=doc.numPages;p++){
+      if(onProgress)onProgress(p,doc.numPages);
+      const page=await doc.getPage(p);
+      const vp=page.getViewport({scale:2});
       const cv=document.createElement('canvas');
-      cv.width=img.naturalWidth;cv.height=img.naturalHeight;
-      cv.getContext('2d').drawImage(img,0,0);
-      addPage(stampCode(cv,cv.width/1200));
+      cv.width=vp.width;cv.height=vp.height;
+      await page.render({canvasContext:cv.getContext('2d'),viewport:vp}).promise;
+      canvases.push(stamp(cv));
     }
-
-    // ── Match the paper orientation to the drawing ──
-    const isLandscape=landscapeCount>=portraitCount;
-    const orient=isLandscape?'landscape':'portrait';
-    stl.textContent='@media print{'+
-      '@page{size:A3 '+orient+';margin:5mm}'+
-      '#dwg-print-overlay{position:static!important;inset:unset!important;padding:0!important;margin:0!important;display:block!important;background:#fff!important}'+
-      '#dwg-print-pages{padding:0!important}'+
-      '.dwg-page{page-break-after:always;page-break-inside:avoid;margin:0!important;box-shadow:none!important;text-align:center}'+
-      '.dwg-page:last-child{page-break-after:auto}'+
-      '.dwg-page canvas{box-shadow:none!important;max-width:100%!important;max-height:'+(isLandscape?'96vh':'98vh')+'!important;width:auto!important;height:auto!important}'+
-      '.spo-close{display:none!important}'+
-      '*{-webkit-print-color-adjust:exact!important;print-color-adjust:exact!important}}';
-
-    // Orientation badge for the user
-    const oInfo=dv('spo-close');
-    oInfo.style.cssText='position:fixed;top:10px;right:14px;z-index:100002;padding:6px 12px;border-radius:5px;background:rgba(30,58,95,.92);color:#fff;font-size:11px;font-weight:700;box-shadow:0 3px 12px rgba(0,0,0,.25)';
-    oInfo.textContent=(isLandscape?'⬛ Landscape':'▯ Portrait')+' · A3';
-    ov.appendChild(oInfo);
-    pbtn.style.opacity='1';
-  }catch(e){
-    pagesWrap.innerHTML='<div style="padding:40px;color:#dc2626;font-size:13px;text-align:center">'+
-      'Nu s-a putut pregăti printarea:<br><b>'+e.message+'</b><br>'+
-      '<span style="font-size:11px;color:#94a3b8">Deschideți fișierul într-un tab nou și printați de acolo.</span></div>';
-    const a=el('a');a.href=fileUrl;a.target='_blank';a.textContent='🔗 Deschide '+fname;
-    a.style.cssText='display:inline-block;margin-top:14px;padding:9px 18px;background:#0369a1;color:#fff;border-radius:5px;text-decoration:none;font-size:12px;font-weight:700';
-    pagesWrap.appendChild(a);
+  } else {
+    const img=new Image();
+    await new Promise((res,rej)=>{img.onload=res;img.onerror=rej;img.src=fileUrl;});
+    const cv=document.createElement('canvas');
+    cv.width=img.naturalWidth;cv.height=img.naturalHeight;
+    cv.getContext('2d').drawImage(img,0,0);
+    canvases.push(stamp(cv));
   }
+  let ls=0,pt=0;
+  canvases.forEach(c=>{c.width>=c.height?ls++:pt++;});
+  return {canvases,landscape:ls>=pt};
+}
+
+// Print the drawing in a SEPARATE window — bypasses all app print CSS.
+async function _printDrawingWithCode(code,fname,fileUrl,isPdf){
+  showToast('⏳ Se pregătește printarea...','ok',2500);
+  let pages;
+  try{
+    pages=await _buildStampedPages(code,fileUrl,isPdf,(p,n)=>{
+      if(n>1)showToast('Pagina '+p+' din '+n+'...','ok',900);
+    });
+  }catch(e){
+    showToast('Eroare la pregătirea printării: '+e.message,'err',4000);
+    return;
+  }
+  if(!pages.canvases.length){showToast('Nimic de printat','err',2500);return;}
+
+  const orient=pages.landscape?'landscape':'portrait';
+  const imgs=pages.canvases.map(c=>'<div class="pg"><img src="'+c.toDataURL('image/png')+'"></div>').join('');
+
+  const w=window.open('','_blank','width=1200,height=900');
+  if(!w){
+    showToast('Permiteți popup-urile pentru a printa desenul','err',4500);
+    return;
+  }
+  w.document.open();
+  w.document.write('<!DOCTYPE html><html><head><meta charset="UTF-8"><title>'+code+' — '+fname+'</title>'+
+    '<style>'+
+    '*{margin:0;padding:0;box-sizing:border-box}'+
+    'body{background:#f1f5f9}'+
+    '.pg{page-break-after:always;text-align:center;padding:8px}'+
+    '.pg:last-child{page-break-after:auto}'+
+    '.pg img{max-width:100%;height:auto;display:block;margin:0 auto;box-shadow:0 2px 10px rgba(0,0,0,.15)}'+
+    '@page{size:A3 '+orient+';margin:5mm}'+
+    '@media print{body{background:#fff}.pg{padding:0}.pg img{box-shadow:none;max-height:98vh}}'+
+    '</style></head><body>'+imgs+
+    '<script>window.onload=function(){setTimeout(function(){window.print();},400);};<\/script>'+
+    '</body></html>');
+  w.document.close();
 }
 
 // Open browser popup with matching drawing files
@@ -6309,16 +6272,36 @@ async function openDrawingSearch(drawingNo,movexCode){
           const url=URL.createObjectURL(file);
           viewPane.innerHTML='';
           const wmCode=movexCode||drawingNo;
-          if(/\.pdf$/i.test(fname)){
-            const em=el('embed');em.setAttribute('type','application/pdf');em.src=url;
-            em.style.cssText='width:100%;height:100%;border:none;background:#fff';
-            viewPane.appendChild(em);
-            _addDwgWatermark(viewPane,wmCode,fname,url,true);
-          } else if(/\.(png|jpe?g|gif|webp|bmp|tiff?)$/i.test(fname)){
-            const img=el('img');img.src=url;
-            img.style.cssText='max-width:100%;max-height:100%;object-fit:contain';
-            viewPane.appendChild(img);
-            _addDwgWatermark(viewPane,wmCode,fname,url,false);
+          const isPdfF=/\.pdf$/i.test(fname);
+          const isImgF=/\.(png|jpe?g|gif|webp|bmp|tiff?)$/i.test(fname);
+          if(isPdfF||isImgF){
+            // Render with the MOVEX code already burned in, so any print includes it
+            viewPane.innerHTML='<div style="color:#64748b">⏳ Se randează...</div>';
+            try{
+              const res=await _buildStampedPages(wmCode,url,isPdfF);
+              viewPane.innerHTML='';
+              const scroll=dv('');
+              scroll.style.cssText='width:100%;height:100%;overflow:auto;padding:10px;text-align:center;background:#1a1a2e';
+              res.canvases.forEach(c=>{
+                c.style.cssText='max-width:100%;height:auto;display:block;margin:0 auto 10px;background:#fff;box-shadow:0 3px 14px rgba(0,0,0,.45)';
+                scroll.appendChild(c);
+              });
+              viewPane.appendChild(scroll);
+              _addDwgWatermark(viewPane,wmCode,fname,url,isPdfF,res.landscape);
+            }catch(err){
+              // Fallback to the native viewer if rendering fails
+              viewPane.innerHTML='';
+              if(isPdfF){
+                const em=el('embed');em.setAttribute('type','application/pdf');em.src=url;
+                em.style.cssText='width:100%;height:100%;border:none;background:#fff';
+                viewPane.appendChild(em);
+              } else {
+                const img=el('img');img.src=url;
+                img.style.cssText='max-width:100%;max-height:100%;object-fit:contain';
+                viewPane.appendChild(img);
+              }
+              _addDwgWatermark(viewPane,wmCode,fname,url,isPdfF);
+            }
           } else {
             const dl=dv('');dl.style.cssText='text-align:center;color:#94a3b8';
             dl.innerHTML='<div style="font-size:34px;margin-bottom:10px">📄</div><div style="margin-bottom:12px">Previzualizare indisponibilă</div>';
