@@ -6048,16 +6048,22 @@ async function _printDrawingWithCode(code,fname,fileUrl,isPdf){
   document.getElementById('dwg-print-overlay')?.remove();
   const ov=dv('');ov.id='dwg-print-overlay';
   ov.style.cssText='position:fixed;inset:0;z-index:99999;background:#fff;overflow:auto;display:block;padding:0';
+  ov.addEventListener('click',e=>e.stopPropagation());
 
   // Screen-only controls
   const bar=dv('spo-close');
-  bar.style.cssText='position:fixed;top:10px;left:14px;z-index:100001;display:flex;gap:8px';
+  bar.style.cssText='position:fixed;top:10px;left:14px;z-index:100002;display:flex;gap:8px;pointer-events:auto';
   const cbtn=el('button');cbtn.textContent='✕ Închide';
   cbtn.style.cssText='height:34px;padding:0 16px;border:1px solid #e2e8f0;border-radius:5px;background:#fff;cursor:pointer;font-size:12px;font-weight:700;box-shadow:0 3px 12px rgba(0,0,0,.2)';
-  cbtn.addEventListener('click',e=>{e.stopPropagation();ov.remove();document.body.classList.remove('has-print-overlay');});
+  cbtn.onclick=function(ev){if(ev){ev.preventDefault();ev.stopPropagation();}ov.remove();document.body.classList.remove('has-print-overlay');return false;};
   const pbtn=el('button');pbtn.textContent='🖨 Printează';
   pbtn.style.cssText='height:34px;padding:0 16px;border:1.5px solid #0369a1;border-radius:5px;background:#eff6ff;cursor:pointer;font-size:12px;font-weight:800;color:#0369a1;box-shadow:0 3px 12px rgba(0,0,0,.2)';
-  pbtn.disabled=true;pbtn.style.opacity='.5';
+  // Attach the handler right away so it always works, even if rendering is still running
+  pbtn.onclick=function(ev){
+    if(ev){ev.preventDefault();ev.stopPropagation();}
+    window.print();
+    return false;
+  };
   bar.appendChild(cbtn);bar.appendChild(pbtn);
   ov.appendChild(bar);
 
@@ -6132,10 +6138,8 @@ async function _printDrawingWithCode(code,fname,fileUrl,isPdf){
       stampCode(cv,cv.width/1200);
       const pg=dv('dwg-page');pg.appendChild(cv);pagesWrap.appendChild(pg);
     }
-    pbtn.disabled=false;pbtn.style.opacity='1';
-    pbtn.addEventListener('click',e=>{e.stopPropagation();setTimeout(()=>window.print(),80);});
-    // Auto-open the print dialog once rendering is done
-    setTimeout(()=>window.print(),350);
+    // Rendering finished — the print button is already wired up.
+    pbtn.style.opacity='1';
   }catch(e){
     pagesWrap.innerHTML='<div style="padding:40px;color:#dc2626;font-size:13px;text-align:center">'+
       'Nu s-a putut pregăti printarea:<br><b>'+e.message+'</b><br>'+
