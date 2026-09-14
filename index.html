@@ -2036,6 +2036,7 @@ function applyPo(rows,ts){
 }
 
 function applyOb(rows,ts){
+  _obAliasIdx=null;  // force rebuild of the drawing alias index
   // Normalize date columns to sortable strings
   S.obData=rows.map(r=>{
     const out={...r};
@@ -5767,6 +5768,29 @@ function extractDrawingNo(name){
 }
 
 // Get drawing number for an item (FP or component) using BOM data
+// A name is usable as a drawing number only if its first token contains a digit.
+// 'ASSEMBLY HVAC BRACKET' -> no digits -> fall back to Alias_no from the Orderbook.
+function _nameHasDigits(s){
+  const t=String(s||'').trim().split(/\s+/)[0];
+  return !!t && /\d/.test(t);
+}
+
+// Alias index built from the Orderbook: Item_no -> Alias_no
+let _obAliasIdx=null;
+function _buildObAliasIdx(){
+  const idx=new Map();
+  if(S.obData){
+    for(const r of S.obData){
+      const it=str(r['Item_no']||'').trim();
+      const al=str(r['Alias_no']||'').trim();
+      if(it&&al&&!idx.has(it))idx.set(it,al);
+    }
+  }
+  _obAliasIdx=idx;
+  console.log('[Drawings] OB alias index:',idx.size,'items');
+  return idx;
+}
+
 // Index: itemNo -> raw name used for drawing extraction. Built once from BOM.
 let _dwgNameIdx=null;
 function _buildDwgNameIdx(){
@@ -5807,11 +5831,20 @@ function getDrawingNoFor(itemNo){
   if(!itemNo)return '';
   if(!_dwgNameIdx)_buildDwgNameIdx();
   const raw=_dwgNameIdx.get(itemNo);
-  if(raw)return extractDrawingNo(raw);
-  // Fallback: stocklist / PO name
+  // 1) BOM name, if it actually contains digits
+  if(_nameHasDigits(raw))return extractDrawingNo(raw);
+  // 2) Alias_no from the Orderbook (text-only names like 'ASSEMBLY HVAC BRACKET')
+  if(!_obAliasIdx)_buildObAliasIdx();
+  const alias=_obAliasIdx.get(itemNo);
+  if(_nameHasDigits(alias))return extractDrawingNo(alias);
+  // 3) Stocklist / Planning Overview name
   const st=S.stockIdx?.get(itemNo);
-  const n2=st&&(st.slName||st.name);
-  if(n2)return extractDrawingNo(n2);
+  for(const cand of [st?.slName,st?.name,st?.slDesc,st?.desc]){
+    if(_nameHasDigits(cand))return extractDrawingNo(cand);
+  }
+  // 4) Last resort: whatever BOM name exists (even without digits)
+  if(raw)return extractDrawingNo(raw);
+  if(alias)return extractDrawingNo(alias);
   return '';
 }
 
@@ -6159,9 +6192,16 @@ function mkDrawingBtn(itemNo,compact){
   const dn=getDrawingNoFor(itemNo);
   const b=el('button');
   b.textContent=compact?'📐':('📐 '+(dn||'—'));
+  const _src=(()=>{
+    const raw=_dwgNameIdx?.get(itemNo);
+    if(_nameHasDigits(raw))return 'BOM: '+raw;
+    const al=_obAliasIdx?.get(itemNo);
+    if(_nameHasDigits(al))return 'Alias_no (OB): '+al;
+    return raw||al||'—';
+  })();
   b.title=dn
-    ?('Deschide desenele care încep cu: '+dn+'\n(din denumire: '+(_dwgNameIdx?.get(itemNo)||'—')+')')
-    :('Nu s-a găsit denumirea în BOM pentru '+itemNo+'.\nClick pentru căutare manuală.');
+    ?('Deschide desenele care încep cu: '+dn+'\nSursă → '+_src)
+    :('Nu s-a găsit denumirea pentru '+itemNo+'.\nClick pentru căutare manuală.');
   b.style.cssText='display:inline-flex;align-items:center;gap:3px;height:'+(compact?'20px':'22px')+
     ';padding:0 '+(compact?'5px':'7px')+';border:1px solid '+(dn?'#7dd3fc':'#e2e8f0')+
     ';border-radius:4px;background:'+(dn?'#e0f2fe':'#f8f9fb')+';color:'+(dn?'#0369a1':'#94a3b8')+
