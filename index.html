@@ -5927,6 +5927,27 @@ async function _buildDwgIndex(handle,onProgress,incremental){
 
 // Prefix search — plain code-unit comparison (must match the sort used when indexing).
 // Locale/numeric collation breaks prefix ranges, so we use simple lowercase ordering.
+
+// Keep only the highest edition per base name.
+// '14014072152#1~0.pdf' -> base '14014072152#1', edition 0
+function _filterLatestEditions(names){
+  const groups=new Map();  // base(lowercase) -> {ed, name}
+  const noEdition=[];
+  for(const n of names){
+    const m=String(n).match(/^(.*?)~(\d+)(\.[^.]*)?$/);
+    if(!m){noEdition.push(n);continue;}
+    const base=m[1].toLowerCase();
+    const ed=parseInt(m[2],10)||0;
+    const ext=(m[3]||'').toLowerCase();
+    const key=base+'|'+ext;
+    const cur=groups.get(key);
+    if(!cur||ed>cur.ed)groups.set(key,{ed,name:n});
+  }
+  const out=[...groups.values()].map(g=>g.name).concat(noEdition);
+  out.sort((a,b)=>{const x=a.toLowerCase(),y=b.toLowerCase();return x<y?-1:x>y?1:0;});
+  return out;
+}
+
 function _prefixRange(sorted,prefix){
   const p=String(prefix).toLowerCase();
   if(!p)return [];
@@ -5959,13 +5980,28 @@ async function openDrawingSearch(drawingNo){
   const hdr=dv('');hdr.style.cssText='background:#0369a1;color:#fff;padding:11px 18px;display:flex;justify-content:space-between;align-items:center;flex-shrink:0;gap:10px';
   const hdrLeft=dv('');hdrLeft.style.cssText='flex:1;min-width:0';
   hdrLeft.innerHTML='<div style="font-size:10px;opacity:.85;margin-bottom:3px" id="dwg-status">…</div>';
-  const srchWrap=dv('');srchWrap.style.cssText='display:flex;gap:5px;align-items:center';
+  const srchWrap=dv('');srchWrap.style.cssText='display:flex;gap:5px;align-items:center;flex-wrap:wrap';
   const srchInp=el('input');srchInp.type='text';srchInp.value=drawingNo;
-  srchInp.style.cssText='flex:1;max-width:320px;height:28px;padding:0 9px;border:none;border-radius:5px;font-size:12.5px;font-family:monospace;font-weight:700;background:rgba(255,255,255,.95);color:#0369a1';
+  srchInp.style.cssText='flex:1;max-width:260px;min-width:130px;height:28px;padding:0 9px;border:none;border-radius:5px;font-size:12.5px;font-family:monospace;font-weight:700;background:rgba(255,255,255,.95);color:#0369a1';
   srchInp.placeholder='Caută după prefix...';
   const srchBtn=el('button');srchBtn.textContent='🔍';
   srchBtn.style.cssText='height:28px;padding:0 10px;border:none;border-radius:5px;background:rgba(255,255,255,.25);color:#fff;cursor:pointer;font-size:12px';
   srchWrap.appendChild(srchInp);srchWrap.appendChild(srchBtn);
+  // "Ultima ediție" toggle (checked by default, persisted)
+  let lastEdOnly=true;
+  try{const sv=localStorage.getItem('trv_dwg_lastEd');if(sv==='0')lastEdOnly=false;}catch(_){}
+  const edLbl=el('label');
+  edLbl.style.cssText='display:flex;align-items:center;gap:5px;cursor:pointer;font-size:11px;font-weight:700;color:#fff;user-select:none;white-space:nowrap;padding:0 4px';
+  const edCb=el('input');edCb.type='checkbox';edCb.checked=lastEdOnly;
+  edCb.style.cssText='width:15px;height:15px;cursor:pointer;accent-color:#fbbf24';
+  edCb.addEventListener('change',()=>{
+    lastEdOnly=edCb.checked;
+    try{localStorage.setItem('trv_dwg_lastEd',lastEdOnly?'1':'0');}catch(_){}
+    renderResults();
+  });
+  edLbl.appendChild(edCb);
+  edLbl.appendChild(document.createTextNode('Ultima ediție'));
+  srchWrap.appendChild(edLbl);
   hdrLeft.insertBefore(srchWrap,hdrLeft.firstChild);
   hdr.appendChild(hdrLeft);
   const cb=el('button');cb.textContent='✕';cb.style.cssText='border:none;background:rgba(255,255,255,.2);color:#fff;width:30px;height:30px;border-radius:5px;cursor:pointer;font-size:15px;flex-shrink:0';
@@ -6023,17 +6059,20 @@ async function openDrawingSearch(drawingNo){
 
   // ── 2. Render results from cached index (instant, binary search) ──
   function renderResults(){
-    const q=(document.getElementById('dwg-result-overlay')?.querySelector('input')?.value||drawingNo).trim();
+    const q=(srchInp.value||drawingNo).trim();
     const t0=performance.now();
-    const matches=_prefixRange(names,q);
+    let matches=_prefixRange(names,q);
+    const rawCount=matches.length;
+    if(lastEdOnly)matches=_filterLatestEditions(matches);
     const ms=Math.round(performance.now()-t0);
-    if(st())st().textContent=matches.length+' din '+names.length.toLocaleString('ro-RO')+' fișiere · '+ms+'ms';
+    if(st())st().textContent=matches.length+(lastEdOnly&&rawCount>matches.length?' (din '+rawCount+')':'')+
+      ' din '+names.length.toLocaleString('ro-RO')+' fișiere · '+ms+'ms';
 
     listInner.innerHTML='';
     if(!matches.length){
       const nf=dv('');nf.style.cssText='padding:20px;text-align:center;color:#94a3b8;font-size:12px';
       nf.innerHTML='<div style="font-size:30px;margin-bottom:8px">🔍</div>Niciun fișier care începe cu<br><b style="font-family:monospace;color:#475569">'+q+'</b>'+
-        '<div style="margin-top:12px;font-size:10.5px;color:#94a3b8;line-height:1.5">Încercați un prefix mai scurt sau apăsați<br><b>🔄 Actualizează index</b> dacă desenele sunt noi.</div>';
+        '<div style="margin-top:12px;font-size:10.5px;color:#94a3b8;line-height:1.5">Încercați un prefix mai scurt'+(lastEdOnly?', debifați <b>Ultima ediție</b>':'')+'<br>sau apăsați <b>🔄 Actualizează index</b> dacă desenele sunt noi.</div>';
       listInner.appendChild(nf);
       return;
     }
@@ -6041,7 +6080,12 @@ async function openDrawingSearch(drawingNo){
     matches.forEach(fname=>{
       const item=dv('');
       item.style.cssText='padding:9px 12px;cursor:pointer;border-bottom:1px solid #f1f5f9;font-size:11px;font-family:monospace;word-break:break-all;transition:background .1s';
-      item.textContent=fname;
+      const edM=String(fname).match(/~(\d+)(\.[^.]*)?$/);
+      if(edM){
+        item.innerHTML=fname.replace(/~(\d+)(\.[^.]*)?$/,
+          '<span style="color:#94a3b8">~</span><b style="color:#0369a1;background:#e0f2fe;padding:0 4px;border-radius:3px;margin:0 1px">$1</b>$2');
+        item.title='Ediția '+edM[1]+' · '+fname;
+      } else item.textContent=fname;
       item.addEventListener('mouseenter',()=>{if(item!==activeItem)item.style.background='#eff6ff';});
       item.addEventListener('mouseleave',()=>{if(item!==activeItem)item.style.background='';});
       // Lazy load: only fetch file when clicked
