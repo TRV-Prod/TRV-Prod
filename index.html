@@ -6068,20 +6068,13 @@ async function _printDrawingWithCode(code,fname,fileUrl,isPdf){
   ov.appendChild(bar);
 
   const pagesWrap=dv('');pagesWrap.id='dwg-print-pages';
-  pagesWrap.style.cssText='width:100%;text-align:center;padding:0';
+  pagesWrap.style.cssText='width:100%;text-align:center;padding:56px 16px 20px;background:#f1f5f9;min-height:100vh';
   pagesWrap.innerHTML='<div style="padding:40px;color:#64748b;font-size:14px">⏳ Se pregătește pentru printare...</div>';
   ov.appendChild(pagesWrap);
 
   const stl=document.createElement('style');
-  stl.textContent='@media print{'+
-    '@page{size:A3 landscape;margin:5mm}'+
-    '#dwg-print-overlay{position:static!important;inset:unset!important;padding:0!important;margin:0!important;display:block!important;background:#fff!important}'+
-    '#dwg-print-pages{padding:0!important}'+
-    '.dwg-page{page-break-after:always;page-break-inside:avoid;margin:0!important}'+
-    '.dwg-page:last-child{page-break-after:auto}'+
-    '.dwg-page canvas,.dwg-page img{max-width:100%!important;max-height:98vh!important;width:auto!important;height:auto!important}'+
-    '.spo-close{display:none!important}'+
-    '*{-webkit-print-color-adjust:exact!important;print-color-adjust:exact!important}}';
+  // Replaced after rendering, once the page orientation is known
+  stl.textContent='@media print{@page{size:A3 landscape;margin:5mm}}';
   ov.appendChild(stl);
 
   document.body.appendChild(ov);
@@ -6090,28 +6083,48 @@ async function _printDrawingWithCode(code,fname,fileUrl,isPdf){
   document.addEventListener('keydown',esc);
 
   // Draw the MOVEX code in the top-right corner of a canvas
-  const stampCode=(cv,scale)=>{
-    const ctx=cv.getContext('2d');
-    const pad=Math.round(14*scale);
-    const fs=Math.max(16,Math.round(26*scale));
+  // Add the MOVEX code in a dedicated strip appended BELOW the drawing,
+  // so nothing on the drawing itself is covered.
+  const stampCode=(srcCanvas,scale)=>{
+    const fs=Math.max(18,Math.round(30*scale));
+    const stripH=Math.round(fs*2.1);
+    const out=document.createElement('canvas');
+    out.width=srcCanvas.width;
+    out.height=srcCanvas.height+stripH;
+    const ctx=out.getContext('2d');
+    // White background for the whole sheet
+    ctx.fillStyle='#fff';ctx.fillRect(0,0,out.width,out.height);
+    // Original drawing on top
+    ctx.drawImage(srcCanvas,0,0);
+    // Bottom-right code box inside the strip
     ctx.save();
     ctx.font='900 '+fs+'px Arial, sans-serif';
-    ctx.textBaseline='top';
+    ctx.textBaseline='middle';
+    const pad=Math.round(fs*0.55);
     const tw=ctx.measureText(code).width;
-    const bw=tw+pad*1.6, bh=fs*1.55;
-    const bx=cv.width-bw-pad, by=pad;
+    const bw=tw+pad*2, bh=Math.round(fs*1.5);
+    const bx=out.width-bw-Math.round(fs*0.6);
+    const by=srcCanvas.height+Math.round((stripH-bh)/2);
     ctx.fillStyle='#fff';ctx.fillRect(bx,by,bw,bh);
-    ctx.lineWidth=Math.max(2,Math.round(3*scale));
+    ctx.lineWidth=Math.max(2,Math.round(2.5*scale));
     ctx.strokeStyle='#000';ctx.strokeRect(bx,by,bw,bh);
     ctx.fillStyle='#000';
-    ctx.fillText(code,bx+pad*0.8,by+(bh-fs)/2);
+    ctx.fillText(code,bx+pad,by+bh/2);
     ctx.restore();
+    return out;
   };
 
+  let landscapeCount=0,portraitCount=0;
   try{
     pagesWrap.innerHTML='';
+    const addPage=(finalCv)=>{
+      if(finalCv.width>=finalCv.height)landscapeCount++;else portraitCount++;
+      finalCv.style.cssText='max-width:100%;height:auto;display:block;margin:0 auto;box-shadow:0 2px 12px rgba(0,0,0,.15)';
+      const pg=dv('dwg-page');pg.style.cssText='margin:0 auto 16px';
+      pg.appendChild(finalCv);pagesWrap.appendChild(pg);
+    };
+
     if(isPdf){
-      // Render every page to canvas with PDF.js
       const lib=await new Promise(res=>loadPdfJsGlobal(res));
       if(!lib)throw new Error('PDF.js indisponibil');
       const buf=await (await fetch(fileUrl)).arrayBuffer();
@@ -6121,24 +6134,36 @@ async function _printDrawingWithCode(code,fname,fileUrl,isPdf){
         const vp=page.getViewport({scale:2});
         const cv=document.createElement('canvas');
         cv.width=vp.width;cv.height=vp.height;
-        cv.style.cssText='max-width:100%;height:auto;display:block;margin:0 auto';
         await page.render({canvasContext:cv.getContext('2d'),viewport:vp}).promise;
-        stampCode(cv,vp.width/1200);
-        const pg=dv('dwg-page');pg.style.cssText='margin:0 auto';
-        pg.appendChild(cv);pagesWrap.appendChild(pg);
+        addPage(stampCode(cv,vp.width/1200));
       }
     } else {
-      // Image: draw onto canvas so the code is part of the printed bitmap
       const img=new Image();
       await new Promise((res,rej)=>{img.onload=res;img.onerror=rej;img.src=fileUrl;});
       const cv=document.createElement('canvas');
       cv.width=img.naturalWidth;cv.height=img.naturalHeight;
-      cv.style.cssText='max-width:100%;height:auto;display:block;margin:0 auto';
-      const ctx=cv.getContext('2d');ctx.drawImage(img,0,0);
-      stampCode(cv,cv.width/1200);
-      const pg=dv('dwg-page');pg.appendChild(cv);pagesWrap.appendChild(pg);
+      cv.getContext('2d').drawImage(img,0,0);
+      addPage(stampCode(cv,cv.width/1200));
     }
-    // Rendering finished — the print button is already wired up.
+
+    // ── Match the paper orientation to the drawing ──
+    const isLandscape=landscapeCount>=portraitCount;
+    const orient=isLandscape?'landscape':'portrait';
+    stl.textContent='@media print{'+
+      '@page{size:A3 '+orient+';margin:5mm}'+
+      '#dwg-print-overlay{position:static!important;inset:unset!important;padding:0!important;margin:0!important;display:block!important;background:#fff!important}'+
+      '#dwg-print-pages{padding:0!important}'+
+      '.dwg-page{page-break-after:always;page-break-inside:avoid;margin:0!important;box-shadow:none!important;text-align:center}'+
+      '.dwg-page:last-child{page-break-after:auto}'+
+      '.dwg-page canvas{box-shadow:none!important;max-width:100%!important;max-height:'+(isLandscape?'96vh':'98vh')+'!important;width:auto!important;height:auto!important}'+
+      '.spo-close{display:none!important}'+
+      '*{-webkit-print-color-adjust:exact!important;print-color-adjust:exact!important}}';
+
+    // Orientation badge for the user
+    const oInfo=dv('spo-close');
+    oInfo.style.cssText='position:fixed;top:10px;right:14px;z-index:100002;padding:6px 12px;border-radius:5px;background:rgba(30,58,95,.92);color:#fff;font-size:11px;font-weight:700;box-shadow:0 3px 12px rgba(0,0,0,.25)';
+    oInfo.textContent=(isLandscape?'⬛ Landscape':'▯ Portrait')+' · A3';
+    ov.appendChild(oInfo);
     pbtn.style.opacity='1';
   }catch(e){
     pagesWrap.innerHTML='<div style="padding:40px;color:#dc2626;font-size:13px;text-align:center">'+
