@@ -1196,7 +1196,8 @@ button { font-family: var(--sans); }
 /* ── PV2 Print Overlay ── */
 @media print {
   /* When an overlay is active: hide everything else */
-  body.has-print-overlay > *:not(#pv2-print-overlay):not(#struct-print-overlay):not(#asm-print-overlay):not(#nec-print-overlay) { display:none!important; }
+  body.has-print-overlay > *:not(#pv2-print-overlay):not(#struct-print-overlay):not(#asm-print-overlay):not(#nec-print-overlay):not(#dwg-print-overlay) { display:none!important; }
+  #dwg-print-overlay{display:block!important;position:static!important;inset:unset!important;padding:0!important;margin:0}
   #nec-print-overlay{display:block!important;position:static!important;inset:unset!important;padding:6mm!important;overflow:visible!important;margin:0}
   #asm-print-overlay{display:block!important;position:static!important;inset:unset!important;padding:6mm!important;overflow:visible!important;margin:0}
   body.has-print-overlay #structura-tree-root:not(#struct-print-clone) { display:none!important; }
@@ -5998,8 +5999,83 @@ function _prefixRange(sorted,prefix){
   return res;
 }
 
+
+// Overlay the MOVEX code in the top-right corner of the drawing viewer.
+// The 🖨 button opens a print-ready page with the same watermark burned in.
+function _addDwgWatermark(pane,code,fname,fileUrl,isPdf){
+  if(!code)return;
+  const wm=dv('');
+  wm.style.cssText='position:absolute;top:10px;right:14px;z-index:20;display:flex;flex-direction:column;align-items:flex-end;gap:5px;pointer-events:none';
+  const badge=dv('');
+  badge.style.cssText='background:rgba(255,255,255,.94);border:2px solid #1e3a5f;border-radius:6px;padding:5px 12px;font-family:monospace;font-weight:900;font-size:15px;color:#1e3a5f;box-shadow:0 3px 12px rgba(0,0,0,.3);letter-spacing:.5px;white-space:nowrap';
+  badge.textContent=code;
+  wm.appendChild(badge);
+  // Print button
+  const pb=el('button');pb.innerHTML='🖨 Printează cu cod';
+  pb.style.cssText='pointer-events:auto;height:26px;padding:0 11px;border:1px solid #1e3a5f;border-radius:5px;background:rgba(255,255,255,.94);color:#1e3a5f;cursor:pointer;font-size:10.5px;font-weight:700;box-shadow:0 2px 8px rgba(0,0,0,.25)';
+  pb.addEventListener('click',e=>{
+    e.stopPropagation();
+    _printDrawingWithCode(code,fname,fileUrl,isPdf);
+  });
+  wm.appendChild(pb);
+  pane.appendChild(wm);
+}
+
+// Open a print-ready page: the drawing plus the MOVEX code in the top-right corner.
+function _printDrawingWithCode(code,fname,fileUrl,isPdf){
+  document.getElementById('dwg-print-overlay')?.remove();
+  const ov=dv('');ov.id='dwg-print-overlay';
+  ov.style.cssText='position:fixed;inset:0;z-index:99999;background:#fff;overflow:auto;display:block;padding:0';
+
+  const content=dv('');content.id='dwg-print-content';
+  content.style.cssText='position:relative;width:100%;height:100vh';
+  // MOVEX code watermark — always printed
+  const wmP=dv('dwg-print-code');wmP.className='dwg-print-code';
+  wmP.style.cssText='position:absolute;top:6mm;right:8mm;z-index:10;border:2.5px solid #000;border-radius:4px;padding:4px 14px;font-family:Arial,monospace;font-weight:900;font-size:16pt;color:#000;background:#fff;letter-spacing:1px;white-space:nowrap';
+  wmP.textContent=code;
+  content.appendChild(wmP);
+
+  if(isPdf){
+    const em=el('embed');em.setAttribute('type','application/pdf');em.src=fileUrl;
+    em.style.cssText='width:100%;height:100%;border:none';
+    content.appendChild(em);
+  } else {
+    const img=el('img');img.src=fileUrl;
+    img.style.cssText='width:100%;height:100%;object-fit:contain';
+    content.appendChild(img);
+  }
+  ov.appendChild(content);
+
+  // Screen-only controls
+  const bar=dv('spo-close');
+  bar.style.cssText='position:fixed;top:10px;left:14px;z-index:100001;display:flex;gap:8px';
+  const cb=el('button');cb.textContent='✕ Închide';
+  cb.style.cssText='height:34px;padding:0 16px;border:1px solid #e2e8f0;border-radius:5px;background:#fff;cursor:pointer;font-size:12px;font-weight:700;box-shadow:0 3px 12px rgba(0,0,0,.2)';
+  cb.addEventListener('click',e=>{e.stopPropagation();ov.remove();document.body.classList.remove('has-print-overlay');});
+  const pb2=el('button');pb2.textContent='🖨 Printează';
+  pb2.style.cssText='height:34px;padding:0 16px;border:1.5px solid #0369a1;border-radius:5px;background:#eff6ff;cursor:pointer;font-size:12px;font-weight:800;color:#0369a1;box-shadow:0 3px 12px rgba(0,0,0,.2)';
+  pb2.addEventListener('click',e=>{e.stopPropagation();setTimeout(()=>window.print(),60);});
+  bar.appendChild(cb);bar.appendChild(pb2);
+  ov.insertBefore(bar,ov.firstChild);
+
+  const stl=document.createElement('style');
+  stl.textContent='@media print{'+
+    '@page{size:A3 landscape;margin:0}'+
+    '#dwg-print-overlay{position:static!important;inset:unset!important;padding:0!important;margin:0!important;display:block!important}'+
+    '#dwg-print-content{height:100vh!important;page-break-inside:avoid}'+
+    '.dwg-print-code{border:2.5px solid #000!important;color:#000!important;background:#fff!important}'+
+    '.spo-close{display:none!important}'+
+    '*{-webkit-print-color-adjust:exact!important;print-color-adjust:exact!important}}';
+  ov.appendChild(stl);
+
+  document.body.appendChild(ov);
+  document.body.classList.add('has-print-overlay');
+  const esc=e=>{if(e.key==='Escape'){ov.remove();document.body.classList.remove('has-print-overlay');document.removeEventListener('keydown',esc);}};
+  document.addEventListener('keydown',esc);
+}
+
 // Open browser popup with matching drawing files
-async function openDrawingSearch(drawingNo){
+async function openDrawingSearch(drawingNo,movexCode){
   if(!drawingNo){showToast('Nu s-a putut determina numărul de desen','err',2500);return;}
 
   document.getElementById('dwg-result-overlay')?.remove();
@@ -6131,14 +6207,17 @@ async function openDrawingSearch(drawingNo){
           const file=await fh.getFile();
           const url=URL.createObjectURL(file);
           viewPane.innerHTML='';
+          const wmCode=movexCode||drawingNo;
           if(/\.pdf$/i.test(fname)){
             const em=el('embed');em.setAttribute('type','application/pdf');em.src=url;
             em.style.cssText='width:100%;height:100%;border:none;background:#fff';
             viewPane.appendChild(em);
+            _addDwgWatermark(viewPane,wmCode,fname,url,true);
           } else if(/\.(png|jpe?g|gif|webp|bmp|tiff?)$/i.test(fname)){
             const img=el('img');img.src=url;
             img.style.cssText='max-width:100%;max-height:100%;object-fit:contain';
             viewPane.appendChild(img);
+            _addDwgWatermark(viewPane,wmCode,fname,url,false);
           } else {
             const dl=dv('');dl.style.cssText='text-align:center;color:#94a3b8';
             dl.innerHTML='<div style="font-size:34px;margin-bottom:10px">📄</div><div style="margin-bottom:12px">Previzualizare indisponibilă</div>';
@@ -6182,7 +6261,7 @@ async function openDrawingSearch(drawingNo){
   rf.addEventListener('click',async()=>{
     if(!confirm('Reindexare completă? Poate dura câteva minute pentru foldere mari.'))return;
     _dwgFileCache=null;await _dwgIdbSet('dwgIndex',null);
-    ov.remove();openDrawingSearch(drawingNo);
+    ov.remove();openDrawingSearch(drawingNo,movexCode);
   });
   foot.appendChild(ri);foot.appendChild(rf);
   listPane.appendChild(foot);
@@ -6209,10 +6288,10 @@ function mkDrawingBtn(itemNo,compact){
     ';font-weight:700;font-family:monospace;white-space:nowrap';
   b.addEventListener('click',e=>{
     e.stopPropagation();
-    if(dn){openDrawingSearch(dn);}
+    if(dn){openDrawingSearch(dn,itemNo);}
     else{
       // No drawing number derived — let the user search manually, prefilled with the code
-      openDrawingSearch(itemNo);
+      openDrawingSearch(itemNo,itemNo);
     }
   });
   if(!dn){b.style.cursor='pointer';b.style.opacity='.7';}
@@ -11182,7 +11261,7 @@ function showUniversalCtxMenu(ev, colKey, cellText, filterAttr, colLabel){
       const dn0=getDrawingNoFor(code0);
       const iD=dv('u-ctx-item');
       iD.innerHTML='<span class="u-ctx-icon">📐</span><span>Desene tehnice'+(dn0?' <b>'+dn0+'</b>':'')+'</span>';
-      iD.addEventListener('click',()=>{menu.remove();openDrawingSearch(dn0||code0);});
+      iD.addEventListener('click',()=>{menu.remove();openDrawingSearch(dn0||code0,code0);});
       menu.appendChild(iD);
       const iS=dv('u-ctx-item');
       iS.innerHTML='<span class="u-ctx-icon">📦</span><span>Detalii stoc</span>';
@@ -11247,7 +11326,7 @@ function showUniversalCtxMenu(ev, colKey, cellText, filterAttr, colLabel){
       const dn=getDrawingNoFor(code);
       const iDwg=dv('u-ctx-item');
       iDwg.innerHTML='<span class="u-ctx-icon">📐</span><span>Desene tehnice'+(dn?' <b>'+dn+'</b>':'')+'</span>';
-      iDwg.addEventListener('click',()=>{menu.remove();openDrawingSearch(dn||code);});
+      iDwg.addEventListener('click',()=>{menu.remove();openDrawingSearch(dn||code,code);});
       menu.appendChild(iDwg);
       const iStk=dv('u-ctx-item');
       iStk.innerHTML='<span class="u-ctx-icon">📦</span><span>Detalii stoc</span>';
@@ -11514,7 +11593,7 @@ document.addEventListener('contextmenu',ev=>{
       const dn=getDrawingNoFor(code);
       const iDwg=dv('u-ctx-item');
       iDwg.innerHTML='<span class="u-ctx-icon">📐</span><span>Desene tehnice'+(dn?' <b>'+dn+'</b>':'')+'</span>';
-      iDwg.addEventListener('click',()=>{menu.remove();openDrawingSearch(dn||code);});
+      iDwg.addEventListener('click',()=>{menu.remove();openDrawingSearch(dn||code,code);});
       menu.appendChild(iDwg);
       const iStk=dv('u-ctx-item');
       iStk.innerHTML='<span class="u-ctx-icon">📦</span><span>Detalii stoc</span>';
