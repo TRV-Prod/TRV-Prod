@@ -5767,62 +5767,36 @@ function extractDrawingNo(name){
 }
 
 // Get drawing number for an item (FP or component) using BOM data
-// Internal MOVEX codes look like 'BOM.0094AS3250B' / 'ALS.MF19WE0042' — never a drawing number.
-function _isMovexCode(s){
-  const t=String(s||'').trim().split(/\s+/)[0];
-  return /^[A-Z]{2,4}\.[A-Z0-9]{4,}$/i.test(t);
-}
-// A usable drawing name must contain a digit and must NOT be an internal code.
-function _looksLikeDrawingName(s){
-  const t=String(s||'').trim().split(/\s+/)[0];
-  if(!t)return false;
-  if(_isMovexCode(t))return false;
-  return /\d/.test(t);
-}
-
 // Index: itemNo -> raw name used for drawing extraction. Built once from BOM.
 let _dwgNameIdx=null;
 function _buildDwgNameIdx(){
   const idx=new Map();
-  const pick=(code,primary,aliases)=>{
-    if(!code||idx.has(code))return;
-    const list=Array.isArray(aliases)?aliases:[aliases];
-    // 1) Name, only if it really looks like a drawing number
-    if(_looksLikeDrawingName(primary)){idx.set(code,primary);return;}
-    // 2) First alias that looks like a drawing number
-    for(const a of list){if(_looksLikeDrawingName(a)){idx.set(code,a);return;}}
-    // 3) Any alias that is at least not an internal MOVEX code
-    for(const a of list){if(a&&!_isMovexCode(a)){idx.set(code,a);return;}}
-    // 4) Nothing usable — leave unset so the UI can offer manual search
-  };
-
   if(S.bomData&&S.bomData.length){
-    const keys=Object.keys(S.bomData[0]);
-    const findCol=(...cands)=>keys.find(k=>{
-      const kl=k.toLowerCase().replace(/[.\s_]/g,'');
-      return cands.includes(kl);
+    // Detect the "Mat name"/"Mat desc" column once (header spelling varies)
+    const matNameCol=Object.keys(S.bomData[0]).find(k=>{
+      const kl=k.toLowerCase().replace(/[.\s]/g,'');
+      return kl==='matname'||kl==='matdesc'||kl==='matdescription';
     })||'';
-    const matNameCol =findCol('matname','matdesc','matdescription');
-    // Alias columns, in priority order: explicit Alias first, then Mat. drawing
-    const matAliasCols=[findCol('matalias','aliasno','alias'),findCol('matdrawing','matdrawingno')].filter(Boolean);
-    const fpNameCol  =findCol('fpname');
-    const fpAliasCols=[findCol('fpalias','alias','aliasno'),findCol('fpdrawing','fpdrawingno')].filter(Boolean);
-    console.log('[Drawings] BOM columns →',{matNameCol,matAliasCols,fpNameCol,fpAliasCols,all:keys});
-
     for(const br of S.bomData){
+      // Component
       const matNo=str(br['Material no']||'').trim();
-      if(matNo)pick(matNo,
-        matNameCol?str(br[matNameCol]||'').trim():'',
-        matAliasCols.map(c=>str(br[c]||'').trim()));
+      if(matNo&&!idx.has(matNo)){
+        const mn=matNameCol?str(br[matNameCol]||'').trim():'';
+        if(mn)idx.set(matNo,mn);
+      }
+      // Final product
       const fpNo=str(br['Final product']||'').trim();
-      if(fpNo)pick(fpNo,
-        fpNameCol?str(br[fpNameCol]||'').trim():'',
-        fpAliasCols.map(c=>str(br[c]||'').trim()));
+      if(fpNo&&!idx.has(fpNo)){
+        const fn=str(br['FP name']||'').trim();
+        if(fn)idx.set(fpNo,fn);
+      }
     }
   }
-  // FP list as extra source (has .name and .drawing)
+  // FP list as extra source
   if(S.fps){
-    for(const f of S.fps)pick(f.code,f.name||'',[f.drawing||'']);
+    for(const f of S.fps){
+      if(f.code&&f.name&&!idx.has(f.code))idx.set(f.code,f.name);
+    }
   }
   _dwgNameIdx=idx;
   console.log('[Drawings] name index:',idx.size,'items');
@@ -5834,13 +5808,10 @@ function getDrawingNoFor(itemNo){
   if(!_dwgNameIdx)_buildDwgNameIdx();
   const raw=_dwgNameIdx.get(itemNo);
   if(raw)return extractDrawingNo(raw);
-  // Fallback: stocklist / PO name or description
+  // Fallback: stocklist / PO name
   const st=S.stockIdx?.get(itemNo);
-  if(st){
-    for(const cand of [st.slName,st.name,st.slDesc,st.desc]){
-      if(_looksLikeDrawingName(cand))return extractDrawingNo(cand);
-    }
-  }
+  const n2=st&&(st.slName||st.name);
+  if(n2)return extractDrawingNo(n2);
   return '';
 }
 
@@ -6189,8 +6160,8 @@ function mkDrawingBtn(itemNo,compact){
   const b=el('button');
   b.textContent=compact?'📐':('📐 '+(dn||'—'));
   b.title=dn
-    ?('Deschide desenele care încep cu: '+dn+'\nSursă: '+(_dwgNameIdx?.get(itemNo)||'—'))
-    :('Nicio denumire/alias cu cifre pentru '+itemNo+'.\nClick pentru căutare manuală.');
+    ?('Deschide desenele care încep cu: '+dn+'\n(din denumire: '+(_dwgNameIdx?.get(itemNo)||'—')+')')
+    :('Nu s-a găsit denumirea în BOM pentru '+itemNo+'.\nClick pentru căutare manuală.');
   b.style.cssText='display:inline-flex;align-items:center;gap:3px;height:'+(compact?'20px':'22px')+
     ';padding:0 '+(compact?'5px':'7px')+';border:1px solid '+(dn?'#7dd3fc':'#e2e8f0')+
     ';border-radius:4px;background:'+(dn?'#e0f2fe':'#f8f9fb')+';color:'+(dn?'#0369a1':'#94a3b8')+
