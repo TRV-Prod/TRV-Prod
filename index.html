@@ -5734,6 +5734,27 @@ function openPlanBomPopup(itemNo, planQtyVal){
 /* ═══════════════════════════════════════════════════════════════
    DESENE TEHNICE — deschidere în File Explorer (search-ms:)
 ═══════════════════════════════════════════════════════════════ */
+
+// ── Global PDF.js loader (shared by drawings viewer and Normare) ──
+let _pdfjsLibGlobal=null;
+function loadPdfJsGlobal(cb){
+  if(_pdfjsLibGlobal){cb(_pdfjsLibGlobal);return;}
+  if(window.pdfjsLib){
+    _pdfjsLibGlobal=window.pdfjsLib;
+    try{_pdfjsLibGlobal.GlobalWorkerOptions.workerSrc='https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';}catch(_){}
+    cb(_pdfjsLibGlobal);return;
+  }
+  const s=document.createElement('script');
+  s.src='https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js';
+  s.onload=()=>{
+    _pdfjsLibGlobal=window.pdfjsLib;
+    try{_pdfjsLibGlobal.GlobalWorkerOptions.workerSrc='https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';}catch(_){}
+    cb(_pdfjsLibGlobal);
+  };
+  s.onerror=()=>cb(null);
+  document.head.appendChild(s);
+}
+
 const DRAWINGS_DEFAULT_PATH='\\\\10.40.18.5\\trv-public\\Documents\\PDF_DRAWINGS';
 
 function getDrawingsPath(){
@@ -6021,49 +6042,38 @@ function _addDwgWatermark(pane,code,fname,fileUrl,isPdf){
   pane.appendChild(wm);
 }
 
-// Open a print-ready page: the drawing plus the MOVEX code in the top-right corner.
-function _printDrawingWithCode(code,fname,fileUrl,isPdf){
+// Print the drawing with the MOVEX code burned into the image.
+// <embed> PDFs don't print, so PDFs are rendered to <canvas> via PDF.js first.
+async function _printDrawingWithCode(code,fname,fileUrl,isPdf){
   document.getElementById('dwg-print-overlay')?.remove();
   const ov=dv('');ov.id='dwg-print-overlay';
   ov.style.cssText='position:fixed;inset:0;z-index:99999;background:#fff;overflow:auto;display:block;padding:0';
 
-  const content=dv('');content.id='dwg-print-content';
-  content.style.cssText='position:relative;width:100%;height:100vh';
-  // MOVEX code watermark — always printed
-  const wmP=dv('dwg-print-code');wmP.className='dwg-print-code';
-  wmP.style.cssText='position:absolute;top:6mm;right:8mm;z-index:10;border:2.5px solid #000;border-radius:4px;padding:4px 14px;font-family:Arial,monospace;font-weight:900;font-size:16pt;color:#000;background:#fff;letter-spacing:1px;white-space:nowrap';
-  wmP.textContent=code;
-  content.appendChild(wmP);
-
-  if(isPdf){
-    const em=el('embed');em.setAttribute('type','application/pdf');em.src=fileUrl;
-    em.style.cssText='width:100%;height:100%;border:none';
-    content.appendChild(em);
-  } else {
-    const img=el('img');img.src=fileUrl;
-    img.style.cssText='width:100%;height:100%;object-fit:contain';
-    content.appendChild(img);
-  }
-  ov.appendChild(content);
-
   // Screen-only controls
   const bar=dv('spo-close');
   bar.style.cssText='position:fixed;top:10px;left:14px;z-index:100001;display:flex;gap:8px';
-  const cb=el('button');cb.textContent='✕ Închide';
-  cb.style.cssText='height:34px;padding:0 16px;border:1px solid #e2e8f0;border-radius:5px;background:#fff;cursor:pointer;font-size:12px;font-weight:700;box-shadow:0 3px 12px rgba(0,0,0,.2)';
-  cb.addEventListener('click',e=>{e.stopPropagation();ov.remove();document.body.classList.remove('has-print-overlay');});
-  const pb2=el('button');pb2.textContent='🖨 Printează';
-  pb2.style.cssText='height:34px;padding:0 16px;border:1.5px solid #0369a1;border-radius:5px;background:#eff6ff;cursor:pointer;font-size:12px;font-weight:800;color:#0369a1;box-shadow:0 3px 12px rgba(0,0,0,.2)';
-  pb2.addEventListener('click',e=>{e.stopPropagation();setTimeout(()=>window.print(),60);});
-  bar.appendChild(cb);bar.appendChild(pb2);
-  ov.insertBefore(bar,ov.firstChild);
+  const cbtn=el('button');cbtn.textContent='✕ Închide';
+  cbtn.style.cssText='height:34px;padding:0 16px;border:1px solid #e2e8f0;border-radius:5px;background:#fff;cursor:pointer;font-size:12px;font-weight:700;box-shadow:0 3px 12px rgba(0,0,0,.2)';
+  cbtn.addEventListener('click',e=>{e.stopPropagation();ov.remove();document.body.classList.remove('has-print-overlay');});
+  const pbtn=el('button');pbtn.textContent='🖨 Printează';
+  pbtn.style.cssText='height:34px;padding:0 16px;border:1.5px solid #0369a1;border-radius:5px;background:#eff6ff;cursor:pointer;font-size:12px;font-weight:800;color:#0369a1;box-shadow:0 3px 12px rgba(0,0,0,.2)';
+  pbtn.disabled=true;pbtn.style.opacity='.5';
+  bar.appendChild(cbtn);bar.appendChild(pbtn);
+  ov.appendChild(bar);
+
+  const pagesWrap=dv('');pagesWrap.id='dwg-print-pages';
+  pagesWrap.style.cssText='width:100%;text-align:center;padding:0';
+  pagesWrap.innerHTML='<div style="padding:40px;color:#64748b;font-size:14px">⏳ Se pregătește pentru printare...</div>';
+  ov.appendChild(pagesWrap);
 
   const stl=document.createElement('style');
   stl.textContent='@media print{'+
-    '@page{size:A3 landscape;margin:0}'+
-    '#dwg-print-overlay{position:static!important;inset:unset!important;padding:0!important;margin:0!important;display:block!important}'+
-    '#dwg-print-content{height:100vh!important;page-break-inside:avoid}'+
-    '.dwg-print-code{border:2.5px solid #000!important;color:#000!important;background:#fff!important}'+
+    '@page{size:A3 landscape;margin:5mm}'+
+    '#dwg-print-overlay{position:static!important;inset:unset!important;padding:0!important;margin:0!important;display:block!important;background:#fff!important}'+
+    '#dwg-print-pages{padding:0!important}'+
+    '.dwg-page{page-break-after:always;page-break-inside:avoid;margin:0!important}'+
+    '.dwg-page:last-child{page-break-after:auto}'+
+    '.dwg-page canvas,.dwg-page img{max-width:100%!important;max-height:98vh!important;width:auto!important;height:auto!important}'+
     '.spo-close{display:none!important}'+
     '*{-webkit-print-color-adjust:exact!important;print-color-adjust:exact!important}}';
   ov.appendChild(stl);
@@ -6072,6 +6082,68 @@ function _printDrawingWithCode(code,fname,fileUrl,isPdf){
   document.body.classList.add('has-print-overlay');
   const esc=e=>{if(e.key==='Escape'){ov.remove();document.body.classList.remove('has-print-overlay');document.removeEventListener('keydown',esc);}};
   document.addEventListener('keydown',esc);
+
+  // Draw the MOVEX code in the top-right corner of a canvas
+  const stampCode=(cv,scale)=>{
+    const ctx=cv.getContext('2d');
+    const pad=Math.round(14*scale);
+    const fs=Math.max(16,Math.round(26*scale));
+    ctx.save();
+    ctx.font='900 '+fs+'px Arial, sans-serif';
+    ctx.textBaseline='top';
+    const tw=ctx.measureText(code).width;
+    const bw=tw+pad*1.6, bh=fs*1.55;
+    const bx=cv.width-bw-pad, by=pad;
+    ctx.fillStyle='#fff';ctx.fillRect(bx,by,bw,bh);
+    ctx.lineWidth=Math.max(2,Math.round(3*scale));
+    ctx.strokeStyle='#000';ctx.strokeRect(bx,by,bw,bh);
+    ctx.fillStyle='#000';
+    ctx.fillText(code,bx+pad*0.8,by+(bh-fs)/2);
+    ctx.restore();
+  };
+
+  try{
+    pagesWrap.innerHTML='';
+    if(isPdf){
+      // Render every page to canvas with PDF.js
+      const lib=await new Promise(res=>loadPdfJsGlobal(res));
+      if(!lib)throw new Error('PDF.js indisponibil');
+      const buf=await (await fetch(fileUrl)).arrayBuffer();
+      const doc=await lib.getDocument({data:new Uint8Array(buf)}).promise;
+      for(let p=1;p<=doc.numPages;p++){
+        const page=await doc.getPage(p);
+        const vp=page.getViewport({scale:2});
+        const cv=document.createElement('canvas');
+        cv.width=vp.width;cv.height=vp.height;
+        cv.style.cssText='max-width:100%;height:auto;display:block;margin:0 auto';
+        await page.render({canvasContext:cv.getContext('2d'),viewport:vp}).promise;
+        stampCode(cv,vp.width/1200);
+        const pg=dv('dwg-page');pg.style.cssText='margin:0 auto';
+        pg.appendChild(cv);pagesWrap.appendChild(pg);
+      }
+    } else {
+      // Image: draw onto canvas so the code is part of the printed bitmap
+      const img=new Image();
+      await new Promise((res,rej)=>{img.onload=res;img.onerror=rej;img.src=fileUrl;});
+      const cv=document.createElement('canvas');
+      cv.width=img.naturalWidth;cv.height=img.naturalHeight;
+      cv.style.cssText='max-width:100%;height:auto;display:block;margin:0 auto';
+      const ctx=cv.getContext('2d');ctx.drawImage(img,0,0);
+      stampCode(cv,cv.width/1200);
+      const pg=dv('dwg-page');pg.appendChild(cv);pagesWrap.appendChild(pg);
+    }
+    pbtn.disabled=false;pbtn.style.opacity='1';
+    pbtn.addEventListener('click',e=>{e.stopPropagation();setTimeout(()=>window.print(),80);});
+    // Auto-open the print dialog once rendering is done
+    setTimeout(()=>window.print(),350);
+  }catch(e){
+    pagesWrap.innerHTML='<div style="padding:40px;color:#dc2626;font-size:13px;text-align:center">'+
+      'Nu s-a putut pregăti printarea:<br><b>'+e.message+'</b><br>'+
+      '<span style="font-size:11px;color:#94a3b8">Deschideți fișierul într-un tab nou și printați de acolo.</span></div>';
+    const a=el('a');a.href=fileUrl;a.target='_blank';a.textContent='🔗 Deschide '+fname;
+    a.style.cssText='display:inline-block;margin-top:14px;padding:9px 18px;background:#0369a1;color:#fff;border-radius:5px;text-decoration:none;font-size:12px;font-weight:700';
+    pagesWrap.appendChild(a);
+  }
 }
 
 // Open browser popup with matching drawing files
