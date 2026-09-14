@@ -6086,7 +6086,7 @@ async function _printDrawingWithCode(code,fname,fileUrl,isPdf){
   // Add the MOVEX code in a dedicated strip appended BELOW the drawing,
   // so nothing on the drawing itself is covered.
   const stampCode=(srcCanvas,scale)=>{
-    const fs=Math.max(18,Math.round(30*scale));
+    const fs=Math.max(9,Math.round(15*scale));
     const stripH=Math.round(fs*2.1);
     const out=document.createElement('canvas');
     out.width=srcCanvas.width;
