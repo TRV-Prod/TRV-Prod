@@ -1277,6 +1277,8 @@ const S={
   structIgnoreStock:false,
   perfData:null,
   perfWcGroups:[],
+  perfSections:{},   // wcName -> section name
+  perfWcOrder:[],    // custom WC display order
   perfLivrari:[],  // raw rows saved to Supabase
   paintIdx:null,
   stocklistData:null,
@@ -8840,6 +8842,24 @@ function _livKey(r){
   const qty=parseFloat(r['Quantity']||r['qty']||0);
   return `${period}|${item}|${date}|${qty}`;
 }
+
+// ── Performanță: sections + WC order (shared via Supabase) ──
+async function savePerfLayout(){
+  if(!S.sbCfg)return;
+  try{await sbUpload(S.sbCfg,'data-perf-layout.json',{sections:S.perfSections||{},order:S.perfWcOrder||[]});}
+  catch(e){console.warn('savePerfLayout',e);}
+}
+async function loadPerfLayout(){
+  if(!S.sbCfg)return;
+  try{
+    const d=await sbDownload(S.sbCfg,'data-perf-layout.json');
+    if(d&&typeof d==='object'){
+      S.perfSections=d.sections||{};
+      S.perfWcOrder=Array.isArray(d.order)?d.order:[];
+    }
+  }catch(e){console.warn('loadPerfLayout',e);}
+}
+
 function renderPerformanta(){
   const page=dv('');page.style.cssText='display:flex;flex-direction:column;height:100%;overflow:hidden;background:#f8f9fb';
 
@@ -8883,6 +8903,15 @@ function renderPerformanta(){
   effWrap.appendChild(effInp);effWrap.appendChild(effLbl);tb.appendChild(effWrap);
 
   // WC Group editor button
+  const resetBtn=el('button','tbtn');resetBtn.innerHTML='↺ Resetează ordinea';
+  resetBtn.style.cssText='border-color:#94a3b8;color:#64748b';
+  resetBtn.title='Revine la ordinea alfabetică și șterge secțiile';
+  resetBtn.addEventListener('click',()=>{
+    if(!confirm('Resetezi ordinea workcenterelor și secțiile?'))return;
+    S.perfWcOrder=[];S.perfSections={};savePerfLayout();rebuild();
+  });
+  tb.appendChild(resetBtn);
+
   const grpBtn=el('button','tbtn');grpBtn.innerHTML='⚙ Grupuri WC';
   grpBtn.addEventListener('click',()=>openPerfGroupEditor(()=>rebuild()));
   tb.appendChild(grpBtn);
@@ -8913,7 +8942,7 @@ function renderPerformanta(){
   page.appendChild(content);
 
   // Load saved livrari on first open
-  if(!S._perfLoaded){S._perfLoaded=true;loadPerfLivrari().then(()=>rebuild());}
+  if(!S._perfLoaded){S._perfLoaded=true;Promise.all([loadPerfLivrari(),loadPerfLayout()]).then(()=>rebuild());}
 
   function rebuild(){
     content.innerHTML='';
@@ -8941,81 +8970,154 @@ function renderPerformanta(){
 }
 
 function buildPerfTable(wrap, matrix, months, unitHours){
-  // Sort WC/groups
-  const wcs=[...matrix.keys()].sort((a,b)=>{
-    // Put grouped WCs first (not containing '.') then by name
-    return a.localeCompare(b);
+  const div=unitHours?60:1;
+  const allWcs=[...matrix.keys()];
+
+  // ── Order: custom order first, then any new WCs alphabetically ──
+  const ordered=[];
+  (S.perfWcOrder||[]).forEach(w=>{if(matrix.has(w))ordered.push(w);});
+  allWcs.filter(w=>!ordered.includes(w)).sort((a,b)=>a.localeCompare(b,'ro')).forEach(w=>ordered.push(w));
+
+  // ── Group consecutive WCs that share the same section ──
+  const sectionOf=(w)=>str(S.perfSections?.[w]||'').trim();
+  const blocks=[];  // [{section, wcs:[...]}]
+  ordered.forEach(w=>{
+    const sec=sectionOf(w);
+    const last=blocks[blocks.length-1];
+    if(last&&last.section===sec)last.wcs.push(w);
+    else blocks.push({section:sec,wcs:[w]});
   });
 
   const tbl=el('table');tbl.style.cssText='border-collapse:collapse;min-width:100%;font-size:11.5px';
-  // Header
-  const thead=el('thead');
-  const hr=el('tr');hr.style.cssText='background:#1e3a5f;color:#fff';
-  const thWC=el('th');thWC.style.cssText='position:sticky;left:0;z-index:2;background:#1e3a5f;padding:7px 12px;text-align:left;font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;white-space:nowrap;min-width:200px';
-  thWC.textContent='Workcenter / Grup';
-  hr.appendChild(thWC);
-  // Month totals row header
+  const thead=el('thead');const hr=el('tr');hr.style.cssText='background:#1e3a5f;color:#fff';
+
+  const thSec=el('th');
+  thSec.style.cssText='position:sticky;left:0;z-index:3;background:#1e3a5f;padding:7px 10px;text-align:left;font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;white-space:nowrap;min-width:130px;border-right:1px solid #2d4e7a';
+  thSec.textContent='Secție';hr.appendChild(thSec);
+
+  const thWC=el('th');
+  thWC.style.cssText='position:sticky;left:130px;z-index:3;background:#1e3a5f;padding:7px 12px;text-align:left;font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;white-space:nowrap;min-width:190px';
+  thWC.textContent='Workcenter';hr.appendChild(thWC);
+
   months.forEach(m=>{
     const th=el('th');th.style.cssText='padding:7px 10px;text-align:right;font-size:10px;font-weight:700;white-space:nowrap;border-left:1px solid #2d4e7a';
-    th.textContent=perfFmtPeriod(m);
-    hr.appendChild(th);
+    th.textContent=perfFmtPeriod(m);hr.appendChild(th);
   });
   const thTot=el('th');thTot.style.cssText='padding:7px 10px;text-align:right;font-size:10px;font-weight:700;background:#0f2540;border-left:2px solid #4b6cb7;white-space:nowrap';
-  thTot.textContent='TOTAL';
-  hr.appendChild(thTot);
+  thTot.textContent='TOTAL';hr.appendChild(thTot);
   thead.appendChild(hr);tbl.appendChild(thead);
 
-  // Body
   const tbody=el('tbody');
   const colTotals=new Map();months.forEach(m=>colTotals.set(m,0));
   let grandTotal=0;
+  let rowIdx=0;
 
-  wcs.forEach((wc,wi)=>{
-    const wcMap=matrix.get(wc);
-    const tr=el('tr');tr.style.background=wi%2?'#f8fafc':'#fff';
+  const numTd=(val,css)=>{
+    const td=el('td');
+    td.style.cssText=(css||'')+';padding:6px 10px;text-align:right;border-left:1px solid #f1f5f9;white-space:nowrap;font-family:monospace';
+    td.textContent=val>0?(val/div).toFixed(1):'—';
+    return td;
+  };
 
-    const tdWC=el('td');tdWC.style.cssText='position:sticky;left:0;z-index:1;background:inherit;padding:6px 12px;font-weight:700;font-size:11.5px;border-right:2px solid #e2e8f0;white-space:nowrap';
-    tdWC.textContent=wc;tr.appendChild(tdWC);
+  blocks.forEach(block=>{
+    const secTotals=new Map();months.forEach(m=>secTotals.set(m,0));
+    let secGrand=0;
 
-    let rowTotal=0;
-    months.forEach(m=>{
-      const minVal=wcMap.get(m)||0;
-      colTotals.set(m,(colTotals.get(m)||0)+minVal);
-      rowTotal+=minVal;
-      const td=el('td');td.style.cssText='padding:6px 10px;text-align:right;border-left:1px solid #f1f5f9;white-space:nowrap;font-family:monospace';
-      const display=unitHours?(minVal/60):minVal;
-      td.textContent=display>0?display.toFixed(1):'—';
-      if(minVal>0)td.style.color='#1d4ed8';
-      tr.appendChild(td);
+    block.wcs.forEach((wc,i)=>{
+      const wcMap=matrix.get(wc);
+      const tr=el('tr');tr.style.background=(rowIdx++)%2?'#f8fafc':'#fff';
+
+      // Section cell — rendered once per block (rowspan merge)
+      if(i===0){
+        const tdSec=el('td');
+        tdSec.rowSpan=block.wcs.length+1;  // +1 for the subtotal row
+        tdSec.style.cssText='position:sticky;left:0;z-index:2;background:#eef2f7;padding:6px 10px;font-weight:800;font-size:11px;color:#1e3a5f;border-right:2px solid #cbd5e1;border-bottom:2px solid #cbd5e1;vertical-align:middle;white-space:nowrap';
+        const inp=el('input');inp.type='text';
+        inp.value=block.section;inp.placeholder='Secție...';
+        inp.style.cssText='width:112px;height:26px;padding:0 7px;border:1px solid '+(block.section?'#94a3b8':'#e2e8f0')+';border-radius:4px;font-size:11px;font-weight:700;color:#1e3a5f;background:#fff';
+        ['keydown','click','input'].forEach(ev=>inp.addEventListener(ev,e=>e.stopPropagation()));
+        const saveSec=()=>{
+          const v=inp.value.trim();
+          if(!S.perfSections)S.perfSections={};
+          block.wcs.forEach(w=>{if(v)S.perfSections[w]=v;else delete S.perfSections[w];});
+          savePerfLayout();
+          wrap.innerHTML='';buildPerfTable(wrap,matrix,months,unitHours);
+        };
+        inp.addEventListener('change',saveSec);
+        inp.addEventListener('blur',saveSec);
+        inp.addEventListener('keydown',e=>{if(e.key==='Enter'){e.preventDefault();saveSec();}});
+        tdSec.appendChild(inp);
+        tr.appendChild(tdSec);
+      }
+
+      // WC cell with reorder arrows
+      const tdWC=el('td');
+      tdWC.style.cssText='position:sticky;left:130px;z-index:1;background:inherit;padding:5px 10px;font-weight:700;font-size:11.5px;border-right:2px solid #e2e8f0;white-space:nowrap';
+      const wcWrap=dv('');wcWrap.style.cssText='display:flex;align-items:center;gap:5px';
+      const mkArrow=(txt,delta,title)=>{
+        const b=el('button');b.textContent=txt;b.title=title;
+        b.style.cssText='width:17px;height:17px;border:1px solid #cbd5e1;background:#f8fafc;border-radius:3px;cursor:pointer;font-size:8px;line-height:1;color:#475569;padding:0;flex-shrink:0';
+        b.addEventListener('click',e=>{
+          e.stopPropagation();
+          const cur=ordered.slice();
+          const pos=cur.indexOf(wc);
+          const np=pos+delta;
+          if(np<0||np>=cur.length)return;
+          cur.splice(pos,1);cur.splice(np,0,wc);
+          S.perfWcOrder=cur;savePerfLayout();
+          wrap.innerHTML='';buildPerfTable(wrap,matrix,months,unitHours);
+        });
+        return b;
+      };
+      const arrows=dv('');arrows.style.cssText='display:flex;flex-direction:column;gap:1px';
+      arrows.appendChild(mkArrow('▲',-1,'Mută în sus'));
+      arrows.appendChild(mkArrow('▼',1,'Mută în jos'));
+      wcWrap.appendChild(arrows);
+      const nm=sp('');nm.textContent=wc;wcWrap.appendChild(nm);
+      tdWC.appendChild(wcWrap);tr.appendChild(tdWC);
+
+      let rowTotal=0;
+      months.forEach(m=>{
+        const v=wcMap.get(m)||0;
+        colTotals.set(m,(colTotals.get(m)||0)+v);
+        secTotals.set(m,(secTotals.get(m)||0)+v);
+        rowTotal+=v;
+        tr.appendChild(numTd(v,'color:#1d4ed8'));
+      });
+      secGrand+=rowTotal;grandTotal+=rowTotal;
+      tr.appendChild(numTd(rowTotal,'font-weight:800;border-left:2px solid #bfdbfe;background:#eff6ff;color:#1d4ed8'));
+      tbody.appendChild(tr);
     });
-    grandTotal+=rowTotal;
-    const tdTot=el('td');tdTot.style.cssText='padding:6px 10px;text-align:right;font-weight:800;border-left:2px solid #bfdbfe;background:#eff6ff;color:#1d4ed8;white-space:nowrap;font-family:monospace';
-    const totDisp=unitHours?(rowTotal/60):rowTotal;
-    tdTot.textContent=totDisp>0?totDisp.toFixed(1):'—';
-    tr.appendChild(tdTot);
-    tbody.appendChild(tr);
+
+    // ── Section subtotal row ──
+    const trSub=el('tr');trSub.style.cssText='background:#dbeafe;font-weight:800;border-bottom:2px solid #93c5fd';
+    const tdLbl=el('td');
+    tdLbl.style.cssText='position:sticky;left:130px;z-index:1;background:#dbeafe;padding:6px 10px;font-size:10.5px;font-weight:800;color:#1e3a5f;text-transform:uppercase;letter-spacing:.04em;border-right:2px solid #93c5fd;white-space:nowrap';
+    tdLbl.textContent='Subtotal'+(block.section?' '+block.section:'');
+    trSub.appendChild(tdLbl);
+    months.forEach(m=>trSub.appendChild(numTd(secTotals.get(m)||0,'color:#1e3a5f;font-weight:800;border-left:1px solid #bfdbfe')));
+    trSub.appendChild(numTd(secGrand,'font-weight:900;border-left:2px solid #60a5fa;background:#bfdbfe;color:#1e3a5f'));
+    tbody.appendChild(trSub);
   });
 
-  // Totals row
+  // ── Grand total ──
   const trTot=el('tr');trTot.style.cssText='background:#1e3a5f;color:#fff;font-weight:800';
-  const tdTotWC=el('td');tdTotWC.style.cssText='position:sticky;left:0;z-index:1;background:#1e3a5f;padding:7px 12px;font-weight:800;font-size:11px;text-transform:uppercase;letter-spacing:.05em;border-right:2px solid #2d4e7a';
-  tdTotWC.textContent='TOTAL';trTot.appendChild(tdTotWC);
+  const tdT1=el('td');tdT1.colSpan=2;
+  tdT1.style.cssText='position:sticky;left:0;z-index:2;background:#1e3a5f;padding:7px 12px;font-weight:900;font-size:11px;text-transform:uppercase;letter-spacing:.05em;border-right:2px solid #2d4e7a';
+  tdT1.textContent='TOTAL GENERAL';trTot.appendChild(tdT1);
   months.forEach(m=>{
     const td=el('td');td.style.cssText='padding:7px 10px;text-align:right;border-left:1px solid #2d4e7a;font-family:monospace';
-    const v=colTotals.get(m)||0;const disp=unitHours?(v/60):v;
-    td.textContent=disp>0?disp.toFixed(1):'—';
+    const v=colTotals.get(m)||0;td.textContent=v>0?(v/div).toFixed(1):'—';
     trTot.appendChild(td);
   });
-  const tdGrand=el('td');tdGrand.style.cssText='padding:7px 10px;text-align:right;border-left:2px solid #4b6cb7;font-family:monospace;font-size:13px';
-  const gDisp=unitHours?(grandTotal/60):grandTotal;tdGrand.textContent=gDisp.toFixed(1);
-  trTot.appendChild(tdGrand);
+  const tdG=el('td');tdG.style.cssText='padding:7px 10px;text-align:right;border-left:2px solid #4b6cb7;font-family:monospace;font-size:13px';
+  tdG.textContent=(grandTotal/div).toFixed(1);trTot.appendChild(tdG);
   tbody.appendChild(trTot);
-  tbl.appendChild(tbody);
-  wrap.appendChild(tbl);
 
-  // Summary
+  tbl.appendChild(tbody);wrap.appendChild(tbl);
+
   const sum=dv('');sum.style.cssText='margin-top:10px;font-size:10px;color:var(--text3);padding:6px 0';
-  sum.textContent=`${wcs.length} workcentere · ${months.length} luni · Total: ${(unitHours?grandTotal/60:grandTotal).toFixed(1)} ${unitHours?'ore':'minute'}`;
+  sum.textContent=`${ordered.length} workcentere · ${blocks.length} secții · ${months.length} luni · Total: ${(grandTotal/div).toFixed(1)} ${unitHours?'ore':'minute'}`;
   wrap.appendChild(sum);
 }
 
@@ -9096,19 +9198,38 @@ function exportPerfExcel(effPct,unitHours){
   const unit=unitHours?'Ore':'Minute';
   const div=unitHours?60:1;
 
-  const wsData=[[`Performanță Timp Normat [${unit}] — Eficiență: ${effPct}%`, ...months.map(perfFmtPeriod),'TOTAL']];
-  const colTotals=new Array(months.length).fill(0);
-  wcs.forEach(wc=>{
-    const wcMap=finalMatrix.get(wc);
-    let rowTot=0;
-    const row=[wc,...months.map((m,mi)=>{const v=(wcMap.get(m)||0)/div;colTotals[mi]+=v;rowTot+=v;return +v.toFixed(2)||0;}),+rowTot.toFixed(2)];
-    wsData.push(row);
+  // Apply custom order + sections, same as the on-screen table
+  const ordered=[];
+  (S.perfWcOrder||[]).forEach(w=>{if(finalMatrix.has(w))ordered.push(w);});
+  wcs.filter(w=>!ordered.includes(w)).forEach(w=>ordered.push(w));
+  const secOf=(w)=>str(S.perfSections?.[w]||'').trim();
+  const blocks=[];
+  ordered.forEach(w=>{
+    const s=secOf(w);const last=blocks[blocks.length-1];
+    if(last&&last.section===s)last.wcs.push(w);else blocks.push({section:s,wcs:[w]});
   });
-  wsData.push(['TOTAL',...colTotals.map(v=>+v.toFixed(2)),+colTotals.reduce((s,v)=>s+v,0).toFixed(2)]);
+
+  const wsData=[['Secție','Workcenter',...months.map(perfFmtPeriod),'TOTAL']];
+  const colTotals=new Array(months.length).fill(0);
+  blocks.forEach(b=>{
+    const secT=new Array(months.length).fill(0);
+    let secG=0;
+    b.wcs.forEach((wc,i)=>{
+      const wcMap=finalMatrix.get(wc);
+      let rowTot=0;
+      const row=[i===0?b.section:'',wc,
+        ...months.map((m,mi)=>{const v=(wcMap.get(m)||0)/div;colTotals[mi]+=v;secT[mi]+=v;rowTot+=v;return +v.toFixed(2)||0;}),
+        +rowTot.toFixed(2)];
+      secG+=rowTot;
+      wsData.push(row);
+    });
+    wsData.push(['','SUBTOTAL'+(b.section?' '+b.section:''),...secT.map(v=>+v.toFixed(2)),+secG.toFixed(2)]);
+  });
+  wsData.push(['','TOTAL GENERAL',...colTotals.map(v=>+v.toFixed(2)),+colTotals.reduce((s,v)=>s+v,0).toFixed(2)]);
 
   const wb=XLSX.utils.book_new();
   const ws=XLSX.utils.aoa_to_sheet(wsData);
-  ws['!cols']=[{wch:28},...months.map(()=>({wch:12})),{wch:12}];
+  ws['!cols']=[{wch:18},{wch:28},...months.map(()=>({wch:12})),{wch:12}];
   XLSX.utils.book_append_sheet(wb,ws,'Performanta');
 
   // Sheet 2: Detaliu produs × lună
