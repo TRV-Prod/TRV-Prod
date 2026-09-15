@@ -5755,6 +5755,45 @@ function loadPdfJsGlobal(cb){
   document.head.appendChild(s);
 }
 
+
+// ── Shared drawings index in Supabase (admins publish, everyone consumes) ──
+async function saveDwgIndexToSb(names,folderName,stats){
+  if(!S.sbCfg)return false;
+  if(S.session?.role!=='admin'){showToast('Doar administratorii pot publica indexul','err',3000);return false;}
+  try{
+    const payload={
+      names,
+      count:names.length,
+      folder:folderName||'',
+      ts:Date.now(),
+      by:S.session?.name||S.session?.user||'admin',
+      scanned:stats?.scanned||names.length,
+      complete:true,
+    };
+    await sbUpload(S.sbCfg,'data-drawings-index.json',payload);
+    return true;
+  }catch(e){console.warn('saveDwgIndexToSb',e);return false;}
+}
+
+async function loadDwgIndexFromSb(){
+  if(!S.sbCfg)return null;
+  try{
+    const d=await sbDownload(S.sbCfg,'data-drawings-index.json');
+    if(d&&Array.isArray(d.names)&&d.names.length)return d;
+  }catch(e){console.warn('loadDwgIndexFromSb',e);}
+  return null;
+}
+
+// Guard: never overwrite a good shared index with a partial scan.
+// A scan counts as complete only if it finished without error AND
+// it is not dramatically smaller than the published index.
+function _isScanComplete(newCount,publishedCount,finishedCleanly){
+  if(!finishedCleanly)return false;
+  if(!publishedCount)return newCount>0;
+  // Allow shrinkage up to 20% (deleted drawings); below that it looks partial
+  return newCount>=Math.floor(publishedCount*0.8);
+}
+
 const DRAWINGS_DEFAULT_PATH='\\\\10.40.18.5\\trv-public\\Documents\\PDF_DRAWINGS';
 
 function getDrawingsPath(){
@@ -5937,11 +5976,25 @@ async function _ensureDwgHandle(){
 
 // ── Persistent file-name index (survives page reloads) ──
 // Handles can't be serialized, so we store only names + re-resolve handle on click.
+let _dwgIndexMeta=null;  // info about the currently loaded index
 async function _loadDwgIndex(){
   if(_dwgFileCache)return _dwgFileCache;
-  const stored=await _dwgIdbGet('dwgIndex');
-  if(stored&&Array.isArray(stored.names)&&stored.names.length){
-    _dwgFileCache=stored.names;
+  // 1) Shared index from Supabase (published by an admin)
+  const sb=await loadDwgIndexFromSb();
+  const local=await _dwgIdbGet('dwgIndex');
+  // Prefer whichever is newer
+  const sbTs=sb?.ts||0, loTs=local?.ts||0;
+  if(sb&&sbTs>=loTs){
+    _dwgFileCache=sb.names;
+    _dwgIndexMeta={source:'supabase',count:sb.names.length,ts:sb.ts,by:sb.by,folder:sb.folder};
+    // Cache locally so offline use still works
+    try{await _dwgIdbSet('dwgIndex',{names:sb.names,ts:sb.ts,folder:sb.folder,fromSb:true});}catch(_){}
+    console.log('[Drawings] index from Supabase:',sb.names.length,'files · by',sb.by);
+    return _dwgFileCache;
+  }
+  if(local&&Array.isArray(local.names)&&local.names.length){
+    _dwgFileCache=local.names;
+    _dwgIndexMeta={source:'local',count:local.names.length,ts:local.ts,folder:local.folder};
     return _dwgFileCache;
   }
   return null;
@@ -5959,22 +6012,51 @@ async function _buildDwgIndex(handle,onProgress,incremental){
   const added=[];
   const seen=new Set();
   let n=0;
-  for await(const entry of handle.values()){
-    if(entry.kind!=='file')continue;
-    n++;
-    const nm=entry.name;
-    const lo=nm.toLowerCase();
-    seen.add(lo);
-    if(!known.has(lo))added.push(nm);
-    if(n%3000===0&&onProgress)onProgress(n,added.length);
+  let finishedCleanly=false;
+  try{
+    for await(const entry of handle.values()){
+      if(entry.kind!=='file')continue;
+      n++;
+      const nm=entry.name;
+      const lo=nm.toLowerCase();
+      seen.add(lo);
+      if(!known.has(lo))added.push(nm);
+      if(n%3000===0&&onProgress)onProgress(n,added.length);
+    }
+    finishedCleanly=true;   // the async iterator ran to completion
+  }catch(e){
+    console.warn('[Drawings] scan interrupted:',e);
+    finishedCleanly=false;
   }
-  // Drop names that no longer exist on disk (deleted files)
+
   const kept=incremental?existing.filter(s=>seen.has(s.toLowerCase())):[];
   const names=incremental?kept.concat(added):added;
   names.sort((a,b)=>{const x=a.toLowerCase(),y=b.toLowerCase();return x<y?-1:x>y?1:0;});
   _dwgFileCache=names;
-  await _dwgIdbSet('dwgIndex',{names,ts:Date.now(),folder:handle.name});
-  return {names,total:n,added:added.length,removed:incremental?(existing.length-kept.length):0};
+  // Always cache locally, even a partial scan
+  await _dwgIdbSet('dwgIndex',{names,ts:Date.now(),folder:handle.name,partial:!finishedCleanly});
+
+  // ── Publish to Supabase only if: admin + complete scan + not a shrunken result ──
+  let published=false,publishSkipReason='';
+  if(S.session?.role==='admin'){
+    const sbCur=await loadDwgIndexFromSb();
+    const publishedCount=sbCur?.count||0;
+    if(_isScanComplete(names.length,publishedCount,finishedCleanly)){
+      published=await saveDwgIndexToSb(names,handle.name,{scanned:n});
+      if(published)console.log('[Drawings] published to Supabase:',names.length,'files');
+    } else {
+      publishSkipReason=!finishedCleanly
+        ? 'scanare întreruptă'
+        : 'rezultat prea mic ('+names.length+' vs '+publishedCount+' publicate)';
+      console.warn('[Drawings] NOT published —',publishSkipReason);
+    }
+  } else {
+    publishSkipReason='doar adminii pot publica';
+  }
+
+  return {names,total:n,added:added.length,
+    removed:incremental?(existing.length-kept.length):0,
+    complete:finishedCleanly,published,publishSkipReason};
 }
 
 // Prefix search — plain code-unit comparison (must match the sort used when indexing).
@@ -6197,11 +6279,16 @@ async function openDrawingSearch(drawingNo,movexCode){
   let names=await _loadDwgIndex();
   let handle=null;
 
+  const isAdmin=S.session?.role==='admin';
   const showPicker=(msgTxt)=>{
     listInner.innerHTML='';
     const msg=dv('');msg.style.cssText='padding:20px;text-align:center';
     msg.innerHTML='<div style="font-size:32px;margin-bottom:10px">📁</div>'+
       '<div style="font-size:12px;color:#475569;margin-bottom:14px;line-height:1.6">'+(msgTxt||'Selectați folderul cu desene.')+'</div>';
+    if(!isAdmin){
+      msg.innerHTML+='<div style="padding:10px 12px;background:#fef9c3;border:1px solid #fde047;border-radius:6px;font-size:11px;color:#854d0e;margin-bottom:14px;line-height:1.5">'+
+        '⚠ Indexul partajat nu este încă publicat.<br>Cereți unui <b>administrator</b> să indexeze folderul o singură dată.</div>';
+    }
     const pb=el('button');pb.textContent='📂 Alege folderul';
     pb.style.cssText='height:36px;padding:0 18px;border:none;border-radius:6px;background:#0369a1;color:#fff;font-size:12px;font-weight:700;cursor:pointer';
     pb.addEventListener('click',async()=>{
@@ -6321,33 +6408,57 @@ async function openDrawingSearch(drawingNo,movexCode){
   renderResults();
 
   // Footer: reindex
-  const foot=dv('');foot.style.cssText='padding:8px 10px;border-top:1px solid var(--border);background:#fff;flex-shrink:0;display:flex;gap:6px';
-  const ri=el('button');ri.innerHTML='🔄 Actualizează index';
-  ri.style.cssText='flex:1;height:28px;border:1px solid #0369a1;color:#0369a1;border-radius:5px;background:#eff6ff;cursor:pointer;font-size:10.5px;font-weight:700';
-  ri.title='Scanează folderul și adaugă doar fișierele noi (incremental)';
-  ri.addEventListener('click',async()=>{
-    ri.disabled=true;ri.innerHTML='⏳ Se actualizează...';
-    try{
-      if(!handle)handle=await _ensureDwgHandle();
-      if(!handle){const h=await pickDrawingsFolder();if(!h){ri.disabled=false;ri.innerHTML='🔄 Actualizează index';return;}handle=h;}
-      const res=await _buildDwgIndex(handle,(n,add)=>{
-        if(st())st().textContent='Scanare... '+n.toLocaleString('ro-RO')+(add?' · '+add+' noi':'');
-      },true);
-      names=res.names;
-      showToast('✓ Index actualizat: +'+res.added+' noi'+(res.removed?', −'+res.removed+' șterse':'')+' · total '+res.names.length.toLocaleString('ro-RO'),'ok',3500);
-      renderResults();
-    }catch(e){showToast('Eroare: '+e.message,'err',3000);}
-    ri.disabled=false;ri.innerHTML='🔄 Actualizează index';
-  });
-  const rf=el('button');rf.textContent='⟲';
-  rf.style.cssText='width:32px;height:28px;border:1px solid var(--border);border-radius:5px;background:#f8f9fb;cursor:pointer;font-size:11px';
-  rf.title='Reindexare completă (de la zero)';
-  rf.addEventListener('click',async()=>{
-    if(!confirm('Reindexare completă? Poate dura câteva minute pentru foldere mari.'))return;
-    _dwgFileCache=null;await _dwgIdbSet('dwgIndex',null);
-    ov.remove();openDrawingSearch(drawingNo,movexCode);
-  });
-  foot.appendChild(ri);foot.appendChild(rf);
+  const foot=dv('');foot.style.cssText='padding:7px 10px;border-top:1px solid var(--border);background:#fff;flex-shrink:0;display:flex;flex-direction:column;gap:4px';
+  // Index source info
+  const srcInfo=dv('');
+  srcInfo.style.cssText='font-size:9.5px;color:#64748b;padding:2px 2px 6px;line-height:1.5;text-align:center';
+  if(_dwgIndexMeta){
+    const d=new Date(_dwgIndexMeta.ts||0);
+    srcInfo.innerHTML=(_dwgIndexMeta.source==='supabase'?'☁ <b style="color:#0369a1">Index partajat</b>':'💾 Index local')+
+      ' · '+(_dwgIndexMeta.count||0).toLocaleString('ro-RO')+' fișiere<br>'+
+      d.toLocaleDateString('ro-RO')+' '+d.toLocaleTimeString('ro-RO').slice(0,5)+
+      (_dwgIndexMeta.by?' · '+_dwgIndexMeta.by:'');
+  }
+  foot.appendChild(srcInfo);
+
+  if(isAdmin){
+    const btnRow=dv('');btnRow.style.cssText='display:flex;gap:6px;width:100%';
+    const ri=el('button');ri.innerHTML='🔄 Actualizează';
+    ri.style.cssText='flex:1;height:28px;border:1px solid #0369a1;color:#0369a1;border-radius:5px;background:#eff6ff;cursor:pointer;font-size:10.5px;font-weight:700';
+    ri.title='Scanare incrementală (doar fișiere noi) + publicare în baza de date';
+    ri.addEventListener('click',async()=>{
+      ri.disabled=true;ri.innerHTML='⏳...';
+      try{
+        if(!handle)handle=await _ensureDwgHandle();
+        if(!handle){const h=await pickDrawingsFolder();if(!h){ri.disabled=false;ri.innerHTML='🔄 Actualizează';return;}handle=h;}
+        const res=await _buildDwgIndex(handle,(n,add)=>{
+          if(st())st().textContent='Scanare... '+n.toLocaleString('ro-RO')+(add?' · '+add+' noi':'');
+        },true);
+        names=res.names;
+        let msg='✓ +'+res.added+' noi'+(res.removed?', −'+res.removed:'')+' · total '+res.names.length.toLocaleString('ro-RO');
+        msg+=res.published?' · ☁ publicat':' · ⚠ nepublicat ('+res.publishSkipReason+')';
+        showToast(msg,res.published?'ok':'err',4500);
+        renderResults();
+      }catch(e){showToast('Eroare: '+e.message,'err',3000);}
+      ri.disabled=false;ri.innerHTML='🔄 Actualizează';
+    });
+    const rf=el('button');rf.textContent='⟲ Complet';
+    rf.style.cssText='height:28px;padding:0 9px;border:1px solid var(--border);border-radius:5px;background:#f8f9fb;cursor:pointer;font-size:10px';
+    rf.title='Reindexare completă de la zero + publicare';
+    rf.addEventListener('click',async()=>{
+      if(!confirm('Reindexare completă a folderului?\nDurează câteva minute și va înlocui indexul partajat.'))return;
+      _dwgFileCache=null;_dwgIndexMeta=null;
+      await _dwgIdbSet('dwgIndex',null);
+      ov.remove();openDrawingSearch(drawingNo,movexCode);
+    });
+    btnRow.appendChild(ri);btnRow.appendChild(rf);
+    foot.appendChild(btnRow);
+  } else {
+    const note=dv('');
+    note.style.cssText='font-size:9.5px;color:#94a3b8;text-align:center;padding:4px 0';
+    note.textContent='Indexarea se face de către administratori';
+    foot.appendChild(note);
+  }
   listPane.appendChild(foot);
 }
 // Create the small "Nr. desen" link button
@@ -6400,16 +6511,26 @@ function openDrawingsPathSettings(){
   cur.style.cssText='padding:10px 14px;background:#f8f9fb;border:1.5px solid var(--border);border-radius:6px;font-size:12px;font-family:monospace;margin-bottom:12px;min-height:20px';
   cur.textContent='Se verifică...';
   body.appendChild(cur);
-  Promise.all([_ensureDwgHandle(),_dwgIdbGet('dwgIndex')]).then(([h,idx])=>{
+  Promise.all([_ensureDwgHandle(),_dwgIdbGet('dwgIndex'),loadDwgIndexFromSb()]).then(([h,idx,sb])=>{
     const c=document.getElementById('dwg-cur-folder');
     if(!c)return;
     let html='';
     if(h)html+='<div style="color:#15803d;font-weight:700">✓ Folder: '+h.name+'</div>';
-    else html+='<div style="color:#dc2626">Niciun folder selectat</div>';
-    if(idx&&idx.names){
-      const d=new Date(idx.ts||0);
-      html+='<div style="color:#0369a1;font-size:11px;margin-top:4px">📇 Index: <b>'+idx.names.length.toLocaleString('ro-RO')+'</b> fișiere · '+d.toLocaleDateString('ro-RO')+' '+d.toLocaleTimeString('ro-RO').slice(0,5)+'</div>';
-    } else html+='<div style="color:#94a3b8;font-size:11px;margin-top:4px">Niciun index — se creează la prima căutare</div>';
+    else html+='<div style="color:#dc2626">Niciun folder selectat pe acest device</div>';
+    if(sb){
+      const d=new Date(sb.ts||0);
+      html+='<div style="margin-top:6px;padding:7px 9px;background:#eff6ff;border:1px solid #bfdbfe;border-radius:5px;font-size:11px;color:#0c4a6e">'+
+        '☁ <b>Index partajat</b>: '+(sb.count||sb.names.length).toLocaleString('ro-RO')+' fișiere<br>'+
+        '<span style="font-size:10px;color:#475569">Publicat '+d.toLocaleDateString('ro-RO')+' '+d.toLocaleTimeString('ro-RO').slice(0,5)+
+        (sb.by?' de <b>'+sb.by+'</b>':'')+(sb.folder?' · folder: '+sb.folder:'')+'</span></div>';
+    } else {
+      html+='<div style="margin-top:6px;padding:7px 9px;background:#fef9c3;border:1px solid #fde047;border-radius:5px;font-size:11px;color:#854d0e">'+
+        '⚠ Niciun index partajat publicat'+(S.session?.role==='admin'?'<br><span style="font-size:10px">Indexați folderul pentru a-l publica tuturor.</span>':'')+'</div>';
+    }
+    if(idx&&idx.names&&!idx.fromSb){
+      const d2=new Date(idx.ts||0);
+      html+='<div style="color:#64748b;font-size:10px;margin-top:4px">💾 Index local: '+idx.names.length.toLocaleString('ro-RO')+' fișiere · '+d2.toLocaleDateString('ro-RO')+(idx.partial?' <b style="color:#dc2626">(parțial)</b>':'')+'</div>';
+    }
     c.innerHTML=html;
   });
   const pickB=el('button');pickB.textContent='📂 Selectează folderul cu desene';
@@ -6422,7 +6543,9 @@ function openDrawingsPathSettings(){
   body.appendChild(pickB);
   const hint=dv('');hint.style.cssText='margin-top:12px;padding:10px 12px;background:#f0f9ff;border:1px solid #bae6fd;border-radius:6px;font-size:10.5px;color:#0c4a6e;line-height:1.6';
   hint.innerHTML='<b>Cum funcționează:</b><br>'+
-    '• Folderul se indexează <b>o singură dată</b> (nume fișiere salvate local)<br>'+
+    '• <b>Un administrator</b> indexează folderul o singură dată → indexul se publică în baza de date<br>'+
+    '• Ceilalți utilizatori îl primesc automat, fără scanare proprie<br>'+
+    '• Fiecare device selectează folderul o dată (pentru deschiderea fișierelor)<br>'+
     '• Căutările ulterioare sunt <b>instantanee</b> (căutare binară, ~1ms)<br>'+
     '• Previzualizarea se încarcă doar la click pe un fișier<br>'+
     '• Folosiți 🔄 Reindexează după ce adăugați desene noi<br>'+
