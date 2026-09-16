@@ -9027,18 +9027,26 @@ function buildPerfTable(wrap, matrix, months, unitHours){
       const wcMap=matrix.get(wc);
       const tr=el('tr');tr.style.background=(rowIdx++)%2?'#f8fafc':'#fff';
 
-      // Section cell — rendered once per block (rowspan merge)
-      if(i===0){
-        const tdSec=el('td');
-        tdSec.rowSpan=block.wcs.length+1;  // +1 for the subtotal row
-        tdSec.style.cssText='position:sticky;left:0;z-index:2;background:#eef2f7;padding:6px 10px;font-weight:800;font-size:11px;color:#1e3a5f;border-right:2px solid #cbd5e1;border-bottom:2px solid #cbd5e1;vertical-align:middle;white-space:nowrap';
+      // ── Section cell: one input per WC row, visually merged when consecutive ──
+      const tdSec=el('td');
+      const isFirstOfBlock=(i===0);
+      const isMerged=block.wcs.length>1;
+      tdSec.style.cssText='position:sticky;left:0;z-index:2;background:#eef2f7;padding:'+(isFirstOfBlock?'6px 10px':'0 10px')+
+        ';font-weight:800;font-size:11px;color:#1e3a5f;border-right:2px solid #cbd5e1;vertical-align:middle;white-space:nowrap'+
+        (isFirstOfBlock?'':';border-top:none')+
+        (i===block.wcs.length-1?';border-bottom:1px solid #cbd5e1':'');
+      if(isFirstOfBlock){
+        // Editable input on the first row of the block
         const inp=el('input');inp.type='text';
         inp.value=block.section;inp.placeholder='Secție...';
-        inp.style.cssText='width:112px;height:26px;padding:0 7px;border:1px solid '+(block.section?'#94a3b8':'#e2e8f0')+';border-radius:4px;font-size:11px;font-weight:700;color:#1e3a5f;background:#fff';
-        ['keydown','click','input'].forEach(ev=>inp.addEventListener(ev,e=>e.stopPropagation()));
+        inp.setAttribute('data-perf-sec',wc);
+        inp.style.cssText='width:112px;height:26px;padding:0 7px;border:1px solid '+(block.section?'#94a3b8':'#e2e8f0')+
+          ';border-radius:4px;font-size:11px;font-weight:700;color:#1e3a5f;background:#fff';
+        ['keydown','click','input','focus'].forEach(ev=>inp.addEventListener(ev,e=>e.stopPropagation()));
         const saveSec=()=>{
           const v=inp.value.trim();
           if(!S.perfSections)S.perfSections={};
+          // Apply to every WC in this contiguous block
           block.wcs.forEach(w=>{if(v)S.perfSections[w]=v;else delete S.perfSections[w];});
           savePerfLayout();
           wrap.innerHTML='';buildPerfTable(wrap,matrix,months,unitHours);
@@ -9047,8 +9055,35 @@ function buildPerfTable(wrap, matrix, months, unitHours){
         inp.addEventListener('blur',saveSec);
         inp.addEventListener('keydown',e=>{if(e.key==='Enter'){e.preventDefault();saveSec();}});
         tdSec.appendChild(inp);
-        tr.appendChild(tdSec);
+        if(isMerged){
+          const cnt=sp('');cnt.textContent=block.wcs.length+' WC';
+          cnt.style.cssText='display:block;font-size:8.5px;color:#64748b;font-weight:600;margin-top:2px;text-align:center';
+          tdSec.appendChild(cnt);
+        }
+      } else {
+        // Continuation rows: show the merge connector instead of a duplicate input
+        const bar=dv('');
+        bar.style.cssText='height:100%;min-height:26px;display:flex;align-items:center;justify-content:center';
+        const line=dv('');
+        line.style.cssText='width:2px;height:22px;background:#94a3b8;border-radius:1px';
+        line.title='Aceeași secție: '+block.section;
+        bar.appendChild(line);
+        tdSec.appendChild(bar);
+        // Allow overriding this single WC by double-click
+        tdSec.style.cursor='pointer';
+        tdSec.title='Dublu-click pentru a schimba secția doar pentru '+wc;
+        tdSec.addEventListener('dblclick',e=>{
+          e.stopPropagation();
+          const v=prompt('Secție pentru '+wc+':',block.section||'');
+          if(v===null)return;
+          if(!S.perfSections)S.perfSections={};
+          const t=v.trim();
+          if(t)S.perfSections[wc]=t;else delete S.perfSections[wc];
+          savePerfLayout();
+          wrap.innerHTML='';buildPerfTable(wrap,matrix,months,unitHours);
+        });
       }
+      tr.appendChild(tdSec);
 
       // WC cell with reorder arrows
       const tdWC=el('td');
@@ -9091,9 +9126,12 @@ function buildPerfTable(wrap, matrix, months, unitHours){
 
     // ── Section subtotal row ──
     const trSub=el('tr');trSub.style.cssText='background:#dbeafe;font-weight:800;border-bottom:2px solid #93c5fd';
+    const tdSecSub=el('td');
+    tdSecSub.style.cssText='position:sticky;left:0;z-index:2;background:#dbeafe;border-right:2px solid #93c5fd;padding:0';
+    trSub.appendChild(tdSecSub);
     const tdLbl=el('td');
     tdLbl.style.cssText='position:sticky;left:130px;z-index:1;background:#dbeafe;padding:6px 10px;font-size:10.5px;font-weight:800;color:#1e3a5f;text-transform:uppercase;letter-spacing:.04em;border-right:2px solid #93c5fd;white-space:nowrap';
-    tdLbl.textContent='Subtotal'+(block.section?' '+block.section:'');
+    tdLbl.textContent='Subtotal'+(block.section?' '+block.section:' (fără secție)');
     trSub.appendChild(tdLbl);
     months.forEach(m=>trSub.appendChild(numTd(secTotals.get(m)||0,'color:#1e3a5f;font-weight:800;border-left:1px solid #bfdbfe')));
     trSub.appendChild(numTd(secGrand,'font-weight:900;border-left:2px solid #60a5fa;background:#bfdbfe;color:#1e3a5f'));
