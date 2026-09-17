@@ -1278,6 +1278,7 @@ const S={
   perfData:null,
   perfWcGroups:[],
   perfSections:{},   // wcName -> section name
+  perfWcEff:{},      // wcName -> efficiency % (overrides the global value)
   perfWcOrder:[],    // custom WC display order
   perfLivrari:[],  // raw rows saved to Supabase
   paintIdx:null,
@@ -9119,7 +9120,11 @@ function computePerfMatrix(effPct){
     showToast('Fișierul BOW nu este încărcat. Mergeți la Fisiere și încărcați BOW.','err',5000);
     return null;
   }
-  const eff=Math.max(0.01,(effPct||100)/100);
+  const globalEff=Math.max(0.01,(effPct||100)/100);
+  const effFor=(wcName)=>{
+    const v=parseFloat(S.perfWcEff?.[wcName]);
+    return (v&&v>0)?Math.max(0.01,v/100):globalEff;
+  };
   const result=new Map(); // wcName → Map<period,min>
   const prevIgnore=S.structIgnoreStock;
   S.structIgnoreStock=true; // always from 0
@@ -9140,7 +9145,7 @@ function computePerfMatrix(effPct){
     processed++;
     for(const [wcName,data] of exec.byWC){
       // Total normed minutes = (runMin + setupMin) / efficiency
-      const rawMin=((data.runMin||0)+(data.setupMin||0))/eff;
+      const rawMin=((data.runMin||0)+(data.setupMin||0))/effFor(wcName);
       if(rawMin<=0)continue;
       if(!result.has(wcName))result.set(wcName,new Map());
       const wcMap=result.get(wcName);
@@ -9211,6 +9216,7 @@ async function loadPerfLayout(){
     if(d&&typeof d==='object'){
       S.perfSections=d.sections||{};
       S.perfWcOrder=Array.isArray(d.order)?d.order:[];
+      S.perfWcEff=d.wcEff||{};
     }
   }catch(e){console.warn('loadPerfLayout',e);}
 }
@@ -9253,7 +9259,15 @@ function renderPerformanta(){
   effWrap.innerHTML='<span style="font-size:10px;font-weight:700;color:var(--text3);text-transform:uppercase">Eficiență:</span>';
   const effInp=el('input');effInp.type='number';effInp.min=10;effInp.max=200;effInp.value=effPct;
   effInp.style.cssText='width:65px;height:28px;padding:0 6px;border:1px solid var(--border);border-radius:4px;font-size:12px;font-weight:700;text-align:center;color:var(--accent)';
-  effInp.addEventListener('change',()=>{effPct=Math.max(10,Math.min(200,parseInt(effInp.value)||100));rebuild();});
+  effInp.addEventListener('change',()=>{
+    effPct=Math.max(10,Math.min(200,parseInt(effInp.value)||100));
+    effInp.value=effPct;
+    // Setting the global value overrides every per-workcenter efficiency
+    S.perfWcEff={};
+    savePerfLayout();
+    rebuild();
+  });
+  effInp.title='Modificarea acestei valori resetează eficiențele individuale ale workcenterelor';
   const effLbl=dv('');effLbl.textContent='%';effLbl.style.cssText='font-size:12px;color:var(--text3)';
   effWrap.appendChild(effInp);effWrap.appendChild(effLbl);tb.appendChild(effWrap);
 
@@ -9262,8 +9276,8 @@ function renderPerformanta(){
   resetBtn.style.cssText='border-color:#94a3b8;color:#64748b';
   resetBtn.title='Revine la ordinea alfabetică și șterge secțiile';
   resetBtn.addEventListener('click',()=>{
-    if(!confirm('Resetezi ordinea workcenterelor și secțiile?'))return;
-    S.perfWcOrder=[];S.perfSections={};savePerfLayout();rebuild();
+    if(!confirm('Resetezi ordinea, secțiile și eficiențele individuale?'))return;
+    S.perfWcOrder=[];S.perfSections={};S.perfWcEff={};savePerfLayout();rebuild();
   });
   tb.appendChild(resetBtn);
 
@@ -9306,6 +9320,7 @@ function renderPerformanta(){
   // Load saved livrari on first open
   if(!S._perfLoaded){S._perfLoaded=true;Promise.all([loadPerfLayout()]).then(()=>{if(S.perfLivrari?.length)applyLivrari(S.perfLivrari,true);rebuild();});}
 
+  window.rebuildPerfFromTable=()=>rebuild();
   function rebuild(){
     content.innerHTML='';
     // Refresh the invalid-lines badge
@@ -9369,6 +9384,10 @@ function buildPerfTable(wrap, matrix, months, unitHours){
   const thWC=el('th');
   thWC.style.cssText='position:sticky;left:130px;z-index:3;background:#1e3a5f;padding:7px 12px;text-align:left;font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;white-space:nowrap;min-width:190px';
   thWC.textContent='Workcenter';hr.appendChild(thWC);
+
+  const thEff=el('th');
+  thEff.style.cssText='position:sticky;left:320px;z-index:3;background:#1e3a5f;padding:7px 8px;text-align:center;font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;white-space:nowrap;min-width:72px;border-right:1px solid #2d4e7a';
+  thEff.textContent='Efic. %';hr.appendChild(thEff);
 
   months.forEach(m=>{
     const th=el('th');th.style.cssText='padding:7px 10px;text-align:right;font-size:10px;font-weight:700;white-space:nowrap;border-left:1px solid #2d4e7a';
@@ -9482,6 +9501,35 @@ function buildPerfTable(wrap, matrix, months, unitHours){
       const nm=sp('');nm.textContent=wc;wcWrap.appendChild(nm);
       tdWC.appendChild(wcWrap);tr.appendChild(tdWC);
 
+      // ── Per-workcenter efficiency ──
+      const tdEff=el('td');
+      tdEff.style.cssText='position:sticky;left:320px;z-index:1;background:inherit;padding:4px 6px;text-align:center;border-right:2px solid #e2e8f0';
+      const eInp=el('input');eInp.type='text';eInp.inputMode='numeric';
+      const curEff=S.perfWcEff?.[wc];
+      const isCustom=curEff!=null&&curEff!==''&&parseFloat(curEff)>0;
+      eInp.value=isCustom?curEff:'';
+      eInp.placeholder=String(S.efficienta||100);
+      eInp.title=isCustom?('Eficiență proprie: '+curEff+'%'):('Folosește eficiența generală ('+(S.efficienta||100)+'%). Scrieți o valoare pentru a o suprascrie.');
+      eInp.style.cssText='width:56px;height:24px;padding:0 5px;border:1.5px solid '+(isCustom?'#f59e0b':'#e2e8f0')+
+        ';border-radius:4px;font-size:11.5px;font-weight:800;text-align:center;color:'+(isCustom?'#b45309':'#94a3b8')+
+        ';background:'+(isCustom?'#fffbeb':'#fff');
+      ['keydown','click','input','focus'].forEach(ev=>eInp.addEventListener(ev,e=>e.stopPropagation()));
+      const saveEff=()=>{
+        const raw=eInp.value.trim().replace(',','.');
+        if(!S.perfWcEff)S.perfWcEff={};
+        if(!raw){delete S.perfWcEff[wc];}
+        else{
+          const v=Math.max(10,Math.min(300,parseFloat(raw)||100));
+          S.perfWcEff[wc]=v;
+        }
+        savePerfLayout();
+        if(typeof rebuildPerfFromTable==='function')rebuildPerfFromTable();
+      };
+      eInp.addEventListener('change',saveEff);
+      eInp.addEventListener('blur',saveEff);
+      eInp.addEventListener('keydown',e=>{if(e.key==='Enter'){e.preventDefault();saveEff();eInp.blur();}});
+      tdEff.appendChild(eInp);tr.appendChild(tdEff);
+
       let rowTotal=0;
       months.forEach(m=>{
         const v=wcMap.get(m)||0;
@@ -9501,9 +9549,12 @@ function buildPerfTable(wrap, matrix, months, unitHours){
     tdSecSub.style.cssText='position:sticky;left:0;z-index:2;background:#dbeafe;border-right:2px solid #93c5fd;padding:0';
     trSub.appendChild(tdSecSub);
     const tdLbl=el('td');
-    tdLbl.style.cssText='position:sticky;left:130px;z-index:1;background:#dbeafe;padding:6px 10px;font-size:10.5px;font-weight:800;color:#1e3a5f;text-transform:uppercase;letter-spacing:.04em;border-right:2px solid #93c5fd;white-space:nowrap';
+    tdLbl.style.cssText='position:sticky;left:130px;z-index:1;background:#dbeafe;padding:6px 10px;font-size:10.5px;font-weight:800;color:#1e3a5f;text-transform:uppercase;letter-spacing:.04em;white-space:nowrap';
     tdLbl.textContent='Subtotal'+(block.section?' '+block.section:' (fără secție)');
     trSub.appendChild(tdLbl);
+    const tdEffSub=el('td');
+    tdEffSub.style.cssText='position:sticky;left:320px;z-index:1;background:#dbeafe;border-right:2px solid #93c5fd;padding:0';
+    trSub.appendChild(tdEffSub);
     months.forEach(m=>trSub.appendChild(numTd(secTotals.get(m)||0,'color:#1e3a5f;font-weight:800;border-left:1px solid #bfdbfe')));
     trSub.appendChild(numTd(secGrand,'font-weight:900;border-left:2px solid #60a5fa;background:#bfdbfe;color:#1e3a5f'));
     tbody.appendChild(trSub);
@@ -9511,7 +9562,7 @@ function buildPerfTable(wrap, matrix, months, unitHours){
 
   // ── Grand total ──
   const trTot=el('tr');trTot.style.cssText='background:#1e3a5f;color:#fff;font-weight:800';
-  const tdT1=el('td');tdT1.colSpan=2;
+  const tdT1=el('td');tdT1.colSpan=3;
   tdT1.style.cssText='position:sticky;left:0;z-index:2;background:#1e3a5f;padding:7px 12px;font-weight:900;font-size:11px;text-transform:uppercase;letter-spacing:.05em;border-right:2px solid #2d4e7a';
   tdT1.textContent='TOTAL GENERAL';trTot.appendChild(tdT1);
   months.forEach(m=>{
@@ -9618,7 +9669,7 @@ function exportPerfExcel(effPct,unitHours){
     if(last&&last.section===s)last.wcs.push(w);else blocks.push({section:s,wcs:[w]});
   });
 
-  const wsData=[['Secție','Workcenter',...months.map(perfFmtPeriod),'TOTAL']];
+  const wsData=[['Secție','Workcenter','Efic. %',...months.map(perfFmtPeriod),'TOTAL']];
   const colTotals=new Array(months.length).fill(0);
   blocks.forEach(b=>{
     const secT=new Array(months.length).fill(0);
@@ -9626,19 +9677,20 @@ function exportPerfExcel(effPct,unitHours){
     b.wcs.forEach((wc,i)=>{
       const wcMap=finalMatrix.get(wc);
       let rowTot=0;
-      const row=[i===0?b.section:'',wc,
+      const wcEffVal=parseFloat(S.perfWcEff?.[wc])||effPct;
+      const row=[i===0?b.section:'',wc,wcEffVal,
         ...months.map((m,mi)=>{const v=(wcMap.get(m)||0)/div;colTotals[mi]+=v;secT[mi]+=v;rowTot+=v;return +v.toFixed(2)||0;}),
         +rowTot.toFixed(2)];
       secG+=rowTot;
       wsData.push(row);
     });
-    wsData.push(['','SUBTOTAL'+(b.section?' '+b.section:''),...secT.map(v=>+v.toFixed(2)),+secG.toFixed(2)]);
+    wsData.push(['','SUBTOTAL'+(b.section?' '+b.section:''),'',...secT.map(v=>+v.toFixed(2)),+secG.toFixed(2)]);
   });
-  wsData.push(['','TOTAL GENERAL',...colTotals.map(v=>+v.toFixed(2)),+colTotals.reduce((s,v)=>s+v,0).toFixed(2)]);
+  wsData.push(['','TOTAL GENERAL','',...colTotals.map(v=>+v.toFixed(2)),+colTotals.reduce((s,v)=>s+v,0).toFixed(2)]);
 
   const wb=XLSX.utils.book_new();
   const ws=XLSX.utils.aoa_to_sheet(wsData);
-  ws['!cols']=[{wch:18},{wch:28},...months.map(()=>({wch:12})),{wch:12}];
+  ws['!cols']=[{wch:18},{wch:28},{wch:9},...months.map(()=>({wch:12})),{wch:12}];
   XLSX.utils.book_append_sheet(wb,ws,'Performanta');
 
   // Sheet 2: Detaliu produs × lună
