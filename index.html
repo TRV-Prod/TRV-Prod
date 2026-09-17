@@ -1392,6 +1392,7 @@ const GH_COLS={
   ob: ['Entry dt','Confirm dt','Request dt','Request_week','Confirm_week','Item_no','Alias_no','Item_name',
        'Customer_no','Customer_name','Sales_price','Currency','Sales price EUR','Ordered','Allocated',
        'Delivered','Invoiced','Open qty','Net weight','CO_no','CO_line','Cust order no','Valoare de livrat EUR'],
+  livrari: ['Period','Item','Quantity'],
   stocklist: ['ITEM NR','ITEM NAME','ITEM DESCRIPTION','LOCATION','STANDARD QTY','STANDARD U/M'],
   scanari: ['Transaction dt','MO','Product','Workcenter','Workcenter name','Op no','Employee name','Manufact qty','Scrapped qty','Start_MS','Finish_MS','Used_tm_MS'],
   molist:  ['MO','Product','Prod name','Whs','MO start','MO finish','MO st','MO tp','Op no','Seq no','W/C-Comp','Name','U/M','Status','Order qty','Report qty','Report dt','Hrs'],
@@ -1532,6 +1533,7 @@ async function sbLoadAllData(){
     {k:'ob', label:'Order Book',apply:(r,t)=>applyOb(r,t)},
     {k:'wcs',label:'Workcenter Setup',apply:(r,t)=>applyWcSetup(r,t)},
     {k:'stocklist',label:'TRV-Stocklist',apply:(r,t)=>applyStocklist(r,t)},
+    {k:'livrari',label:'Livrari',apply:(r,t)=>applyLivrariFile(r,t)},
     {k:'intransit',label:'In Transit',apply:(r,t)=>applyInTransit(r,t)},
   ]){
     S.loadMsg=`Se incarca ${label}...`;setLoadMsg(S.loadMsg);await yieldFrame();
@@ -1659,6 +1661,25 @@ function applyWcSetup(rows,ts){
 
 
 // ── Stocklist: physical stock from TRV-Stocklist.xlsx (replaces PO on-hand) ──
+
+// ── TRV-Ongoing deliveries → feeds the Performanta report ──
+// Skips the subtotal rows Excel adds ('Total' in Period / Week / Date).
+function applyLivrariFile(rows,ts){
+  const clean=(rows||[]).filter(r=>{
+    const p=String(r['Period']??'').trim().toLowerCase();
+    const w=String(r['Week']??'').trim().toLowerCase();
+    const d=String(r['Date']??'').trim().toLowerCase();
+    if(p==='total'||w==='total'||d==='total')return false;
+    if(!/^\d{6}$/.test(String(r['Period']??'').trim().replace(/[^0-9]/g,'').slice(0,6)))return false;
+    if(!String(r['Item']??'').trim())return false;
+    return true;
+  });
+  S.perfLivrari=clean;
+  S.meta.livrari={rows:clean.length,skipped:(rows||[]).length-clean.length,ts};
+  applyLivrari(clean,true);
+  console.log('[Livrari] rows:',clean.length,'· subtotale ignorate:',(rows||[]).length-clean.length);
+}
+
 function applyStocklist(rows,ts){
   S.stocklistData=rows;
   // Aggregate by ITEM NR (an item can exist in multiple locations)
@@ -3623,6 +3644,201 @@ function render(){
 }
 
 /* ── FISIERE TAB ── */
+
+/* ═══════════════════════════════════════════════════════════════
+   ÎNCĂRCARE ÎN BLOC — selectezi mai multe fișiere, aplicația le
+   identifică automat după antet și le încarcă unul câte unul.
+   Fișierele neselectate rămân neatinse pe server.
+═══════════════════════════════════════════════════════════════ */
+function _fileCardDefs(){
+  // Mirrors the cards shown in the Fisiere tab
+  return [
+    {key:'bom',       label:'BOM',                  must:['Final product','Material no']},
+    {key:'bow',       label:'BOW',                  must:['Final product','Ope seq']},
+    {key:'po',        label:'Planning Overview',    must:['Final product','On hand']},
+    {key:'ob',        label:'Open Order Lines',     must:['Item_no','Open qty']},
+    {key:'wcs',       label:'Workcenter Setup',     must:['Workcenter name']},
+    {key:'scanari',   label:'QV Start-Stop History',must:['Transaction dt','Used_tm_MS']},
+    {key:'livrari',   label:'Ongoing deliveries',   must:['Period','Item','Quantity'],adminOnly:true},
+    {key:'stocklist', label:'TRV-Stocklist',        must:['ITEM NR','STANDARD QTY']},
+    {key:'intransit', label:'In Transit',           must:['Item_no'],soft:true},
+    {key:'molist',    label:'MO List',              must:['Product']},
+  ];
+}
+
+// Guess which card a workbook belongs to, by matching header names
+function _detectFileKind(headers){
+  const hs=new Set(headers.map(h=>String(h).trim().toLowerCase()));
+  const has=(n)=>hs.has(String(n).trim().toLowerCase());
+  const defs=_fileCardDefs();
+  let best=null,bestScore=0;
+  for(const d of defs){
+    const hits=d.must.filter(has).length;
+    if(hits===d.must.length&&hits>bestScore){best=d;bestScore=hits;}
+  }
+  return best;
+}
+
+// Apply + persist one file (used by the batch uploader).
+// Only the given key is touched; every other file stays as-is on the server.
+async function _applyAndSyncFile(key,rows){
+  const ts=Date.now();
+  if(key==='bom')applyBom(rows,ts);
+  else if(key==='bow')applyBow(rows,ts);
+  else if(key==='po')applyPo(rows,ts);
+  else if(key==='ob')applyOb(rows,ts);
+  else if(key==='wcs'){applyWcSetup(rows,ts);rows._ts=ts;}
+  else if(key==='livrari'){applyLivrariFile(rows,ts);rows._ts=ts;}
+  else if(key==='stocklist'){applyStocklist(rows,ts);rows._ts=ts;}
+  else if(key==='intransit'){applyInTransit(rows,ts);rows._ts=ts;}
+  else if(key==='scanari'){applyScanari(rows,ts);await saveScanariToIDB(rows,ts);}
+  else if(key==='molist')applyMoList(rows,ts);
+  else throw new Error('Tip necunoscut: '+key);
+
+  // Local cache
+  await dbSave(key,{rows,ts});
+
+  // Supabase — admins only, one object per file key
+  if(S.sbCfg&&S.session?.role==='admin'){
+    try{
+      if(key==='scanari'){
+        await sbUploadScanariRaw(S.sbCfg,rows,ts);
+      } else if(key==='molist'){
+        await sbUpload(S.sbCfg,'data-molist-meta.json',{ts,rows:rows.length});
+      } else {
+        await sbUpload(S.sbCfg,`data-${key}.json`,{rows,ts});
+      }
+    }catch(e){console.warn('[Sync] Supabase',key,e);}
+  }
+  return true;
+}
+
+async function openBatchUpload(refreshCards){
+  const isAdmin=S.session?.role==='admin';
+  document.getElementById('batch-up-overlay')?.remove();
+  const ov=dv('');ov.id='batch-up-overlay';
+  ov.style.cssText='position:fixed;inset:0;background:rgba(0,0,0,.5);z-index:9400;display:flex;align-items:center;justify-content:center;padding:14px';
+  const modal=dv('');modal.style.cssText='background:#fff;border-radius:12px;box-shadow:0 24px 70px rgba(0,0,0,.35);width:min(820px,96vw);max-height:88vh;display:flex;flex-direction:column;overflow:hidden';
+
+  const hdr=dv('');hdr.style.cssText='background:#1e3a5f;color:#fff;padding:12px 18px;display:flex;justify-content:space-between;align-items:center;flex-shrink:0';
+  hdr.innerHTML='<div><div style="font-weight:800;font-size:14px">📥 Încărcare în bloc</div>'+
+    '<div style="font-size:10px;opacity:.85;margin-top:2px">Selectați oricâte fișiere — se identifică automat după antet</div></div>';
+  const cb=el('button');cb.textContent='✕';cb.style.cssText='border:none;background:rgba(255,255,255,.2);color:#fff;width:30px;height:30px;border-radius:5px;cursor:pointer;font-size:15px';
+  cb.addEventListener('click',()=>ov.remove());hdr.appendChild(cb);modal.appendChild(hdr);
+
+  const body=dv('');body.style.cssText='flex:1;overflow-y:auto;padding:16px 20px';
+  modal.appendChild(body);
+
+  const drop=dv('');
+  drop.style.cssText='border:2.5px dashed #94a3b8;border-radius:10px;padding:28px 20px;text-align:center;cursor:pointer;background:#f8f9fb;transition:all .2s';
+  drop.innerHTML='<div style="font-size:38px;margin-bottom:8px">📁</div>'+
+    '<div style="font-size:13px;font-weight:700;color:#475569">Trageți fișierele aici sau click pentru selecție</div>'+
+    '<div style="font-size:11px;color:#94a3b8;margin-top:4px">.xlsx · selecție multiplă permisă</div>';
+  const fi=el('input');fi.type='file';fi.multiple=true;fi.accept='.xlsx,.xls';fi.style.display='none';
+  drop.appendChild(fi);
+  drop.addEventListener('click',()=>fi.click());
+  drop.addEventListener('dragover',e=>{e.preventDefault();drop.style.borderColor='#1d4ed8';drop.style.background='#eff6ff';});
+  drop.addEventListener('dragleave',()=>{drop.style.borderColor='#94a3b8';drop.style.background='#f8f9fb';});
+  body.appendChild(drop);
+
+  const listWrap=dv('');listWrap.style.cssText='margin-top:14px';
+  body.appendChild(listWrap);
+
+  const foot=dv('');foot.style.cssText='padding:10px 20px;border-top:1px solid var(--border);display:flex;gap:8px;align-items:center;flex-shrink:0';
+  const info=dv('');info.style.cssText='font-size:11px;color:#64748b;flex:1';
+  info.textContent='Fișierele neselectate rămân neschimbate pe server.';
+  const goBtn=el('button');goBtn.textContent='⬆ Încarcă fișierele';
+  goBtn.style.cssText='height:34px;padding:0 20px;border:none;background:#15803d;color:#fff;border-radius:6px;cursor:pointer;font-size:12.5px;font-weight:800';
+  goBtn.disabled=true;goBtn.style.opacity='.45';
+  foot.appendChild(info);foot.appendChild(goBtn);modal.appendChild(foot);
+
+  let queue=[];   // [{file, kind, rows, headers, status}]
+
+  const renderList=()=>{
+    listWrap.innerHTML='';
+    if(!queue.length){goBtn.disabled=true;goBtn.style.opacity='.45';return;}
+    const ok=queue.filter(q=>q.kind&&!q.skip).length;
+    goBtn.disabled=!ok;goBtn.style.opacity=ok?'1':'.45';
+    info.textContent=ok+' din '+queue.length+' fișiere vor fi încărcate · restul rămân neschimbate pe server.';
+    queue.forEach((q,i)=>{
+      const row=dv('');
+      const bad=!q.kind;
+      row.style.cssText='display:flex;align-items:center;gap:10px;padding:9px 11px;border:1px solid '+(bad?'#fca5a5':q.skip?'#e2e8f0':'#86efac')+
+        ';border-radius:7px;margin-bottom:6px;background:'+(bad?'#fef2f2':q.skip?'#f8f9fb':'#f0fdf4');
+      const left=dv('');left.style.cssText='flex:1;min-width:0';
+      left.innerHTML='<div style="font-size:12px;font-weight:700;color:#1e3a5f;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+q.file.name+'</div>'+
+        '<div style="font-size:10.5px;color:'+(bad?'#dc2626':'#15803d')+';margin-top:2px">'+
+        (bad?'⚠ Tip nerecunoscut — antet necorespunzător'
+            :'→ <b>'+q.kind.label+'</b> · '+q.rows.length.toLocaleString('ro-RO')+' rânduri')+'</div>';
+      row.appendChild(left);
+      const st=dv('');st.id='bq-st-'+i;st.style.cssText='font-size:11px;font-weight:700;white-space:nowrap;min-width:92px;text-align:right';
+      st.textContent=bad?'—':(q.skip?'exclus':'în așteptare');
+      st.style.color=bad?'#dc2626':(q.skip?'#94a3b8':'#64748b');
+      row.appendChild(st);
+      if(!bad){
+        const tg=el('button');tg.textContent=q.skip?'☐':'☑';
+        tg.title=q.skip?'Include la încărcare':'Exclude de la încărcare';
+        tg.style.cssText='width:28px;height:28px;border:1px solid var(--border);border-radius:5px;background:#fff;cursor:pointer;font-size:13px;flex-shrink:0';
+        tg.addEventListener('click',()=>{q.skip=!q.skip;renderList();});
+        row.appendChild(tg);
+      }
+      listWrap.appendChild(row);
+    });
+  };
+
+  const addFiles=async(files)=>{
+    for(const f of files){
+      if(!/\.xlsx?$/i.test(f.name))continue;
+      try{
+        const ab=await f.arrayBuffer();
+        const rows=parseBuffer(new Uint8Array(ab));
+        const headers=rows.length?Object.keys(rows[0]):[];
+        let kind=_detectFileKind(headers);
+        if(kind&&kind.adminOnly&&!isAdmin)kind=null;
+        queue.push({file:f,kind,rows,headers,skip:false});
+      }catch(e){
+        queue.push({file:f,kind:null,rows:[],headers:[],skip:true,err:e.message});
+      }
+    }
+    renderList();
+  };
+
+  fi.addEventListener('change',()=>{addFiles([...fi.files]);fi.value='';});
+  drop.addEventListener('drop',e=>{
+    e.preventDefault();
+    drop.style.borderColor='#94a3b8';drop.style.background='#f8f9fb';
+    addFiles([...e.dataTransfer.files]);
+  });
+
+  goBtn.addEventListener('click',async()=>{
+    goBtn.disabled=true;goBtn.textContent='⏳ Se încarcă...';
+    const todo=queue.filter(q=>q.kind&&!q.skip);
+    let done=0,failed=0;
+    for(let i=0;i<queue.length;i++){
+      const q=queue[i];
+      if(!q.kind||q.skip)continue;
+      const stEl=document.getElementById('bq-st-'+i);
+      if(stEl){stEl.textContent='⏳ se încarcă';stEl.style.color='#0369a1';}
+      try{
+        await _applyAndSyncFile(q.kind.key,q.rows);
+        done++;
+        if(stEl){stEl.textContent='✓ încărcat';stEl.style.color='#15803d';}
+      }catch(e){
+        failed++;
+        console.error('[Batch]',q.file.name,e);
+        if(stEl){stEl.textContent='✕ eroare';stEl.style.color='#dc2626';}
+      }
+    }
+    showToast('✓ '+done+' fișiere încărcate'+(failed?' · '+failed+' eșuate':'')+' · restul neschimbate','ok',4000);
+    goBtn.textContent='⬆ Încarcă fișierele';
+    refreshCards&&refreshCards();
+  });
+
+  ov.appendChild(modal);
+  ov.addEventListener('click',e=>{if(e.target===ov)ov.remove();});
+  document.body.appendChild(ov);
+}
+
 function renderFisiereTab(){
   const page=dv('files-page');
   page.style.overflow='hidden';page.style.display='flex';page.style.flexDirection='column';
@@ -3637,6 +3853,12 @@ function renderFisiereTab(){
   dwgBtn.style.cssText='border-color:#0369a1;color:#0369a1;background:#eff6ff;margin-top:8px;font-weight:700';
   dwgBtn.title='Configurează folderul cu desene PDF';
   dwgBtn.addEventListener('click',()=>openDrawingsPathSettings());
+  const batchBtn=el('button','tbtn');
+  batchBtn.innerHTML='📥 Încarcă mai multe fișiere';
+  batchBtn.style.cssText='border-color:#15803d;color:#15803d;background:#f0fdf4;margin-top:8px;margin-left:8px;font-weight:800';
+  batchBtn.title='Selectați mai multe fișiere deodată — se identifică automat după antet';
+  batchBtn.addEventListener('click',()=>openBatchUpload(()=>render()));
+  hh.appendChild(batchBtn);
   hh.appendChild(dwgBtn);
   hhBar.appendChild(hh);
   hhBar.appendChild(mkZoomCtrl('fisiere'));
@@ -3654,13 +3876,14 @@ function renderFisiereTab(){
    {key:'ob',icon:'📦',title:'Open Order Lines',desc:'Comenzi deschise: Entry/Confirm/Request dt, cantitati, clienti, preturi'},
    {key:'wcs',icon:'🔧',title:'Workcenter Setup',desc:'Workcenter Type (Initial/Intermediary/Final Op), numarul de echipe (Prod Team) pentru calculul capacitatii'},
    {key:'scanari',icon:'📡',title:'QV Start-Stop History',desc:'Date de scanare productie: timpi efectivi per operator, workcenter si operatie'},
-   {key:'_dwgpath',icon:'📐',title:'Cale desene tehnice',desc:'Configurează folderul local/rețea unde sunt stocate desenele PDF. Butoanele 📐 din Planificare deschid Explorer cu rezultatele căutării.',_isConfig:true},
+   {key:'livrari',icon:'🚛',title:'TRV-Ongoing deliveries',desc:'Livrari pe perioade (Period, Item, Quantity) — sursa pentru raportul Performanta. Vizibil doar administratorilor.',adminOnly:true},
    {key:'stocklist',icon:'📦',title:'TRV-Stocklist',desc:'Stocuri fizice pe locatii: ITEM NR, ITEM NAME, ITEM DESCRIPTION, LOCATION, STANDARD QTY, STANDARD U/M. Inlocuieste On Hand din Planning Overview.'},
    {key:'intransit',icon:'🚚',title:'In Transit',desc:'Produse finite expediate, neinca receptionate de client. Se scad din stocul On Hand al produselor finale.'},
    {key:'molist',icon:'🏭',title:'MO List (PMO/MO)',desc:'Lista Manufacturing Orders cu operatii: MO, produs, workcenter, cantitati raportate'}]
+  .filter(fc=>!fc.adminOnly||S.session?.role==='admin')
   .forEach(fc=>{
-    const loaded=fc.key==='bom'?!!S.bomData:fc.key==='bow'?!!S.bowData:fc.key==='po'?!!S.poData:fc.key==='wcs'?!!S.wcSetupData:fc.key==='intransit'?!!S.inTransitData:fc.key==='scanari'?!!S.scanData:fc.key==='molist'?!!S.moListData:!!S.obData;
-    const meta=fc.key==='wcs'?{rows:S.wcSetupData?.length||0,ts:S.wcSetupData?._ts}:fc.key==='intransit'?{rows:S.inTransitData?.length||0,ts:S.inTransitData?._ts}:fc.key==='scanari'?{rows:S.scanData?._rows||0,ts:S.scanData?._ts}:fc.key==='molist'?{rows:S.moListData?.length||0,ts:S.moListData?._ts}:(S.meta[fc.key]||{rows:0,ts:null});
+    const loaded=fc.key==='bom'?!!S.bomData:fc.key==='bow'?!!S.bowData:fc.key==='po'?!!S.poData:fc.key==='wcs'?!!S.wcSetupData:fc.key==='intransit'?!!S.inTransitData:fc.key==='scanari'?!!S.scanData:fc.key==='molist'?!!S.moListData:fc.key==='stocklist'?!!S.stocklistData:fc.key==='livrari'?!!(S.perfLivrari&&S.perfLivrari.length):!!S.obData;
+    const meta=fc.key==='wcs'?{rows:S.wcSetupData?.length||0,ts:S.wcSetupData?._ts}:fc.key==='intransit'?{rows:S.inTransitData?.length||0,ts:S.inTransitData?._ts}:fc.key==='scanari'?{rows:S.scanData?._rows||0,ts:S.scanData?._ts}:fc.key==='molist'?{rows:S.moListData?.length||0,ts:S.moListData?._ts}:fc.key==='livrari'?{rows:S.perfLivrari?.length||0,ts:S.meta.livrari?.ts}:fc.key==='stocklist'?{rows:S.stocklistData?.length||0,ts:S.meta.stocklist?.ts}:(S.meta[fc.key]||{rows:0,ts:null});
     const card=dv(`file-card${loaded?' loaded':''}`);
     const fch=dv('fc-header');
     fch.appendChild(sp('fc-icon',fc.icon));
@@ -3695,7 +3918,7 @@ function renderFisiereTab(){
         const fileCrTs=file.lastModified||ts;  // file creation/modification date
         S.meta._fileCrTs=S.meta._fileCrTs||{};
         S.meta._fileCrTs[fc.key]=fileCrTs;
-        if(fc.key==='bom')applyBom(rows,ts);else if(fc.key==='bow')applyBow(rows,ts);else if(fc.key==='po')applyPo(rows,ts);else if(fc.key==='wcs'){applyWcSetup(rows,ts);rows._ts=ts;}else if(fc.key==='stocklist'){applyStocklist(rows,ts);rows._ts=ts;}else if(fc.key==='intransit'){applyInTransit(rows,ts);rows._ts=ts;}else if(fc.key==='molist'){applyMoList(rows,ts);await dbSave(fc.key,{rows,ts});if(S.sbCfg&&S.session?.role==='admin'){lbl.innerHTML='';lbl.appendChild(el('span','spin-sm'));lbl.appendChild(document.createTextNode(' Upload Supabase (.xlsx)...'));try{const xlsxBlob=new Blob([buf],{type:'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'});const moUrl=`${S.sbCfg.url}/storage/v1/object/${S.sbCfg.bucket}/data-molist.xlsx`;const moR=await fetch(moUrl,{method:'POST',headers:{'Authorization':'Bearer '+S.sbCfg.key,'apikey':S.sbCfg.key,'x-upsert':'true','Content-Type':'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'},body:xlsxBlob});if(!moR.ok)throw new Error(await moR.text());await sbUpload(S.sbCfg,'data-molist-meta.json',{ts,rowCount:rows.length});}catch(e){console.warn('Supabase molist upload:',e);showToast('⚠ Supabase molist upload esuat: '+e.message,'err',4000);}}}else if(fc.key==='scanari'){applyScanari(rows,ts);}else applyOb(rows,ts);
+        if(fc.key==='bom')applyBom(rows,ts);else if(fc.key==='bow')applyBow(rows,ts);else if(fc.key==='po')applyPo(rows,ts);else if(fc.key==='wcs'){applyWcSetup(rows,ts);rows._ts=ts;}else if(fc.key==='livrari'){applyLivrariFile(rows,ts);rows._ts=ts;}else if(fc.key==='stocklist'){applyStocklist(rows,ts);rows._ts=ts;}else if(fc.key==='intransit'){applyInTransit(rows,ts);rows._ts=ts;}else if(fc.key==='molist'){applyMoList(rows,ts);await dbSave(fc.key,{rows,ts});if(S.sbCfg&&S.session?.role==='admin'){lbl.innerHTML='';lbl.appendChild(el('span','spin-sm'));lbl.appendChild(document.createTextNode(' Upload Supabase (.xlsx)...'));try{const xlsxBlob=new Blob([buf],{type:'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'});const moUrl=`${S.sbCfg.url}/storage/v1/object/${S.sbCfg.bucket}/data-molist.xlsx`;const moR=await fetch(moUrl,{method:'POST',headers:{'Authorization':'Bearer '+S.sbCfg.key,'apikey':S.sbCfg.key,'x-upsert':'true','Content-Type':'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'},body:xlsxBlob});if(!moR.ok)throw new Error(await moR.text());await sbUpload(S.sbCfg,'data-molist-meta.json',{ts,rowCount:rows.length});}catch(e){console.warn('Supabase molist upload:',e);showToast('⚠ Supabase molist upload esuat: '+e.message,'err',4000);}}}else if(fc.key==='scanari'){applyScanari(rows,ts);}else applyOb(rows,ts);
         if(fc.key==='scanari'){
           // Large file: split by month in IDB, binary in Supabase
           lbl.innerHTML='';lbl.appendChild(el('span','spin-sm'));lbl.appendChild(document.createTextNode(' Se salveaza local...'));
@@ -9066,7 +9289,7 @@ function renderPerformanta(){
   page.appendChild(content);
 
   // Load saved livrari on first open
-  if(!S._perfLoaded){S._perfLoaded=true;Promise.all([loadPerfLivrari(),loadPerfLayout()]).then(()=>rebuild());}
+  if(!S._perfLoaded){S._perfLoaded=true;Promise.all([loadPerfLayout()]).then(()=>{if(S.perfLivrari?.length)applyLivrari(S.perfLivrari,true);rebuild();});}
 
   function rebuild(){
     content.innerHTML='';
