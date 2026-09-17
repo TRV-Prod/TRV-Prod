@@ -8693,73 +8693,184 @@ function perfFmtPeriod(p){
 // ── Parse uploaded Livrari Excel rows ──
 function applyLivrari(rows, skipSave=false){
   if(!rows||!rows.length){showToast('Fișier gol sau format necunoscut','err',3000);return;}
-  // Detect column names robustly (case-insensitive, trim)
   const sampleKeys=Object.keys(rows[0]||{});
   const findCol=(...candidates)=>{
     for(const c of candidates){
       const found=sampleKeys.find(k=>k.trim().toLowerCase()===c.toLowerCase());
       if(found)return found;
     }
-    return candidates[0]; // fallback
+    return candidates[0];
   };
   const colPeriod=findCol('Period','period','PERIOD','Perioada');
   const colItem=findCol('Item','item','ITEM','Produs','Product');
   const colQty=findCol('Quantity','quantity','Qty','qty','QTY','Cantitate');
   const colName=findCol('Name','name','NAME','Denumire','Descriere');
-  console.log('[Perf] Columns detected:',{colPeriod,colItem,colQty,colName});
-  console.log('[Perf] First row sample:',rows[0]);
 
   const agg=new Map();
   const months=new Set(), items=new Map();
-  let skipped=0;
-  for(const r of rows){
-    // Period can be '202607', number 202607, or formatted string
+  const invalid=[];   // rows rejected, with the reason
+
+  for(let i=0;i<rows.length;i++){
+    const r=rows[i];
     let rawPeriod=r[colPeriod];
     let period='';
     if(rawPeriod instanceof Date){
-      // If XLSX converts to Date despite raw:false, extract YYYYMM
       period=String(rawPeriod.getFullYear())+String(rawPeriod.getMonth()+1).padStart(2,'0');
     } else {
       period=String(rawPeriod??'').trim().replace(/[^0-9]/g,'').slice(0,6);
     }
     const item=String(r[colItem]??'').trim();
-    const qty=parseFloat(r[colQty])||0;
+    const qtyRaw=r[colQty];
+    const qty=parseFloat(String(qtyRaw??'').replace(',','.'))||0;
     const name=String(r[colName]??'').trim();
-    if(!period||period.length!==6||!item||qty<=0){skipped++;continue;}
+
+    const reasons=[];
+    if(!period)reasons.push('perioadă lipsă');
+    else if(period.length!==6)reasons.push('perioadă invalidă ('+period+')');
+    if(!item)reasons.push('cod produs lipsă');
+    if(qty<=0)reasons.push(qty===0?'cantitate 0':'cantitate negativă ('+qty+')');
+    // Product not found in BOM/BOW -> cannot compute times
+    if(item&&reasons.length===0){
+      const hasBom=S.bomIdx?.has(item+'__'+item)||[...(S.bomIdx?.keys()||[])].some(k=>k.startsWith(item+'__'));
+      const hasBow=S.bowIdx?.has(item+'__'+item)||[...(S.bowIdx?.keys()||[])].some(k=>k.startsWith(item+'__'));
+      if(!hasBom&&!hasBow)reasons.push('produs fără BOM/BOW');
+    }
+
+    if(reasons.length){
+      invalid.push({row:i+2,period:String(rawPeriod??''),item,name,qty:qtyRaw,reasons,_raw:r});
+      continue;
+    }
     months.add(period);
     items.set(item,name);
     const k=`${period}|${item}`;
     if(!agg.has(k))agg.set(k,{period,item,name,qty:0});
     agg.get(k).qty+=qty;
   }
-  console.log('[Perf] Parsed:',agg.size,'entries,',skipped,'skipped');
-  if(!agg.size){
-    showToast(`Import eșuat: 0 linii valide (${rows.length} rânduri citite, ${skipped} omise). Verificați coloanele: Period, Item, Quantity`,'err',5000);
-    return;
-  }
+
   if(skipSave){
-    // Just rebuild from saved rows — no merge needed
-    S.perfData={rows:[...agg.values()],months:[...months].sort(),items};
+    S.perfData={rows:[...agg.values()],months:[...months].sort(),items,invalid};
     return;
   }
-  // ── Merge with existing saved rows (deduplication) ──
+
+  if(!agg.size&&!invalid.length){
+    showToast('Import eșuat: 0 linii valide. Verificați coloanele: Period, Item, Quantity','err',5000);
+    return;
+  }
+
+  // ── Merge with saved rows (deduplication) ──
   const existingRows=S.perfLivrari||[];
   const existingKeys=new Set(existingRows.map(r=>_livKey(r)));
   const newRows=rows.filter(r=>{
-    const period=String(r[colPeriod]??'').trim().replace(/[^0-9]/g,'').slice(0,6);
-    const item=String(r[colItem]??'').trim();
-    const qty=parseFloat(r[colQty])||0;
-    if(!period||period.length!==6||!item||qty<=0)return false;
-    return !existingKeys.has(_livKey({Period:period,Item:item,Date:String(r['Date']??''),Quantity:qty}));
+    let p=r[colPeriod];
+    let per=(p instanceof Date)?(String(p.getFullYear())+String(p.getMonth()+1).padStart(2,'0'))
+                               :String(p??'').trim().replace(/[^0-9]/g,'').slice(0,6);
+    const it=String(r[colItem]??'').trim();
+    const q=parseFloat(String(r[colQty]??'').replace(',','.'))||0;
+    if(!per||per.length!==6||!it||q<=0)return false;
+    return !existingKeys.has(_livKey({Period:per,Item:it,Date:String(r['Date']??''),Quantity:q}));
   });
   const mergedRows=[...existingRows,...newRows];
   S.perfLivrari=mergedRows;
-  // Re-apply all merged rows
   applyLivrari(mergedRows,true);
-  // Save to Supabase
+  if(S.perfData)S.perfData.invalid=invalid;
+  S.perfInvalid=invalid;
+
   savePerfLivrari().then(()=>
-    showToast(`✓ ${newRows.length} linii noi adăugate (${rows.length-newRows.length-skipped} duplicate omise, ${skipped} invalide). Total BD: ${mergedRows.length} rânduri`,'ok',4000)
+    showToast(`✓ ${newRows.length} linii noi`+(invalid.length?` · ⚠ ${invalid.length} invalide`:'')+` · Total BD: ${mergedRows.length}`,'ok',4000)
   );
+}
+
+// ── Modal: invalid delivery lines, with the option to force-include them ──
+function openInvalidLivrariModal(onChange){
+  const inv=S.perfInvalid||S.perfData?.invalid||[];
+  document.getElementById('inv-liv-overlay')?.remove();
+  const ov=dv('');ov.id='inv-liv-overlay';
+  ov.style.cssText='position:fixed;inset:0;background:rgba(0,0,0,.5);z-index:9300;display:flex;align-items:center;justify-content:center;padding:14px';
+  const modal=dv('');modal.style.cssText='background:#fff;border-radius:12px;box-shadow:0 24px 70px rgba(0,0,0,.35);width:min(980px,96vw);max-height:88vh;display:flex;flex-direction:column;overflow:hidden';
+
+  const hdr=dv('');hdr.style.cssText='background:#b45309;color:#fff;padding:12px 18px;display:flex;justify-content:space-between;align-items:center;flex-shrink:0';
+  hdr.innerHTML='<div><div style="font-weight:800;font-size:14px">⚠ Linii de livrare invalide</div>'+
+    '<div style="font-size:10px;opacity:.9;margin-top:2px">'+inv.length+' linii excluse din calcul</div></div>';
+  const cb=el('button');cb.textContent='✕';cb.style.cssText='border:none;background:rgba(255,255,255,.2);color:#fff;width:30px;height:30px;border-radius:5px;cursor:pointer;font-size:15px';
+  cb.addEventListener('click',()=>ov.remove());hdr.appendChild(cb);modal.appendChild(hdr);
+
+  const body=dv('');body.style.cssText='flex:1;overflow:auto;padding:0';
+  if(!inv.length){
+    body.innerHTML='<div style="padding:36px;text-align:center;color:#15803d;font-size:13px"><div style="font-size:36px;margin-bottom:10px">✓</div>Toate liniile importate sunt valide.</div>';
+  } else {
+    if(!S.perfForceInclude)S.perfForceInclude={};
+    const tbl=el('table');tbl.style.cssText='width:100%;border-collapse:collapse;font-size:11.5px';
+    const th=el('thead');const hr=el('tr');hr.style.cssText='background:#78350f;color:#fff;position:sticky;top:0;z-index:2';
+    [{l:'Include',w:'70px',a:'center'},{l:'Rând',w:'55px',a:'right'},{l:'Perioadă',w:'85px',a:'left'},
+     {l:'Produs',w:'',a:'left'},{l:'Cantitate',w:'80px',a:'right'},{l:'Motiv',w:'230px',a:'left'}]
+    .forEach(({l,w,a})=>{const t=el('th');t.style.cssText=`padding:8px 10px;text-align:${a};font-size:9.5px;font-weight:800;text-transform:uppercase;${w?'width:'+w:''}`;t.textContent=l;hr.appendChild(t);});
+    th.appendChild(hr);tbl.appendChild(th);
+    const tb2=el('tbody');
+    inv.forEach((v,i)=>{
+      const key=v.period+'|'+v.item+'|'+v.row;
+      const tr=el('tr');tr.style.cssText='background:'+(i%2?'#fffbeb':'#fff')+';border-bottom:1px solid #fde68a';
+      const mk=(html,css)=>{const td=el('td');td.style.cssText=(css||'')+';padding:6px 10px;vertical-align:middle';td.innerHTML=html;return td;};
+      // Include checkbox — only meaningful when the row has a usable period+item+qty
+      const canInclude=!!v.period&&!!v.item&&parseFloat(String(v.qty??'').replace(',','.'))>0;
+      const tdC=el('td');tdC.style.cssText='padding:6px 10px;text-align:center';
+      if(canInclude){
+        const cbx=el('input');cbx.type='checkbox';cbx.checked=!!S.perfForceInclude[key];
+        cbx.style.cssText='width:16px;height:16px;cursor:pointer;accent-color:#b45309';
+        cbx.addEventListener('change',()=>{
+          if(cbx.checked)S.perfForceInclude[key]=v;else delete S.perfForceInclude[key];
+        });
+        tdC.appendChild(cbx);
+      } else {
+        tdC.innerHTML='<span style="color:#cbd5e1;font-size:14px" title="Nu poate fi inclusă — date esențiale lipsă">✕</span>';
+      }
+      tr.appendChild(tdC);
+      tr.appendChild(mk(String(v.row),'text-align:right;color:#94a3b8;font-family:monospace'));
+      tr.appendChild(mk(v.period||'<span style="color:#dc2626">—</span>','font-family:monospace'));
+      tr.appendChild(mk('<b style="font-family:monospace">'+(v.item||'<span style="color:#dc2626">—</span>')+'</b>'+
+        (v.name?'<div style="font-size:10px;color:#6b7280">'+v.name+'</div>':'')));
+      tr.appendChild(mk(String(v.qty??'—'),'text-align:right;font-weight:700'));
+      tr.appendChild(mk(v.reasons.map(r=>'<span style="display:inline-block;margin:1px;padding:1px 6px;border-radius:8px;font-size:9.5px;font-weight:700;background:#fee2e2;color:#991b1b;border:1px solid #fca5a5">'+r+'</span>').join('')));
+      tb2.appendChild(tr);
+    });
+    tbl.appendChild(tb2);body.appendChild(tbl);
+  }
+  modal.appendChild(body);
+
+  const foot=dv('');foot.style.cssText='padding:10px 18px;border-top:1px solid var(--border);display:flex;gap:8px;align-items:center;flex-shrink:0;flex-wrap:wrap';
+  if(inv.length){
+    const allB=el('button');allB.textContent='☑ Include toate posibile';
+    allB.style.cssText='height:30px;padding:0 12px;border:1px solid #b45309;color:#b45309;background:#fffbeb;border-radius:5px;cursor:pointer;font-size:11px;font-weight:700';
+    allB.addEventListener('click',()=>{
+      if(!S.perfForceInclude)S.perfForceInclude={};
+      inv.forEach(v=>{
+        if(v.period&&v.item&&parseFloat(String(v.qty??'').replace(',','.'))>0)
+          S.perfForceInclude[v.period+'|'+v.item+'|'+v.row]=v;
+      });
+      ov.remove();openInvalidLivrariModal(onChange);
+    });
+    const noneB=el('button');noneB.textContent='☐ Exclude toate';
+    noneB.style.cssText='height:30px;padding:0 12px;border:1px solid var(--border);background:#f8f9fb;border-radius:5px;cursor:pointer;font-size:11px';
+    noneB.addEventListener('click',()=>{S.perfForceInclude={};ov.remove();openInvalidLivrariModal(onChange);});
+    const xlsB=el('button');xlsB.textContent='⬇ Excel';
+    xlsB.style.cssText='height:30px;padding:0 12px;border:1px solid #16a34a;color:#15803d;background:#f0fdf4;border-radius:5px;cursor:pointer;font-size:11px;font-weight:700';
+    xlsB.addEventListener('click',()=>{
+      const data=[['Rând','Perioadă','Produs','Denumire','Cantitate','Motive']];
+      inv.forEach(v=>data.push([v.row,v.period,v.item,v.name,v.qty,v.reasons.join('; ')]));
+      const wb=XLSX.utils.book_new();const ws=XLSX.utils.aoa_to_sheet(data);
+      ws['!cols']=[{wch:7},{wch:11},{wch:20},{wch:32},{wch:11},{wch:44}];
+      XLSX.utils.book_append_sheet(wb,ws,'Livrari invalide');
+      XLSX.writeFile(wb,'Livrari_invalide_'+new Date().toISOString().slice(0,10)+'.xlsx');
+    });
+    foot.appendChild(allB);foot.appendChild(noneB);foot.appendChild(xlsB);
+  }
+  const okB=el('button');okB.textContent='✓ Aplică și recalculează';
+  okB.style.cssText='height:30px;padding:0 18px;border:none;background:#b45309;color:#fff;border-radius:5px;cursor:pointer;font-size:12px;font-weight:700;margin-left:auto';
+  okB.addEventListener('click',()=>{ov.remove();onChange&&onChange();});
+  foot.appendChild(okB);modal.appendChild(foot);
+
+  ov.appendChild(modal);
+  ov.addEventListener('click',e=>{if(e.target===ov)ov.remove();});
+  document.body.appendChild(ov);
 }
 
 // ── Core computation: minutes per WC per period ──
@@ -8776,7 +8887,13 @@ function computePerfMatrix(effPct){
   S.structIgnoreStock=true; // always from 0
 
   let processed=0, noData=0;
-  for(const {period,item,qty} of S.perfData.rows){
+  // Forced-included invalid rows are appended to the normal dataset
+  const forced=Object.values(S.perfForceInclude||{}).map(v=>({
+    period:v.period,item:v.item,
+    qty:parseFloat(String(v.qty??'').replace(',','.'))||0,
+  })).filter(v=>v.period&&v.item&&v.qty>0);
+  const allRows=[...S.perfData.rows,...forced];
+  for(const {period,item,qty} of allRows){
     if(!item||qty<=0){noData++;continue;}
     const needs=calcNeeds(item,qty);
     const exec=calcExecTime(item,qty,needs);
@@ -8923,6 +9040,13 @@ function renderPerformanta(){
   tb.appendChild(unitBtn);
 
   // Export
+  const invBtn=el('button','tbtn');invBtn.id='perf-invalid-btn';
+  invBtn.style.cssText='border-color:#b45309;color:#b45309;background:#fffbeb;font-weight:700';
+  invBtn.innerHTML='⚠ Linii invalide';
+  invBtn.title='Vezi liniile respinse la import și include-le manual dacă e cazul';
+  invBtn.addEventListener('click',()=>openInvalidLivrariModal(()=>rebuild()));
+  tb.appendChild(invBtn);
+
   const clearLivBtn=el('button','tbtn');clearLivBtn.style.cssText='border-color:#dc2626;color:#dc2626;margin-left:auto';
   clearLivBtn.innerHTML='🗑 Golește BD Livrări';
   clearLivBtn.addEventListener('click',()=>{
@@ -8946,6 +9070,14 @@ function renderPerformanta(){
 
   function rebuild(){
     content.innerHTML='';
+    // Refresh the invalid-lines badge
+    {const ib=document.getElementById('perf-invalid-btn');
+     if(ib){
+       const n=(S.perfInvalid||S.perfData?.invalid||[]).length;
+       const f=Object.keys(S.perfForceInclude||{}).length;
+       ib.innerHTML='⚠ Linii invalide'+(n?' <b>'+n+'</b>':'')+(f?' <span style="color:#15803d">(+'+f+')</span>':'');
+       ib.style.display=n?'':'none';
+     }}
     if(!S.perfData){
       content.innerHTML='<div style="padding:40px;text-align:center;color:var(--text3);font-size:13px">📂 Importați un fișier Livrări pentru a genera raportul.<br><span style="font-size:11px;color:#94a3b8;margin-top:6px;display:block">Datele anterioare se încarcă din baza de date...</span></div>';
       return;
@@ -8960,7 +9092,8 @@ function renderPerformanta(){
         return;
       }
       const finalMatrix=applyPerfGroups(matrix,S.perfWcGroups);
-      const months=S.perfData.months;
+      const forcedMonths=Object.values(S.perfForceInclude||{}).map(v=>v.period).filter(p=>p&&p.length===6);
+      const months=[...new Set([...S.perfData.months,...forcedMonths])].sort();
       buildPerfTable(content,finalMatrix,months,unitHours);
     },50);
   }
