@@ -3655,27 +3655,30 @@ function _fileCardDefs(){
   return [
     {key:'bom',       label:'BOM',                  must:['Final product','Material no']},
     {key:'bow',       label:'BOW',                  must:['Final product','Ope seq']},
-    {key:'po',        label:'Planning Overview',    must:['Final product','On hand']},
+    {key:'po',        label:'Planning Overview',    must:['FP','MATERIAL','On Hand']},
     {key:'ob',        label:'Open Order Lines',     must:['Item_no','Open qty']},
     {key:'wcs',       label:'Workcenter Setup',     must:['Workcenter name']},
     {key:'scanari',   label:'QV Start-Stop History',must:['Transaction dt','Used_tm_MS']},
     {key:'livrari',   label:'Ongoing deliveries',   must:['Period','Item','Quantity'],adminOnly:true},
     {key:'stocklist', label:'TRV-Stocklist',        must:['ITEM NR','STANDARD QTY']},
-    {key:'intransit', label:'In Transit',           must:['Item_no'],soft:true},
-    {key:'molist',    label:'MO List',              must:['Product']},
+    {key:'intransit', label:'In Transit',           must:['Item','Qty']},
+    {key:'molist',    label:'MO List',              must:['Product','MO']},
   ];
 }
 
 // Guess which card a workbook belongs to, by matching header names
 function _detectFileKind(headers){
-  const hs=new Set(headers.map(h=>String(h).trim().toLowerCase()));
-  const has=(n)=>hs.has(String(n).trim().toLowerCase());
+  const norm=(s)=>String(s).trim().toLowerCase().replace(/[._\s]/g,'');
+  const hs=new Set(headers.map(norm));
+  const has=(n)=>hs.has(norm(n));
   const defs=_fileCardDefs();
-  let best=null,bestScore=0;
+  let best=null,bestScore=-1;
   for(const d of defs){
     const hits=d.must.filter(has).length;
-    if(hits===d.must.length&&hits>bestScore){best=d;bestScore=hits;}
+    if(hits!==d.must.length)continue;          // every required column must be present
+    if(d.must.length>bestScore){best=d;bestScore=d.must.length;}  // prefer the most specific
   }
+  if(!best)console.warn('[Batch] antet nerecunoscut:',headers.slice(0,25));
   return best;
 }
 
@@ -3768,14 +3771,26 @@ async function openBatchUpload(refreshCards){
       const left=dv('');left.style.cssText='flex:1;min-width:0';
       left.innerHTML='<div style="font-size:12px;font-weight:700;color:#1e3a5f;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+q.file.name+'</div>'+
         '<div style="font-size:10.5px;color:'+(bad?'#dc2626':'#15803d')+';margin-top:2px">'+
-        (bad?'⚠ Tip nerecunoscut — antet necorespunzător'
+        (bad?'⚠ Tip nerecunoscut — alegeți manual din listă<div style="font-size:9.5px;color:#94a3b8;margin-top:2px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">Coloane: '+q.headers.slice(0,6).join(', ')+'</div>'
             :'→ <b>'+q.kind.label+'</b> · '+q.rows.length.toLocaleString('ro-RO')+' rânduri')+'</div>';
       row.appendChild(left);
       const st=dv('');st.id='bq-st-'+i;st.style.cssText='font-size:11px;font-weight:700;white-space:nowrap;min-width:92px;text-align:right';
       st.textContent=bad?'—':(q.skip?'exclus':'în așteptare');
       st.style.color=bad?'#dc2626':(q.skip?'#94a3b8':'#64748b');
       row.appendChild(st);
-      if(!bad){
+      if(bad){
+        // Manual override: let the user pick the type
+        const sel=el('select');
+        sel.style.cssText='height:28px;padding:0 6px;border:1px solid #fca5a5;border-radius:5px;font-size:11px;background:#fff;flex-shrink:0;max-width:170px';
+        sel.innerHTML='<option value="">— alege tipul —</option>'+
+          _fileCardDefs().filter(d=>!d.adminOnly||isAdmin)
+            .map(d=>'<option value="'+d.key+'">'+d.label+'</option>').join('');
+        sel.addEventListener('change',()=>{
+          const d=_fileCardDefs().find(x=>x.key===sel.value);
+          if(d){q.kind=d;q.skip=false;renderList();}
+        });
+        row.appendChild(sel);
+      } else {
         const tg=el('button');tg.textContent=q.skip?'☐':'☑';
         tg.title=q.skip?'Include la încărcare':'Exclude de la încărcare';
         tg.style.cssText='width:28px;height:28px;border:1px solid var(--border);border-radius:5px;background:#fff;cursor:pointer;font-size:13px;flex-shrink:0';
