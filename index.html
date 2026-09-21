@@ -1250,6 +1250,15 @@ html,body{height:100%;overflow:hidden}
 .plan-col-min .plan-th-inner>*:not(.plan-col-rh),.plan-col-min>*:not(.plan-th-inner){display:none!important}
 .plan-col-rh{width:7px!important;right:-3px!important;z-index:4}
 .plan-col-min .plan-col-rh{background:#cbd5e1}
+
+/* Grouped nav dropdowns */
+.nav-dd{cursor:pointer;white-space:nowrap}
+.nav-dd-menu{position:fixed;display:none;min-width:210px;background:#fff;border:1px solid var(--border);border-radius:8px;box-shadow:0 10px 30px rgba(0,0,0,.18);padding:5px;z-index:9800;margin-top:2px}
+.nav-dd-menu.open{display:block}
+.nav-dd-item{padding:8px 12px;border-radius:5px;font-size:12.5px;font-weight:600;color:var(--text2);cursor:pointer;white-space:nowrap}
+.nav-dd-item:hover{background:#eff6ff;color:#1d4ed8}
+.nav-dd-item.active{background:#dbeafe;color:#1d4ed8;font-weight:800}
+@media print{.nav-dd-menu{display:none!important}}
 </style>
 </head>
 <body>
@@ -3512,25 +3521,32 @@ function render(){
   logo.appendChild(mobBtn);
   hdr.appendChild(logo);
 
-  // Nav tabs
-  const tabs=[
+  // Nav tabs — grouped menu
+  const isAdm=S.session.role==='admin';
+  const navItems=[
     {id:'fisiere',label:'Fisiere',dot:true},
     {id:'structura',label:'Structura'},
-    {id:'stocuri',label:'Stocuri'},
-    {id:'orderbook',label:'Order Book'},
-    {id:'rapoarte',label:'Rapoarte'},
-    {id:'planificare',label:'Planificare'},
-    {id:'planv2',label:'Planificare V2'},
-    {id:'pwc',label:'Programare WC'},
-
+    {group:'Planificare & Urmărire',icon:'📅',children:[
+      {id:'orderbook',label:'Order Book'},
+      {id:'planificare',label:'Planificare'},
+      {id:'planv2',label:'Planificare V2'},
+      {id:'pwc',label:'Programare WC'},
+      {id:'asamblare',label:'🔧 Asamblare'},
+      {id:'stocuri',label:'Stocuri'},
+      {id:'rapoarte',label:'Rapoarte'},
+      {id:'normare',label:'⏱ Normare'},
+    ]},
     {id:'scanari',label:'Raport Scanari'},
     {id:'scanner',label:'📷 Scanner'},
   ];
-  tabs.push({id:'asamblare',label:'🔧 Asamblare'});
-  tabs.push({id:'normare',label:'⏱ Normare'});
-  if(S.session.role==='admin') tabs.push({id:'dctr',label:'Disciplina CTR'});
-  if(S.session.role==='admin') tabs.push({id:'performanta',label:'Performanță'});
-  if(S.session.role==='admin') tabs.push({id:'utilizatori',label:'Utilizatori'});
+  if(isAdm)navItems.push({group:'Diverse',icon:'🗂',children:[
+    {id:'dctr',label:'Disciplina CTR'},
+    {id:'performanta',label:'Performanță'},
+    {id:'utilizatori',label:'Utilizatori'},
+  ]});
+  // Flat list (used by the mobile sidebar and anywhere a simple list is needed)
+  const tabs=[];
+  navItems.forEach(n=>{if(n.group)n.children.forEach(ch=>tabs.push({...ch,_group:n.group}));else tabs.push(n);});
 
   // ── Hamburger button (mobile) ──
   const hamburger=dv('hdr-hamburger');
@@ -3547,8 +3563,16 @@ function render(){
   mobileHdr.appendChild(mobileTitle);mobileHdr.appendChild(mobileClose);
   mobileSidebar.appendChild(mobileHdr);
   const mobileList=dv('mobile-nav-list');
+  let _lastGrp=null;
   tabs.forEach(t=>{
+    if(t._group&&t._group!==_lastGrp){
+      const gh=dv('');gh.textContent=t._group;
+      gh.style.cssText='padding:10px 16px 4px;font-size:10px;font-weight:800;color:#94a3b8;text-transform:uppercase;letter-spacing:.06em';
+      mobileList.appendChild(gh);
+    }
+    _lastGrp=t._group||null;
     const item=dv(`mobile-nav-item${S.tab===t.id?' active':''}`);
+    if(t._group)item.style.paddingLeft='30px';
     if(t.dot){
       const dot=el('div',S.bomData&&S.bowData?'dot-ok':'dot-no');dot.style.cssText='width:7px;height:7px;border-radius:50%;flex-shrink:0';item.appendChild(dot);
     }
@@ -3571,13 +3595,52 @@ function render(){
   mobileOverlay.addEventListener('click',e=>{if(e.target===mobileOverlay)closeMenu();});
 
   const nav=dv('hdr-nav');
-  tabs.forEach(t=>{
-    const tab=el('div',`nav-tab${S.tab===t.id?' active':''}`);
-    if(t.dot){tab.appendChild(el('div',S.bomData&&S.bowData?'dot-ok':'dot-no'));}
-    tab.appendChild(document.createTextNode(t.label));
-    tab.addEventListener('click',()=>{S.tab=t.id;render();logActivity(t.id);});
+  document.querySelectorAll('.nav-dd-menu').forEach(m=>m.remove());
+  navItems.forEach(n=>{
+    if(!n.group){
+      const tab=el('div',`nav-tab${S.tab===n.id?' active':''}`);
+      if(n.dot){tab.appendChild(el('div',S.bomData&&S.bowData?'dot-ok':'dot-no'));}
+      tab.appendChild(document.createTextNode(n.label));
+      tab.addEventListener('click',()=>{S.tab=n.id;render();logActivity(n.id);});
+      nav.appendChild(tab);
+      return;
+    }
+    // ── Group with hover submenu ──
+    const activeChild=n.children.find(ch=>ch.id===S.tab);
+    const tab=el('div',`nav-tab nav-dd${activeChild?' active':''}`);
+    tab.innerHTML=(n.icon?n.icon+' ':'')+n.group+
+      (activeChild?' <span style="opacity:.75;font-weight:600">· '+activeChild.label+'</span>':'')+
+      ' <span style="font-size:8px;opacity:.7;margin-left:2px">▼</span>';
+    const menu=dv('nav-dd-menu');
+    n.children.forEach(ch=>{
+      const it=dv(`nav-dd-item${S.tab===ch.id?' active':''}`);
+      it.textContent=ch.label;
+      it.addEventListener('click',e=>{e.stopPropagation();menu.classList.remove('open');S.tab=ch.id;render();logActivity(ch.id);});
+      menu.appendChild(it);
+    });
+    document.body.appendChild(menu);
+    let hideT=null;
+    const show=()=>{
+      clearTimeout(hideT);
+      document.querySelectorAll('.nav-dd-menu.open').forEach(m=>{if(m!==menu)m.classList.remove('open');});
+      const r=tab.getBoundingClientRect();
+      menu.style.top=(r.bottom)+'px';
+      menu.style.left=Math.min(r.left,window.innerWidth-240)+'px';
+      menu.classList.add('open');
+    };
+    const hide=()=>{hideT=setTimeout(()=>menu.classList.remove('open'),180);};
+    tab.addEventListener('mouseenter',show);
+    tab.addEventListener('mouseleave',hide);
+    menu.addEventListener('mouseenter',()=>clearTimeout(hideT));
+    menu.addEventListener('mouseleave',hide);
+    // Touch / click toggles the submenu (tablets have no hover)
+    tab.addEventListener('click',e=>{e.stopPropagation();menu.classList.contains('open')?menu.classList.remove('open'):show();});
     nav.appendChild(tab);
   });
+  if(!window._navDdCloser){
+    window._navDdCloser=true;
+    document.addEventListener('click',()=>document.querySelectorAll('.nav-dd-menu.open').forEach(m=>m.classList.remove('open')));
+  }
   hdr.appendChild(nav);
 
   // User info + sync + logout in header
