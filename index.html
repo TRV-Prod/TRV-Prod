@@ -1244,6 +1244,12 @@ html,body{height:100%;overflow:hidden}
   justify-content:center;transition:opacity .3s;opacity:.7}
 #fs-btn:hover{opacity:1}
 #fs-btn.hidden{display:none}
+
+.plan-col-min{padding:0!important;overflow:visible!important;font-size:0!important}
+.plan-col-min .plan-th-inner{padding:0!important}
+.plan-col-min .plan-th-inner>*:not(.plan-col-rh),.plan-col-min>*:not(.plan-th-inner){display:none!important}
+.plan-col-rh{width:7px!important;right:-3px!important;z-index:4}
+.plan-col-min .plan-col-rh{background:#cbd5e1}
 </style>
 </head>
 <body>
@@ -7180,6 +7186,7 @@ function _rebuildPlanBody(wrap){
   const oldTbody=tbl.querySelector('tbody');
   const nb=_buildPlanTbody(wrap);
   if(oldTbody)tbl.replaceChild(nb,oldTbody);else tbl.appendChild(nb);
+  {const pf2=S.planFilter;_planApplyCollapsed(tbl,pf2.colOrder.filter(k=>pf2.visibleCols.has(k)));}
   _updatePlanSummary(wrap);
 }
 
@@ -7208,7 +7215,7 @@ function _buildPlanTbody(wrap){
     const valoare=price*plan.totalQty;
     const tr=el('tr');
     visCols.forEach(colId=>{
-      const td=el('td');td.style.width=(pf2.colWidths[colId]||120)+'px';td.style.overflow='hidden';td.style.boxSizing='border-box';
+      const td=el('td');td.style.width=((pf2.colWidths[colId]??120))+'px';td.style.overflow='hidden';td.style.boxSizing='border-box';
       if(colId==='prio'){
         const pi=el('input','plan-prio');pi.type='text';pi.maxLength=3;
         pi.placeholder='—';pi.value=S.planPrio[itemNo]||'';
@@ -7494,6 +7501,38 @@ function _buildPlanTbody(wrap){
   return tbody;
 }
 
+
+// Set a Planificare column width (0 allowed = collapsed), sync header, filter row, body, table width
+function _planSetColW(tbl,visCols,colId,nw){
+  const pf2=S.planFilter;
+  pf2.colWidths[colId]=nw;
+  const idx=visCols.indexOf(colId)+1;
+  const collapsed=nw<8;
+  tbl.querySelectorAll(`th:nth-child(${idx}),td:nth-child(${idx})`).forEach(c=>{
+    if(c.colSpan>1)return;
+    c.style.width=nw+'px';c.style.minWidth=nw+'px';c.style.maxWidth=nw+'px';
+    c.classList.toggle('plan-col-min',collapsed);
+  });
+  _planSyncTableW(tbl,visCols);
+}
+function _planApplyCollapsed(tbl,visCols){
+  const pf2=S.planFilter;
+  visCols.forEach((k,i)=>{
+    const w=pf2.colWidths[k]??120;
+    if(w<8)tbl.querySelectorAll(`th:nth-child(${i+1}),tr:not(.plan-bom-row)>td:nth-child(${i+1})`).forEach(c=>{
+      if(c.colSpan>1)return;
+      c.classList.add('plan-col-min');c.style.width=w+'px';c.style.minWidth=w+'px';c.style.maxWidth=w+'px';
+    });
+  });
+  _planSyncTableW(tbl,visCols);
+}
+function _planSyncTableW(tbl,visCols){
+  const pf2=S.planFilter;
+  const sum=visCols.reduce((s,k)=>s+(pf2.colWidths[k]??120),0);
+  tbl.style.tableLayout='fixed';
+  tbl.style.width=sum+'px';
+}
+
 function renderPlanPage(wrap){
   wrap.innerHTML='';
   if(!S._planObsLoaded){S._planObsLoaded=true;loadPlanCompObs();}
@@ -7563,7 +7602,7 @@ function renderPlanPage(wrap){
   const hr=el('tr');
   let dragSrc=null;
   visCols.forEach(colId=>{
-    const w=pf2.colWidths[colId]||120;
+    const w=(pf2.colWidths[colId]??120);
     const th=el('th');th.style.width=w+'px';th.setAttribute('data-col',colId);
     const inner=dv('plan-th-inner');
     inner.appendChild(sp('plan-th-lbl',COL_LABELS[colId]||colId));
@@ -7571,11 +7610,13 @@ function renderPlanPage(wrap){
     const rh=el('div','plan-col-rh');
     rh.addEventListener('mousedown',e=>{
       e.stopPropagation();e.preventDefault();rh.classList.add('dragging');
-      const startX=e.clientX,startW=pf2.colWidths[colId]||w;
-      const onMove=ev=>{const nw=Math.max(50,startW+(ev.clientX-startX));pf2.colWidths[colId]=nw;th.style.width=nw+'px';tbl.querySelectorAll(`td:nth-child(${visCols.indexOf(colId)+1})`).forEach(td=>td.style.width=nw+'px');};
+      const startX=e.clientX,startW=pf2.colWidths[colId]??w;
+      const onMove=ev=>{const nw=Math.max(0,startW+(ev.clientX-startX));_planSetColW(tbl,visCols,colId,nw);};
       const onUp=()=>{rh.classList.remove('dragging');document.removeEventListener('mousemove',onMove);document.removeEventListener('mouseup',onUp);};
       document.addEventListener('mousemove',onMove);document.addEventListener('mouseup',onUp);
     });
+    rh.title='Trageți pentru lățime (până la 0 = ascunsă) · dublu-click = lățime implicită';
+    rh.addEventListener('dblclick',e=>{e.stopPropagation();e.preventDefault();_planSetColW(tbl,visCols,colId,120);});
     inner.appendChild(rh);
     th.appendChild(inner);
     // Drag reorder
@@ -7600,7 +7641,7 @@ function renderPlanPage(wrap){
   // THEAD — filter row
   const fr=el('tr','plan-filter-row');
   visCols.forEach(colId=>{
-    const th=el('th');th.style.width=(pf2.colWidths[colId]||120)+'px';
+    const th=el('th');th.style.width=((pf2.colWidths[colId]??120))+'px';
     if(FILTERABLE.has(colId)){
       const inp=el('input','plan-col-filter');
       inp.placeholder='...';inp.value=pf2.colFilters[colId]||'';
@@ -7639,6 +7680,7 @@ function renderPlanPage(wrap){
   thead.appendChild(fr);
   tbl.appendChild(thead);
   tbl.appendChild(_buildPlanTbody(wrap));
+  _planApplyCollapsed(tbl,visCols);
   scrollWrap.appendChild(tbl);
   wrap.appendChild(scrollWrap);
   _updatePlanSummary(wrap);
