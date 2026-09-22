@@ -1297,6 +1297,7 @@ const S={
   perfWcOrder:[],    // custom WC display order
   perfLivrari:[],  // raw rows saved to Supabase
   paintIdx:null,
+  masini:null,
   stocklistData:null,
   stocklistIdx:null,
   asmFP:null,
@@ -3526,6 +3527,7 @@ function render(){
   const navItems=[
     {id:'fisiere',label:'Fisiere',dot:true},
     {id:'structura',label:'Structura'},
+    {id:'masini',label:'🏭 Mașini / Echipamente'},
     {group:'Planificare & Urmărire',icon:'📅',children:[
       {id:'orderbook',label:'Order Book'},
       {id:'planificare',label:'Planificare'},
@@ -3694,6 +3696,7 @@ function render(){
   else if(S.tab==='planv2')body.appendChild(renderPlanV2());
   else if(S.tab==='pwc')body.appendChild(renderPwcTab());
   else if(S.tab==='asamblare')body.appendChild(renderAsamblare());
+  else if(S.tab==='masini')body.appendChild(renderMasini());
   else if(S.tab==='normare')body.appendChild(renderNormare());
   else if(S.tab==='dctr')body.appendChild(renderDctrTab());
   else if(S.tab==='performanta')body.appendChild(renderPerformanta());
@@ -10869,6 +10872,362 @@ function renderAsamblare(){
 
   rebuild();
   return page;
+}
+
+const MASINI_SEED=[{"category":"LASER Sheet Cutting","status":"Activ","brand":"TRUMPF","model":"TruLaser 3030","serial":"A0220A1815","year":"2007","notes":"","attrs":{"Laser Type":"CO2","Power (W)":"3200","Bed Lenght":"3000","Bed Width":"1500","Power energy":"73 kVA"},"id":"m001"},{"category":"LASER Sheet Cutting","status":"Activ","brand":"Bodor","model":"P3","serial":"6500051947","year":"2024","notes":"","attrs":{"Laser Type":"Fiber","Power (W)":"12000","Bed Lenght":"3000","Bed Width":"1500","Automation":"Automated Loading and Unloading"},"id":"m002"},{"category":"Compressor","status":"Activ","brand":"Bodor","model":"0.489/1.6","serial":"HXR20234943","year":"","notes":"","attrs":{"Machine Generation":"2024","Pressure Max.":"16 BAR","Weight":"167 Kg"},"id":"m003"},{"category":"Compressor","status":"Activ","brand":"ATLAS COPCO","model":"GA45VSD+","serial":"SERIAL API870464","year":"","notes":"","attrs":{"Machine Generation":"2021","Power (W)":"45000","Pressure Max.":"13 BAR","Weight":"860 Kg"},"id":"m004"},{"category":"Compressor","status":"Rezervă","brand":"ATLAS COPCO","model":"GA75","serial":"AII 462414","year":"","notes":"","attrs":{"Machine Generation":"1997","Power (W)":"75000","Pressure Max.":"7.5 BAR","Weight":"1550 Kg"},"id":"m005"},{"category":"Compressor","status":"Activ","brand":"ATLAS COPCO","model":"GA18VSDS FF","serial":"ITJ828067","year":"","notes":"","attrs":{"Machine Generation":"2024","Power (W)":"18000","Pressure Max.":"13 BAR","Weight":"473 Kg"},"id":"m006"},{"category":"Bending","status":"Activ","brand":"FINN Power","model":"FINN Power E-Brake 100-3100","serial":"M2094","year":"2008","notes":"","attrs":{"Max. bending lenght (mm)":"4","Max bending force (T)":"101.9716213","Programming":"Operator does programming on machine","Working Length":"3100 mm","Weight":"6350 Kg","energy consumption":"11 kW","Stroke Max.":"300 mm"},"id":"m007"},{"category":"Bending","status":"Defect","brand":"FINN Power","model":"FINN Power E-Brake 50-2050 HS TS 1","serial":"M1629","year":"2008","notes":"motherboard","attrs":{"Max. bending lenght (mm)":"3","Max bending force (T)":"50.985810649","Programming":"Operator does programming on machine","Working Length":"2050 mm","Weight":"4750 Kg","energy consumption":"11 kW","Stroke Max.":"290 mm"},"id":"m008"},{"category":"Bending","status":"Activ","brand":"Amada","model":"HFT 170-3","serial":"MTV030034","year":"03.11.2003","notes":"","attrs":{"Max. bending lenght (mm)":"6","Max bending force (T)":"173.35175621","Programming":"Operator does programming on machine","Working Length":"3000 mm","Weight":"11600 Kg","energy consumption":"16.5 kW","Stroke Max.":"200 mm"},"id":"m009"},{"category":"Bending","status":"Defect","brand":"Amada","model":"HFBO 125","serial":"30 H21113","year":"02.11.92","notes":"","attrs":{"Max. bending lenght (mm)":"5","Max bending force (T)":"127.46452662","Programming":"Operator does programming on machine","Working Length":"3000 mm","Weight":"7500 Kg","energy consumption":"11 kW","Stroke Max.":"180 mm"},"id":"m010"},{"category":"Bending","status":"Defect","brand":"Amada","model":"HFE 100-3","serial":"V010924","year":"03.09.2001","notes":"hydraulic pistons","attrs":{"Max. bending lenght (mm)":"5","Max bending force (T)":"101.9716213","Programming":"Operator does programming on machine","Working Length":"3000 mm","Weight":"6750 Kg","energy consumption":"9 kW","Stroke Max.":"200 mm"},"id":"m011"},{"category":"Bending","status":"Activ","brand":"Amada","model":"ITS2 50-20","serial":"B990207","year":"01.02.1999","notes":"","attrs":{"Max. bending lenght (mm)":"3","Max bending force (T)":"50.985810649","Programming":"Operator does programming on machine","Working Length":"2000 mm","Weight":"3450 Kg","energy consumption":"6 kW","Stroke Max.":"100 mm"},"id":"m012"},{"category":"Deburring","status":"Activ","brand":"FEIN","model":"CG15-150BLP","serial":"2023.09.015478","year":"","notes":"","attrs":{"Max.Conveyer Width":"150 mm","Max. parts per Conveyer Width":"1","Info":"polizor electric manual"},"id":"m013"},{"category":"Deburring","status":"Activ","brand":"FEIN","model":"CG15-150BLP","serial":"2023.09.034179","year":"","notes":"","attrs":{"Max.Conveyer Width":"150 mm","Max. parts per Conveyer Width":"1","Info":"polizor electric manual"},"id":"m014"},{"category":"Deburring","status":"Activ","brand":"FEIN","model":"CG15-150BLP","serial":"2023.09.015482","year":"","notes":"","attrs":{"Max.Conveyer Width":"150 mm","Max. parts per Conveyer Width":"1","Info":"polizor electric manual"},"id":"m015"},{"category":"Deburring","status":"Activ","brand":"FEIN","model":"CG15-125BL","serial":"2024.04.006501","year":"","notes":"","attrs":{"Max.Conveyer Width":"125 mm","Max. parts per Conveyer Width":"1","Info":"polizor electric manual"},"id":"m016"},{"category":"Milling - Frezare","status":"Activ","brand":"DN SOLUTION","model":"DNM 6700","serial":"MV0092-002734","year":"07.2022","notes":"","attrs":{"Type":"CNC","Max Part size (LxWxH)":"1300x670x625 mm","Max Part Weight (Kg)":"1300","Weight":"8500 Kg","Energy consumption":"33 kVA"},"id":"m017"},{"category":"Milling - Frezare","status":"Activ","brand":"Hyundai","model":"WIA F500 Plus","serial":"G2093-0333","year":"04.2016","notes":"","attrs":{"Type":"CNC","Max Part size (LxWxH)":"1200x500x785 mm","Max Part Weight (Kg)":"800","Weight":"7500 Kg","Energy consumption":"23 kVA"},"id":"m018"},{"category":"Turning","status":"Activ","brand":"SN400X1750","model":"Romanian model","serial":"78B7506","year":"","notes":"","attrs":{"Type":"Conventional","Max part diameter (mm)":"250","Max part Lenght (mm)":"1750","Energy consumption":"7.5 kW"},"id":"m019"},{"category":"Turning","status":"Activ","brand":"SNA 560X1500","model":"Romanian model","serial":"78A543","year":"","notes":"","attrs":{"Type":"Conventional","Max part diameter (mm)":"400","Max part Lenght (mm)":"1500","Energy consumption":"11 kW"},"id":"m020"},{"category":"Turning","status":"Activ","brand":"HYUNDAI","model":"WIA L210S","serial":"G3135- 4483","year":"08.2015","notes":"","attrs":{"Type":"CNC","Max part diameter (mm)":"Ø 350","Max part Lenght (mm)":"410","Energy consumption":"21 kVA","Weight":"4100 kg"},"id":"m021"},{"category":"Welding","status":"Activ","brand":"FRONIUS","model":"TRANSPULS SYNERGIC 5000","serial":"14-22302","year":"","notes":"","attrs":{"Welding Technology":"MIG Welding - Gas Metal Arc Welding (GMAW)","Automation":"Robot Welding","WELDING MACHINE MIG/MAG":"ABB","TYPE":"IRB 1400 M2000","AMPER":"Year 07.05.2003","CODE":"Energy consumption 4.5KVA","Info":"DOTAT CU","Serial Nr. (2)":"14200659"},"id":"m022"},{"category":"Welding","status":"Activ","brand":"FRONIUS","model":"TRANSSINERGIC 4000","serial":"14-26804","year":"","notes":"","attrs":{"Welding Technology":"MIG Welding - Gas Metal Arc Welding (GMAW)","Automation":"Robot Welding","WELDING MACHINE MIG/MAG":"ABB","TYPE":"IRB 1400 M2000","AMPER":"Year 07.05.2004","CODE":"Energy consumption 8.3KVA","Serial Nr. (2)":"28087626"},"id":"m023"},{"category":"Welding","status":"Activ","brand":"FRONIUS","model":"TRANSPULSINERGIC 4000","serial":"24-15222","year":"","notes":"","attrs":{"Welding Technology":"MIG Welding - Gas Metal Arc Welding (GMAW)","Automation":"Robot Welding","WELDING MACHINE MIG/MAG":"ABB","TYPE":"ROBOTICS  AB","AMPER":"Year 23.11.2000","CODE":"Energy consumption 4.5KVA","Serial Nr. (2)":"21483374"},"id":"m024"},{"category":"Welding","status":"Activ","brand":"FRONIUS","model":"TRANSPULSINERGIC 4000","serial":"24-15232","year":"","notes":"","attrs":{"Welding Technology":"MIG Welding - Gas Metal Arc Welding (GMAW)","Automation":"Robot Welding","WELDING MACHINE MIG/MAG":"ABB","TYPE":"ROBOTICS  AB","AMPER":"Year 28.11.2000","CODE":"Energy consumption 4.5KVA","Serial Nr. (2)":"18322127"},"id":"m025"},{"category":"Welding","status":"Activ","brand":"MOST","model":"FANMIG 280-4N MINOR","serial":"39104","year":"","notes":"","attrs":{"Welding Technology":"MIG Welding - Gas Metal Arc Welding (GMAW)","AMPER":"290A"},"id":"m026"},{"category":"Welding","status":"Activ","brand":"LINCOLN ELECTRIC","model":"SPEEDTEC 320CP","serial":"P1230610715","year":"","notes":"","attrs":{"Welding Technology":"MIG Welding - Gas Metal Arc Welding (GMAW)","AMPER":"320A","CODE":"50393"},"id":"m027"},{"category":"Welding","status":"Activ","brand":"LINCOLN ELECTRIC","model":"POWERTEC 305 C PRO","serial":"P1170401358","year":"","notes":"","attrs":{"Welding Technology":"MIG Welding - Gas Metal Arc Welding (GMAW)","AMPER":"280A","CODE":"50227"},"id":"m028"},{"category":"Welding","status":"Activ","brand":"ESAB","model":"ESABMIG C280","serial":"225-541-4010","year":"","notes":"","attrs":{"Welding Technology":"MIG Welding - Gas Metal Arc Welding (GMAW)","AMPER":"280A"},"id":"m029"},{"category":"Welding","status":"Activ","brand":"FRONIUS","model":"TRANSsTEEL 3000 C PULSE FSC","serial":"32496471","year":"","notes":"","attrs":{"Welding Technology":"MIG Welding - Gas Metal Arc Welding (GMAW)","AMPER":"300A","CODE":"4075227"},"id":"m030"},{"category":"Welding","status":"Activ","brand":"FRONIUS","model":"TRANSSTEEL 4000 PULSE","serial":"32496470","year":"","notes":"","attrs":{"Welding Technology":"MIG Welding - Gas Metal Arc Welding (GMAW)","AMPER":"400A","CODE":"4075228"},"id":"m031"},{"category":"Welding","status":"Activ","brand":"MOST","model":"FANMIG 320 MINOR","serial":"42365","year":"","notes":"","attrs":{"Welding Technology":"MIG Welding - Gas Metal Arc Welding (GMAW)","AMPER":"230A"},"id":"m032"},{"category":"Welding","status":"Activ","brand":"FRONIUS","model":"TPS 400i","serial":"32496481","year":"","notes":"","attrs":{"Welding Technology":"MIG Welding - Gas Metal Arc Welding (GMAW)","AMPER":"400A","CODE":"4075231"},"id":"m033"},{"category":"Welding","status":"Activ","brand":"MOST","model":"FANMIG 320-4N MINOR","serial":"42782","year":"","notes":"","attrs":{"Welding Technology":"MIG Welding - Gas Metal Arc Welding (GMAW)","AMPER":"340A"},"id":"m034"},{"category":"Welding","status":"Activ","brand":"EWM","model":"TAURUS XQ 350C SYNERGIC","serial":"864410","year":"","notes":"","attrs":{"Welding Technology":"MIG Welding - Gas Metal Arc Welding (GMAW)","AMPER":"350A","CODE":"1129"},"id":"m035"},{"category":"Welding","status":"Activ","brand":"MOST","model":"FANMIG 320-4N MINOR","serial":"42415","year":"","notes":"","attrs":{"Welding Technology":"MIG Welding - Gas Metal Arc Welding (GMAW)","AMPER":"340A"},"id":"m036"},{"category":"Welding","status":"Activ","brand":"LINCOLN ELECTRIC","model":"POWERTEC I450C ADVANCED","serial":"P1221003406","year":"","notes":"","attrs":{"Welding Technology":"MIG Welding - Gas Metal Arc Welding (GMAW)","AMPER":"450A","CODE":"50559"},"id":"m037"},{"category":"Welding","status":"Activ","brand":"LINCOLN ELECTRIC","model":"POWERTEC I380 ADVANCED","serial":"P1221100812","year":"","notes":"","attrs":{"Welding Technology":"MIG Welding - Gas Metal Arc Welding (GMAW)","AMPER":"380A","CODE":"50556"},"id":"m038"},{"category":"Welding","status":"Activ","brand":"LINCOLN ELECTRIC","model":"POWERTEC  305C PRO","serial":"P1170401361","year":"","notes":"","attrs":{"Welding Technology":"MIG Welding - Gas Metal Arc Welding (GMAW)","AMPER":"280A","CODE":"50227"},"id":"m039"},{"category":"Welding","status":"Activ","brand":"FRONIUS","model":"TRANSsTEEL 3000 C PULSE FSC","serial":"32496479","year":"","notes":"","attrs":{"Welding Technology":"MIG Welding - Gas Metal Arc Welding (GMAW)","AMPER":"300A","CODE":"4075227"},"id":"m040"},{"category":"Welding","status":"Activ","brand":"LINCOLN ELECTRIC","model":"SPEEDTEC 320CP","serial":"P1230610740","year":"","notes":"","attrs":{"Welding Technology":"MIG Welding - Gas Metal Arc Welding (GMAW)","AMPER":"320A","CODE":"50393"},"id":"m041"},{"category":"Welding","status":"Activ","brand":"KOLARK","model":"PULSE MX350C","serial":"113036","year":"","notes":"","attrs":{"Welding Technology":"MIG Welding - Gas Metal Arc Welding (GMAW)","AMPER":"325A"},"id":"m042"},{"category":"Welding","status":"Activ","brand":"EWM","model":"TAURUS XQ 350C SYNERGIC","serial":"833725","year":"","notes":"","attrs":{"Welding Technology":"MIG Welding - Gas Metal Arc Welding (GMAW)","AMPER":"350A","CODE":"1128"},"id":"m043"},{"category":"Welding","status":"Activ","brand":"LINCOLN ELECTRIC","model":"INVERTEC 300 TPX","serial":"P122004380","year":"","notes":"","attrs":{"Welding Technology":"TIG Welding - Gas Tungsten Arc Welding (GTAW)","AMPER":"250","CODE":"52139"},"id":"m044"},{"category":"Welding","status":"Activ","brand":"LINCOLN ELECTRIC","model":"INVERTEC 300 TPX","serial":"P1230604954","year":"","notes":"","attrs":{"Welding Technology":"TIG Welding - Gas Tungsten Arc Welding (GTAW)","AMPER":"250","CODE":"52139"},"id":"m045"},{"category":"Welding","status":"Activ","brand":"LINCOLN ELECTRIC","model":"INVERTEC 300 TPX","serial":"P1170406694","year":"","notes":"","attrs":{"Welding Technology":"TIG Welding - Gas Tungsten Arc Welding (GTAW)","AMPER":"300A","CODE":"52109"},"id":"m046"},{"category":"Welding","status":"Activ","brand":"ESAB","model":"ORIGO TA23","serial":"802-807-5818","year":"","notes":"","attrs":{"Welding Technology":"TIG Welding - Gas Tungsten Arc Welding (GTAW)","AMPER":"300A"},"id":"m047"},{"category":"Welding","status":"Activ","brand":"LINCOLN ELECTRIC","model":"INVERTEC 300 TPX","serial":"","year":"","notes":"","attrs":{"Welding Technology":"TIG Welding - Gas Tungsten Arc Welding (GTAW)","AMPER":"300A"},"id":"m048"},{"category":"Welding","status":"Activ","brand":"KOLARC","model":"TX270","serial":"185212","year":"","notes":"","attrs":{"Welding Technology":"TIG Welding - Gas Tungsten Arc Welding (GTAW)","AMPER":"270A"},"id":"m049"},{"category":"Welding","status":"Activ","brand":"LORCH","model":"CONTROL PRO T 250DC","serial":"","year":"","notes":"","attrs":{"Welding Technology":"TIG Welding - Gas Tungsten Arc Welding (GTAW)","AMPER":"250"},"id":"m050"},{"category":"Welding","status":"Activ","brand":"Model","model":"INVERTEC 300 TPX","serial":"P1280604939","year":"","notes":"","attrs":{"Welding Technology":"TIG Welding - Gas Tungsten Arc Welding (GTAW)","WELDING MACHINE MIG/MAG":"LINCOLN ELECTRIC","AMPER":"270A","CODE":"52139","Info":"Year"},"id":"m051"},{"category":"Welding","status":"Activ","brand":"MOD HW-2000","model":"FIBER LASER WELDING MACHINE","serial":"SER HXDW221002","year":"","notes":"","attrs":{"WELDING MACHINE MIG/MAG":"HGTECH","AMPER":"Power 2000 W","Info":"10.2022"},"id":"m052"},{"category":"Welding","status":"Activ","brand":"IGCL-HC","model":"FIBER LAER SAMBLASTING MACHINE","serial":"24174","year":"","notes":"","attrs":{"WELDING MACHINE MIG/MAG":"IGOLDENLASER","AMPER":"Power 1500 W","Info":"27.04.2024"},"id":"m053"},{"category":"Welding","status":"Activ","brand":"ARNHOLD BOLZENSCHWEISSEN","model":"AS 1266","serial":"2240004","year":"","notes":"","attrs":{"AMPER":"15 KA","Info":"Stud Welding"},"id":"m054"},{"category":"Welding","status":"Activ","brand":"BSK + BTV GMGH","model":"CDP-66M","serial":"193873","year":"","notes":"","attrs":{"AMPER":"16 KA","Info":"Stud Welding"},"id":"m055"},{"category":"Welding","status":"Activ","brand":"NELSON","model":"1500I","serial":"10160530","year":"","notes":"","attrs":{"AMPER":"50 A","Info":"Stud Welding"},"id":"m056"},{"category":"Sawing / Sawing 3D","status":"Activ","brand":"JAESPA","model":"W260DG","serial":"19927 99","year":"","notes":"","attrs":{"Max. loading length - lungime de incarcare":"3000 mm","Max. sawing length - lungime remorcare":"60000 mm","Max. unloading length - lungime incarcare":"6000 mm","Max. sawing round - rotund":"250 mm","Max. sawing square - patrat":"250 mm","Max. width sawing rectangle - dreptunghi":"250 mm"},"id":"m057"},{"category":"Thread Tapping","status":"Activ","brand":"","model":"MOSQUITO","serial":"2","year":"2020","notes":"","attrs":{"System Type":"Manual threading","kW":"0.55","Diameter":"M5 - M12"},"id":"m058"},{"category":"Thread Tapping","status":"Activ","brand":"","model":"DUMETA D-JS-16A","serial":"011-18071123","year":"2018","notes":"","attrs":{"System Type":"Manual threading","kW":"AIR","Diameter":"M5 - M16"},"id":"m059"},{"category":"Thread Tapping","status":"Activ","brand":"","model":"MOSQUITO","serial":"2","year":"2021","notes":"","attrs":{"System Type":"Manual threading","kW":"0.55","Diameter":"M5 - M12"},"id":"m060"},{"category":"Rolling","status":"Activ","brand":"FAMAR","model":"Q413-10/6","serial":"2579","year":"2003","notes":"","attrs":{"Max. Lenght (mm)":"2000","Max. Diameter (mm)":"1000","Max. Thickness (mm)":"8"},"id":"m061"},{"category":"Rolling","status":"Activ","brand":"ARLO","model":"RM1550X 140","serial":"59337","year":"2019","notes":"","attrs":{"Max. Lenght (mm)":"2000","Max. Diameter (mm)":"1500","Max. Thickness (mm)":"8","Energy consumption":"2.2 kW"},"id":"m062"},{"category":"Punching","status":"Activ","brand":"AMADA","model":"AE 2510 NT","serial":"120","year":"2013","notes":"","attrs":{"Dimensions Max.":"2500X1270","Thickness Max.":"3 mm"},"id":"m063"},{"category":"SUDURA IN PUNCTE","status":"Activ","brand":"NIMAK","model":"","serial":"","year":"","notes":"","attrs":{"Type":"PMP6-2/100","Info":"fixed equipment","PRESIUNE":"6  BAR","TENSIUNE MIN":"100 kVA","TENSIUNE MAX":"318 kVA"},"id":"m064"},{"category":"SUDURA IN PUNCTE","status":"Activ","brand":"NIMAK","model":"TE90MARK ii","serial":"","year":"","notes":"","attrs":{"Info":"mobile equipment"},"id":"m065"},{"category":"GUILLOTINE","status":"Scos din uz","brand":"AMADA","model":"PROMECAM","serial":"C990213","year":"DATA 02.1999","notes":"","attrs":{"Type":"GS 1230","STROKE MAX.":"CURSA 190MM","OPENING":"LATIME 3000","THICKNESS MAX.":"GROS 8MM"},"id":"m066"}];
+/* ═══════════════════════════════════════════════════════════════
+   MAȘINI / ECHIPAMENTE — inventar echipamente de producție
+   Date partajate în Supabase: data-masini.json
+═══════════════════════════════════════════════════════════════ */
+const MASINI_STATUS=[
+  {v:'Activ',       c:'#15803d',bg:'#dcfce7',bd:'#86efac'},
+  {v:'Rezervă',     c:'#0369a1',bg:'#e0f2fe',bd:'#7dd3fc'},
+  {v:'Defect',      c:'#b45309',bg:'#fef3c7',bd:'#fcd34d'},
+  {v:'Scos din uz', c:'#64748b',bg:'#f1f5f9',bd:'#cbd5e1'},
+];
+const _mStatus=v=>MASINI_STATUS.find(s=>s.v===v)||MASINI_STATUS[0];
+
+async function saveMasini(){
+  if(!S.sbCfg)return;
+  try{await sbUpload(S.sbCfg,'data-masini.json',{items:S.masini||[],ts:Date.now()});}
+  catch(e){console.warn('saveMasini',e);showToast('Eroare la salvare: '+e.message,'err',3500);}
+}
+async function loadMasini(){
+  if(!S.sbCfg)return;
+  try{
+    const d=await sbDownload(S.sbCfg,'data-masini.json');
+    if(d&&Array.isArray(d.items)){S.masini=d.items;return true;}
+  }catch(e){console.warn('loadMasini',e);}
+  return false;
+}
+const _mNewId=()=>'m'+Date.now().toString(36)+Math.random().toString(36).slice(2,6);
+
+// Parse the sectioned "Machines" sheet: title row, header row, data rows, blank row
+function parseMasiniSheet(aoa){
+  const s=v=>{if(v==null)return'';if(typeof v==='number'&&Number.isInteger(v))return String(v);return String(v).trim();};
+  const statusOf=v=>{
+    const t=s(v).toLowerCase();
+    if(!t)return['Activ',''];
+    if(t.startsWith('reserve')||t.startsWith('rezerv'))return['Rezervă',''];
+    if(t.startsWith('faulty')||t.startsWith('defect'))return['Defect',s(v).replace(/^(faulty|defect)/i,'').replace(/^[\s-]+|[\s-]+$/g,'')];
+    if(t.includes('out of use')||t.includes('scos'))return['Scos din uz',''];
+    return['Activ',s(v)];
+  };
+  const out=[];let cat=null,hdr=null;
+  for(let i=0;i<aoa.length;i++){
+    const vals=(aoa[i]||[]).map(s);
+    const ne=vals.slice(1).filter(Boolean);
+    if(!vals.some(Boolean)){cat=null;hdr=null;continue;}
+    if(cat===null&&ne.length===1&&vals[1]){
+      cat=vals[1];i++;
+      const seen={};
+      hdr=((aoa[i]||[]).map(s)).map(h=>{if(!h)return h;if(seen[h]){seen[h]++;return h+' ('+seen[h]+')';}seen[h]=1;return h;});
+      continue;
+    }
+    if(!hdr)continue;
+    const [st,note]=statusOf(aoa[i][0]);
+    const rec={id:_mNewId(),category:cat,status:st,brand:'',model:'',serial:'',year:'',notes:note,attrs:{}};
+    const low={};hdr.forEach((h,j)=>{if(h&&low[h.toLowerCase()]==null)low[h.toLowerCase()]=j;});
+    const take=names=>{for(const n of names){const j=low[n];if(j!=null&&vals[j])return j;}return null;};
+    let jb=take(['machine brand','welding machine mig/mag']);
+    let jm=take(['machine model','model']);
+    if(jm==null&&low['welding machine mig/mag']!=null)jm=take(['type']);
+    const js=take(['serial nr.','serial nr','serial']);
+    const jy=take(['year']);
+    const used=new Set();
+    [['brand',jb],['model',jm],['serial',js],['year',jy]].forEach(([k,j])=>{if(j!=null){rec[k]=vals[j];used.add(j);}});
+    hdr.forEach((h,j)=>{
+      if(j===0||used.has(j)||!vals[j])return;
+      const t=vals[j].replace(/^[\s-]+|[\s-]+$/g,'').toLowerCase();
+      if(t==='none'||t==='other'||t==='none - manual welding')return;
+      rec.attrs[h||'Info']=vals[j];
+    });
+    if(rec.brand||rec.model||Object.keys(rec.attrs).length)out.push(rec);
+  }
+  return out;
+}
+
+function renderMasini(){
+  const isAdmin=S.session?.role==='admin';
+  const page=dv('');page.style.cssText='display:flex;flex-direction:column;height:100%;overflow:hidden;background:#f8f9fb';
+  if(!S.masiniF)S.masiniF={q:'',cat:'all',status:'all',collapsed:{}};
+  const F=S.masiniF;
+
+  // ── Toolbar ──
+  const tb=dv('');tb.style.cssText='display:flex;align-items:center;gap:8px;padding:10px 14px;background:#fff;border-bottom:2px solid var(--border);flex-wrap:wrap;flex-shrink:0';
+  const title=dv('');title.innerHTML='<b style="font-size:14px;color:#1e3a5f">🏭 Mașini / Echipamente</b>';
+  tb.appendChild(title);
+  const q=el('input');q.type='text';q.placeholder='Caută marcă, model, serie...';q.value=F.q;
+  q.style.cssText='height:32px;padding:0 10px;border:1.5px solid var(--border);border-radius:5px;font-size:12px;width:230px;margin-left:10px';
+  q.addEventListener('input',()=>{F.q=q.value;renderList();});
+  tb.appendChild(q);
+  const catSel=el('select');catSel.style.cssText='height:32px;padding:0 8px;border:1.5px solid var(--border);border-radius:5px;font-size:12px';
+  const stSel=el('select');stSel.style.cssText=catSel.style.cssText;
+  stSel.innerHTML='<option value="all">Toate statusurile</option>'+MASINI_STATUS.map(s=>`<option value="${s.v}">${s.v}</option>`).join('');
+  stSel.value=F.status;
+  catSel.addEventListener('change',()=>{F.cat=catSel.value;renderList();});
+  stSel.addEventListener('change',()=>{F.status=stSel.value;renderList();});
+  tb.appendChild(catSel);tb.appendChild(stSel);
+
+  const btnCss=(c,bg)=>`height:32px;padding:0 12px;border:1.5px solid ${c};border-radius:5px;background:${bg};color:${c};cursor:pointer;font-size:12px;font-weight:700`;
+  const right=dv('');right.style.cssText='margin-left:auto;display:flex;gap:6px;flex-wrap:wrap';
+  if(isAdmin){
+    const addB=el('button');addB.textContent='＋ Mașină nouă';addB.style.cssText=btnCss('#15803d','#f0fdf4');
+    addB.addEventListener('click',()=>openMasinaEditor(null,renderList));
+    right.appendChild(addB);
+    const impB=el('button');impB.textContent='⬆ Import Excel';impB.style.cssText=btnCss('#0369a1','#eff6ff');
+    const impF=el('input');impF.type='file';impF.accept='.xlsx,.xls';impF.style.display='none';
+    impB.addEventListener('click',()=>impF.click());
+    impF.addEventListener('change',async()=>{
+      const f=impF.files[0];impF.value='';if(!f)return;
+      try{
+        const wb=XLSX.read(new Uint8Array(await f.arrayBuffer()),{type:'array'});
+        const ws=wb.Sheets['Machines']||wb.Sheets[wb.SheetNames[0]];
+        const aoa=XLSX.utils.sheet_to_json(ws,{header:1,defval:null,raw:true});
+        const recs=parseMasiniSheet(aoa);
+        if(!recs.length){showToast('Nicio mașină găsită în fișier','err',3000);return;}
+        const cur=S.masini||[];
+        const key=r=>(r.category+'|'+r.brand+'|'+r.model+'|'+r.serial).toLowerCase();
+        const have=new Set(cur.map(key));
+        const fresh=recs.filter(r=>!have.has(key(r)));
+        const mode=cur.length?(confirm(`${recs.length} mașini în fișier, ${fresh.length} noi.\n\nOK = adaugă doar cele noi\nAnulează = înlocuiește tot inventarul`)?'merge':'replace'):'replace';
+        if(mode==='replace'&&cur.length&&!confirm('Sigur înlocuiești tot inventarul existent ('+cur.length+' mașini)?'))return;
+        S.masini=mode==='merge'?cur.concat(fresh):recs;
+        await saveMasini();
+        showToast(`✓ ${mode==='merge'?fresh.length+' mașini adăugate':recs.length+' mașini importate'}`,'ok',3000);
+        renderList();
+      }catch(e){showToast('Import eșuat: '+e.message,'err',4000);}
+    });
+    right.appendChild(impB);right.appendChild(impF);
+  }
+  const xlsB=el('button');xlsB.textContent='⬇ Excel';xlsB.style.cssText=btnCss('#475569','#fff');
+  xlsB.addEventListener('click',()=>exportMasini());
+  right.appendChild(xlsB);
+  tb.appendChild(right);
+  page.appendChild(tb);
+
+  const summary=dv('');summary.style.cssText='padding:6px 14px;font-size:11px;color:#475569;background:#fff;border-bottom:1px solid var(--border);display:flex;gap:14px;flex-wrap:wrap;flex-shrink:0';
+  page.appendChild(summary);
+  const list=dv('');list.style.cssText='flex:1;overflow:auto;padding:12px 14px';
+  page.appendChild(list);
+
+  function renderList(){
+    const all=S.masini||[];
+    const cats=[...new Set(all.map(m=>m.category||'Fără categorie'))];
+    catSel.innerHTML='<option value="all">Toate categoriile</option>'+cats.map(c=>`<option value="${c.replace(/"/g,'&quot;')}">${c}</option>`).join('');
+    catSel.value=cats.includes(F.cat)?F.cat:'all';if(catSel.value==='all')F.cat='all';
+    const qq=F.q.trim().toLowerCase();
+    const rows=all.filter(m=>{
+      if(F.cat!=='all'&&(m.category||'Fără categorie')!==F.cat)return false;
+      if(F.status!=='all'&&m.status!==F.status)return false;
+      if(qq){
+        const hay=[m.category,m.brand,m.model,m.serial,m.year,m.notes,...Object.entries(m.attrs||{}).flat()].join(' ').toLowerCase();
+        if(!hay.includes(qq))return false;
+      }
+      return true;
+    });
+    summary.innerHTML=`<span><b>${all.length}</b> echipamente</span>`+
+      MASINI_STATUS.map(s=>{const n=all.filter(m=>m.status===s.v).length;return n?`<span style="color:${s.c}"><b>${n}</b> ${s.v}</span>`:'';}).join('')+
+      (rows.length!==all.length?`<span style="color:#1d4ed8">Filtrat: <b>${rows.length}</b></span>`:'');
+
+    list.innerHTML='';
+    if(!all.length){
+      list.innerHTML=`<div style="padding:40px;text-align:center;color:#94a3b8;font-size:13px"><div style="font-size:40px;margin-bottom:10px">🏭</div>Niciun echipament înregistrat.${isAdmin?'<br>Folosiți <b>⬆ Import Excel</b> sau <b>＋ Mașină nouă</b>.':''}</div>`;
+      return;
+    }
+    const groups=new Map();
+    rows.forEach(m=>{const c=m.category||'Fără categorie';if(!groups.has(c))groups.set(c,[]);groups.get(c).push(m);});
+    groups.forEach((items,cat)=>{
+      const box=dv('');box.style.cssText='background:#fff;border:1px solid var(--border);border-radius:9px;margin-bottom:12px;overflow:hidden';
+      const collapsed=!!F.collapsed[cat];
+      const gh=dv('');gh.style.cssText='display:flex;align-items:center;gap:10px;padding:9px 14px;background:#1e3a5f;color:#fff;cursor:pointer;user-select:none';
+      gh.innerHTML=`<span style="font-size:10px">${collapsed?'▶':'▼'}</span><b style="font-size:13px">${cat}</b><span style="font-size:11px;opacity:.8">${items.length} buc</span>`;
+      gh.addEventListener('click',()=>{F.collapsed[cat]=!collapsed;renderList();});
+      box.appendChild(gh);
+      if(!collapsed){
+        const tw=dv('');tw.style.cssText='overflow-x:auto';
+        const tbl=el('table');tbl.style.cssText='width:100%;border-collapse:collapse;font-size:12px';
+        const th=el('thead');
+        th.innerHTML='<tr style="background:#f1f5f9;color:#475569">'+
+          ['Marcă','Model','Nr. serie','An','Status','Caracteristici',''].map((h,i)=>
+            `<th style="padding:7px 10px;text-align:left;font-size:9.5px;font-weight:800;text-transform:uppercase;letter-spacing:.04em;border-bottom:1px solid var(--border);${i===6?'width:90px':''}">${h}</th>`).join('')+'</tr>';
+        tbl.appendChild(th);
+        const tbody=el('tbody');
+        items.forEach((m,i)=>{
+          const st=_mStatus(m.status);
+          const tr=el('tr');tr.style.cssText=`border-bottom:1px solid #f1f5f9;background:${i%2?'#fafbfc':'#fff'}${m.status==='Scos din uz'?';opacity:.6':''}`;
+          const attrs=Object.entries(m.attrs||{});
+          tr.innerHTML=
+            `<td style="padding:7px 10px;font-weight:800;color:#1e3a5f;white-space:nowrap">${m.brand||'—'}</td>`+
+            `<td style="padding:7px 10px;font-weight:600">${m.model||'—'}</td>`+
+            `<td style="padding:7px 10px;font-family:monospace;font-size:11px;color:#475569">${m.serial||'—'}</td>`+
+            `<td style="padding:7px 10px;white-space:nowrap">${m.year||'—'}</td>`+
+            `<td style="padding:7px 10px;white-space:nowrap"><span style="display:inline-block;padding:2px 9px;border-radius:10px;font-size:10.5px;font-weight:800;background:${st.bg};color:${st.c};border:1px solid ${st.bd}">${m.status}</span>`+
+              (m.notes?`<div style="font-size:10px;color:#b45309;margin-top:2px">${m.notes}</div>`:'')+`</td>`+
+            `<td style="padding:6px 10px">${attrs.length?attrs.map(([k,v])=>`<span style="display:inline-block;margin:1px 3px 1px 0;padding:1px 7px;border-radius:9px;font-size:10px;background:#f8fafc;border:1px solid #e2e8f0"><span style="color:#94a3b8">${k}:</span> <b style="color:#334155">${v}</b></span>`).join(''):'<span style="color:#cbd5e1">—</span>'}</td>`;
+          const tdA=el('td');tdA.style.cssText='padding:6px 10px;white-space:nowrap;text-align:right';
+          if(isAdmin){
+            const eB=el('button');eB.textContent='✎';eB.title='Modifică';
+            eB.style.cssText='width:28px;height:26px;border:1px solid #93c5fd;border-radius:4px;background:#eff6ff;color:#1d4ed8;cursor:pointer;font-size:12px;margin-right:4px';
+            eB.addEventListener('click',()=>openMasinaEditor(m,renderList));
+            const cB=el('button');cB.textContent='⧉';cB.title='Duplică';
+            cB.style.cssText='width:28px;height:26px;border:1px solid #cbd5e1;border-radius:4px;background:#fff;color:#475569;cursor:pointer;font-size:12px;margin-right:4px';
+            cB.addEventListener('click',()=>{
+              const copy=JSON.parse(JSON.stringify(m));copy.id=_mNewId();copy.serial='';
+              openMasinaEditor(copy,renderList,true);
+            });
+            const dB=el('button');dB.textContent='🗑';dB.title='Șterge';
+            dB.style.cssText='width:28px;height:26px;border:1px solid #fca5a5;border-radius:4px;background:#fef2f2;color:#dc2626;cursor:pointer;font-size:11px';
+            dB.addEventListener('click',async()=>{
+              if(!confirm(`Ștergi ${m.brand} ${m.model}${m.serial?' ('+m.serial+')':''}?`))return;
+              S.masini=(S.masini||[]).filter(x=>x.id!==m.id);await saveMasini();renderList();
+            });
+            tdA.appendChild(eB);tdA.appendChild(cB);tdA.appendChild(dB);
+          }
+          tr.appendChild(tdA);
+          tbody.appendChild(tr);
+        });
+        tbl.appendChild(tbody);tw.appendChild(tbl);box.appendChild(tw);
+      }
+      list.appendChild(box);
+    });
+    if(!rows.length)list.innerHTML='<div style="padding:30px;text-align:center;color:#94a3b8">Niciun echipament corespunde filtrelor.</div>';
+  }
+
+  list.innerHTML='<div style="padding:30px;text-align:center;color:#94a3b8">⏳ Se încarcă...</div>';
+  (async()=>{
+    if(!S._masiniLoaded){
+      S._masiniLoaded=true;
+      const ok=await loadMasini();
+      // First run: seed from the initial inventory (Masini.xlsx) and publish it
+      if(!ok&&!(S.masini&&S.masini.length)){
+        S.masini=JSON.parse(JSON.stringify(MASINI_SEED));
+        if(isAdmin)saveMasini();
+      }
+    }
+    renderList();
+  })();
+  return page;
+}
+
+function openMasinaEditor(m,onSaved,isNew){
+  const creating=!m||isNew;
+  const rec=m?JSON.parse(JSON.stringify(m)):{id:_mNewId(),category:S.masiniF?.cat!=='all'?S.masiniF.cat:'',status:'Activ',brand:'',model:'',serial:'',year:'',notes:'',attrs:{}};
+  // Suggest the attribute fields used by other machines in the same category
+  const suggestFor=cat=>{
+    const keys=new Set();
+    (S.masini||[]).filter(x=>x.category===cat).forEach(x=>Object.keys(x.attrs||{}).forEach(k=>keys.add(k)));
+    return [...keys];
+  };
+  document.getElementById('masina-ed')?.remove();
+  const ov=dv('');ov.id='masina-ed';
+  ov.style.cssText='position:fixed;inset:0;background:rgba(0,0,0,.5);z-index:9400;display:flex;align-items:center;justify-content:center;padding:14px';
+  const md=dv('');md.style.cssText='background:#fff;border-radius:12px;box-shadow:0 24px 70px rgba(0,0,0,.35);width:min(720px,96vw);max-height:92vh;display:flex;flex-direction:column;overflow:hidden';
+  const hd=dv('');hd.style.cssText='background:#1e3a5f;color:#fff;padding:12px 18px;font-weight:800;font-size:14px;display:flex;justify-content:space-between;align-items:center';
+  hd.innerHTML=`<span>${creating?'＋ Echipament nou':'✎ Modifică echipament'}</span>`;
+  const x=el('button');x.textContent='✕';x.style.cssText='border:none;background:rgba(255,255,255,.2);color:#fff;width:28px;height:28px;border-radius:4px;cursor:pointer';
+  x.addEventListener('click',()=>ov.remove());hd.appendChild(x);md.appendChild(hd);
+
+  const body=dv('');body.style.cssText='flex:1;overflow-y:auto;padding:16px 20px';
+  const inCss='width:100%;height:34px;padding:0 10px;border:1.5px solid var(--border);border-radius:5px;font-size:12.5px;box-sizing:border-box';
+  const lbl=t=>{const d=dv('');d.style.cssText='font-size:10px;font-weight:800;color:#64748b;text-transform:uppercase;letter-spacing:.04em;margin-bottom:4px';d.textContent=t;return d;};
+  const grid=dv('');grid.style.cssText='display:grid;grid-template-columns:1fr 1fr;gap:12px 14px';
+  const field=(label,node,full)=>{const w=dv('');if(full)w.style.gridColumn='1 / -1';w.appendChild(lbl(label));w.appendChild(node);grid.appendChild(w);return node;};
+
+  const cats=[...new Set((S.masini||[]).map(z=>z.category).filter(Boolean))];
+  const dl=el('datalist');dl.id='masini-cats';dl.innerHTML=cats.map(c=>`<option value="${c.replace(/"/g,'&quot;')}">`).join('');
+  body.appendChild(dl);
+  const iCat=el('input');iCat.setAttribute('list','masini-cats');iCat.value=rec.category||'';iCat.placeholder='ex: Bending, Welding...';iCat.style.cssText=inCss;
+  field('Categorie *',iCat);
+  const iSt=el('select');iSt.style.cssText=inCss;iSt.innerHTML=MASINI_STATUS.map(s=>`<option>${s.v}</option>`).join('');iSt.value=rec.status||'Activ';
+  field('Status',iSt);
+  const iBr=el('input');iBr.value=rec.brand;iBr.style.cssText=inCss;field('Marcă',iBr);
+  const iMo=el('input');iMo.value=rec.model;iMo.style.cssText=inCss;field('Model',iMo);
+  const iSe=el('input');iSe.value=rec.serial;iSe.style.cssText=inCss;field('Nr. serie',iSe);
+  const iYe=el('input');iYe.value=rec.year;iYe.style.cssText=inCss;iYe.placeholder='ex: 2019';field('An fabricație',iYe);
+  const iNo=el('textarea');iNo.value=rec.notes||'';iNo.rows=2;iNo.style.cssText=inCss.replace('height:34px','min-height:50px;padding:8px 10px')+';resize:vertical;font-family:inherit';
+  iNo.placeholder='Observații, defecțiune, locație...';
+  field('Observații',iNo,true);
+  body.appendChild(grid);
+
+  // ── Technical characteristics (dynamic key/value list) ──
+  const ah=dv('');ah.style.cssText='display:flex;justify-content:space-between;align-items:center;margin:18px 0 8px';
+  ah.appendChild(lbl('Caracteristici tehnice'));
+  const addA=el('button');addA.textContent='＋ Adaugă câmp';
+  addA.style.cssText='height:26px;padding:0 10px;border:1px solid #93c5fd;border-radius:4px;background:#eff6ff;color:#1d4ed8;cursor:pointer;font-size:11px;font-weight:700';
+  ah.appendChild(addA);body.appendChild(ah);
+  const aList=dv('');body.appendChild(aList);
+  const attrRows=[];
+  const addAttrRow=(k,v)=>{
+    const r=dv('');r.style.cssText='display:flex;gap:6px;margin-bottom:6px';
+    const ik=el('input');ik.value=k||'';ik.placeholder='Caracteristică (ex: Putere)';ik.style.cssText=inCss+';flex:1';
+    const iv=el('input');iv.value=v||'';iv.placeholder='Valoare (ex: 12 kW)';iv.style.cssText=inCss+';flex:1';
+    const rm=el('button');rm.textContent='✕';rm.style.cssText='width:34px;height:34px;border:1px solid #fca5a5;border-radius:5px;background:#fef2f2;color:#dc2626;cursor:pointer;flex-shrink:0';
+    const entry={ik,iv,r};attrRows.push(entry);
+    rm.addEventListener('click',()=>{r.remove();attrRows.splice(attrRows.indexOf(entry),1);});
+    r.appendChild(ik);r.appendChild(iv);r.appendChild(rm);aList.appendChild(r);
+    return entry;
+  };
+  Object.entries(rec.attrs||{}).forEach(([k,v])=>addAttrRow(k,v));
+  addA.addEventListener('click',()=>addAttrRow('','').ik.focus());
+  // Offer the category's usual fields for a new machine
+  const sugBox=dv('');sugBox.style.cssText='margin-top:4px;display:flex;flex-wrap:wrap;gap:4px';
+  body.appendChild(sugBox);
+  const refreshSug=()=>{
+    sugBox.innerHTML='';
+    const have=new Set(attrRows.map(a=>a.ik.value.trim()));
+    const sug=suggestFor(iCat.value.trim()).filter(k=>!have.has(k));
+    if(!sug.length)return;
+    const t=sp('');t.textContent='Câmpuri uzuale:';t.style.cssText='font-size:10px;color:#94a3b8;align-self:center;margin-right:2px';sugBox.appendChild(t);
+    sug.forEach(k=>{
+      const b=el('button');b.textContent='+ '+k;
+      b.style.cssText='height:22px;padding:0 8px;border:1px dashed #94a3b8;border-radius:11px;background:#fff;color:#475569;cursor:pointer;font-size:10px';
+      b.addEventListener('click',()=>{addAttrRow(k,'').iv.focus();refreshSug();});
+      sugBox.appendChild(b);
+    });
+  };
+  iCat.addEventListener('change',refreshSug);iCat.addEventListener('input',refreshSug);
+  refreshSug();
+  md.appendChild(body);
+
+  const ft=dv('');ft.style.cssText='padding:10px 20px;border-top:1px solid var(--border);display:flex;gap:8px;justify-content:flex-end';
+  const cancel=el('button');cancel.textContent='Anulează';
+  cancel.style.cssText='height:34px;padding:0 16px;border:1px solid var(--border);border-radius:5px;background:#fff;cursor:pointer;font-size:12px';
+  cancel.addEventListener('click',()=>ov.remove());
+  const save=el('button');save.textContent='✓ Salvează';
+  save.style.cssText='height:34px;padding:0 20px;border:none;border-radius:5px;background:#15803d;color:#fff;cursor:pointer;font-size:12.5px;font-weight:800';
+  save.addEventListener('click',async()=>{
+    const cat=iCat.value.trim();
+    if(!cat){iCat.style.borderColor='#dc2626';iCat.focus();showToast('Categoria este obligatorie','err',2500);return;}
+    if(!iBr.value.trim()&&!iMo.value.trim()){iBr.style.borderColor='#dc2626';showToast('Completați marca sau modelul','err',2500);return;}
+    const attrs={};
+    attrRows.forEach(a=>{const k=a.ik.value.trim(),v=a.iv.value.trim();if(k&&v)attrs[k]=v;});
+    const out={...rec,category:cat,status:iSt.value,brand:iBr.value.trim(),model:iMo.value.trim(),
+      serial:iSe.value.trim(),year:iYe.value.trim(),notes:iNo.value.trim(),attrs,
+      updatedAt:Date.now(),updatedBy:S.session?.name||S.session?.user||''};
+    const arr=S.masini||(S.masini=[]);
+    const i=arr.findIndex(z=>z.id===out.id);
+    if(i>=0)arr[i]=out;else arr.push(out);
+    save.disabled=true;save.textContent='⏳...';
+    await saveMasini();
+    ov.remove();showToast('✓ Salvat','ok',1800);onSaved&&onSaved();
+  });
+  ft.appendChild(cancel);ft.appendChild(save);md.appendChild(ft);
+  ov.appendChild(md);ov.addEventListener('click',e=>{if(e.target===ov)ov.remove();});
+  document.body.appendChild(ov);
+  setTimeout(()=>(creating?iCat:iBr).focus(),50);
+}
+
+function exportMasini(){
+  const all=S.masini||[];
+  if(!all.length){showToast('Nimic de exportat','err',2000);return;}
+  const attrKeys=[...new Set(all.flatMap(m=>Object.keys(m.attrs||{})))];
+  const data=[['Categorie','Marcă','Model','Nr. serie','An','Status','Observații',...attrKeys]];
+  all.forEach(m=>data.push([m.category,m.brand,m.model,m.serial,m.year,m.status,m.notes||'',...attrKeys.map(k=>m.attrs?.[k]||'')]));
+  const wb=XLSX.utils.book_new();const ws=XLSX.utils.aoa_to_sheet(data);
+  ws['!cols']=[{wch:22},{wch:18},{wch:26},{wch:18},{wch:10},{wch:12},{wch:28},...attrKeys.map(()=>({wch:18}))];
+  XLSX.utils.book_append_sheet(wb,ws,'Masini');
+  XLSX.writeFile(wb,'Masini_Echipamente_'+new Date().toISOString().slice(0,10)+'.xlsx');
 }
 
 function renderNormare(){
