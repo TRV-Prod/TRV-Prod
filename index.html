@@ -4219,7 +4219,114 @@ function renderStructura(){
   return cnt;
 }
 
-/* ── STOCURI TAB ── */
+/* ── STOCURI TAB ── *//* ═══════════════════════════════════════════════════════════════
+   STOCURI — vizualizare grupată pe locații (depozite)
+═══════════════════════════════════════════════════════════════ */
+function openStocLocatiiModal(){
+  document.getElementById('stoc-loc-ov')?.remove();
+  const ov=dv('');ov.id='stoc-loc-ov';
+  ov.style.cssText='position:fixed;inset:0;background:rgba(0,0,0,.5);z-index:9400;display:flex;align-items:center;justify-content:center;padding:14px';
+  const md=dv('');md.style.cssText='background:#fff;border-radius:12px;box-shadow:0 24px 70px rgba(0,0,0,.35);width:min(1050px,97vw);height:min(88vh,880px);display:flex;flex-direction:column;overflow:hidden';
+
+  const hd=dv('');hd.style.cssText='background:#7c3aed;color:#fff;padding:12px 18px;display:flex;justify-content:space-between;align-items:center;flex-shrink:0';
+  hd.innerHTML='<div><div style="font-weight:800;font-size:14px">🗺 Stocuri pe locații</div><div style="font-size:10px;opacity:.88;margin-top:2px" id="sl-sub">—</div></div>';
+  const x=el('button');x.textContent='✕';x.style.cssText='border:none;background:rgba(255,255,255,.2);color:#fff;width:30px;height:30px;border-radius:5px;cursor:pointer;font-size:15px';
+  x.addEventListener('click',()=>ov.remove());hd.appendChild(x);md.appendChild(hd);
+
+  const tb=dv('');tb.style.cssText='padding:8px 14px;border-bottom:1px solid var(--border);background:#f8f9fb;display:flex;gap:8px;align-items:center;flex-wrap:wrap;flex-shrink:0';
+  const q=el('input');q.type='text';q.placeholder='Caută material sau locație...';
+  q.style.cssText='height:30px;padding:0 10px;border:1.5px solid var(--border);border-radius:5px;font-size:12px;width:250px';
+  tb.appendChild(q);
+  const sortSel=el('select');sortSel.style.cssText='height:30px;padding:0 8px;border:1.5px solid var(--border);border-radius:5px;font-size:12px';
+  sortSel.innerHTML='<option value="qty">Sortare: cantitate</option><option value="items">Sortare: nr. articole</option><option value="name">Sortare: alfabetic</option>';
+  tb.appendChild(sortSel);
+  const xls=el('button');xls.textContent='⬇ Excel';
+  xls.style.cssText='height:30px;padding:0 12px;border:1.5px solid #16a34a;border-radius:5px;background:#f0fdf4;color:#15803d;cursor:pointer;font-size:11.5px;font-weight:700;margin-left:auto';
+  tb.appendChild(xls);md.appendChild(tb);
+
+  const body=dv('');body.style.cssText='flex:1;overflow:auto;padding:12px 16px';
+  md.appendChild(body);
+
+  // Build: location -> [{code, name, qty, um}]
+  const byLoc=new Map();
+  for(const [code,st] of (S.stockIdx||new Map())){
+    (st.slLocations||[]).forEach(l=>{
+      const loc=String(l.loc||'—').trim()||'—';
+      if(!byLoc.has(loc))byLoc.set(loc,[]);
+      byLoc.get(loc).push({code,name:st.slName||st.name||'',qty:l.qty||0,um:l.um||st.slUm||st.unit||'',type:st.type||''});
+    });
+  }
+  if(!byLoc.size){
+    body.innerHTML='<div style="padding:40px;text-align:center;color:#94a3b8;font-size:13px"><div style="font-size:38px;margin-bottom:10px">📍</div>Nicio locație disponibilă.<br><span style="font-size:11px">Încărcați fișierul <b>TRV-Stocklist</b> în tab-ul Fisiere.</span></div>';
+    ov.appendChild(md);document.body.appendChild(ov);return;
+  }
+
+  const exp={};
+  function render(){
+    const qq=q.value.trim().toLowerCase();
+    let locs=[...byLoc.entries()].map(([loc,items])=>{
+      const fil=qq?items.filter(i=>(i.code+' '+i.name).toLowerCase().includes(qq)):items;
+      return {loc,items:fil,all:items,qty:fil.reduce((s,i)=>s+i.qty,0)};
+    });
+    if(qq)locs=locs.filter(l=>l.items.length||l.loc.toLowerCase().includes(qq));
+    const sv=sortSel.value;
+    locs.sort((a,b)=>sv==='name'?a.loc.localeCompare(b.loc,'ro',{numeric:true}):sv==='items'?b.items.length-a.items.length:b.qty-a.qty);
+    const totQ=locs.reduce((s,l)=>s+l.qty,0),totI=locs.reduce((s,l)=>s+l.items.length,0);
+    const sub=document.getElementById('sl-sub');
+    if(sub)sub.textContent=`${locs.length} locații · ${totI.toLocaleString('ro-RO')} poziții de stoc · ${fmtN(Math.round(totQ*100)/100)} buc total`;
+
+    body.innerHTML='';
+    locs.forEach(L=>{
+      const open=!!exp[L.loc]||!!qq;
+      const box=dv('');box.style.cssText='background:#fff;border:1px solid var(--border);border-radius:8px;margin-bottom:9px;overflow:hidden';
+      const h=dv('');h.style.cssText='display:flex;align-items:center;gap:10px;padding:8px 13px;background:#f1f5f9;cursor:pointer;user-select:none;border-left:4px solid #7c3aed';
+      h.innerHTML=`<span style="font-size:10px;color:#64748b">${open?'▼':'▶'}</span>`+
+        `<b style="font-size:13px;color:#1e3a5f;font-family:monospace">${L.loc}</b>`+
+        `<span style="font-size:11px;color:#64748b">${L.items.length} articole</span>`+
+        `<span style="margin-left:auto;font-size:12px;font-weight:800;color:#7c3aed">${fmtN(Math.round(L.qty*100)/100)}</span>`;
+      h.addEventListener('click',()=>{exp[L.loc]=!open;render();});
+      box.appendChild(h);
+      if(open){
+        const tw=dv('');tw.style.cssText='overflow-x:auto';
+        const t=el('table');t.style.cssText='width:100%;border-collapse:collapse;font-size:11.5px';
+        t.innerHTML='<thead><tr style="background:#fafbfc;color:#64748b">'+
+          ['Cod material','Denumire','Tip','Cantitate','U/M'].map((x2,i)=>
+            `<th style="padding:6px 10px;text-align:${i>=3?'right':'left'};font-size:9.5px;font-weight:800;text-transform:uppercase;border-bottom:1px solid var(--border)">${x2}</th>`).join('')+'</tr></thead>';
+        const tb2=el('tbody');
+        L.items.slice().sort((a,b)=>b.qty-a.qty).forEach((it,i)=>{
+          const tr=el('tr');tr.style.cssText=`border-bottom:1px solid #f1f5f9;background:${i%2?'#fafbfc':'#fff'}`;
+          tr.innerHTML=`<td style="padding:5px 10px;font-family:monospace;font-weight:700;color:#1e3a5f">${it.code}</td>`+
+            `<td style="padding:5px 10px;color:#475569">${it.name||'—'}</td>`+
+            `<td style="padding:5px 10px"><span style="font-size:9px;font-weight:700;color:${it.type==='M'?'#6d28d9':'#065f46'}">${it.type==='M'?'MAKE':it.type==='P'?'BUY':'—'}</span></td>`+
+            `<td style="padding:5px 10px;text-align:right;font-weight:800;color:#0369a1">${fmtN(it.qty)}</td>`+
+            `<td style="padding:5px 10px;text-align:right;color:#94a3b8;font-size:10px">${it.um||''}</td>`;
+          tb2.appendChild(tr);
+        });
+        t.appendChild(tb2);tw.appendChild(t);box.appendChild(tw);
+      }
+      body.appendChild(box);
+    });
+    if(!locs.length)body.innerHTML='<div style="padding:30px;text-align:center;color:#94a3b8">Nicio locație găsită.</div>';
+  }
+  q.addEventListener('input',render);
+  sortSel.addEventListener('change',render);
+  xls.addEventListener('click',()=>{
+    const data=[['Locație','Cod material','Denumire','Tip','Cantitate','U/M']];
+    [...byLoc.entries()].sort((a,b)=>a[0].localeCompare(b[0],'ro',{numeric:true}))
+      .forEach(([loc,items])=>items.slice().sort((a,b)=>b.qty-a.qty)
+        .forEach(i=>data.push([loc,i.code,i.name,i.type==='M'?'MAKE':i.type==='P'?'BUY':'',i.qty,i.um])));
+    const wb=XLSX.utils.book_new();const ws=XLSX.utils.aoa_to_sheet(data);
+    ws['!cols']=[{wch:14},{wch:20},{wch:34},{wch:7},{wch:12},{wch:7}];
+    XLSX.utils.book_append_sheet(wb,ws,'Stoc pe locatii');
+    XLSX.writeFile(wb,'Stoc_pe_locatii_'+new Date().toISOString().slice(0,10)+'.xlsx');
+  });
+  render();
+  ov.appendChild(md);ov.addEventListener('click',e=>{if(e.target===ov)ov.remove();});
+  document.body.appendChild(ov);
+  const esc=e=>{if(e.key==='Escape'){ov.remove();document.removeEventListener('keydown',esc);}};
+  document.addEventListener('keydown',esc);
+}
+
 function renderStocuriTab(){
   // Migration: add stocklist columns
   {const sf=S.stockFilter;
@@ -4308,6 +4415,28 @@ function renderStocuriTab(){
     setTimeout(()=>document.addEventListener('mousedown',close),50);
   });
   toolbar.appendChild(colPickBtn);
+
+  /* Toggle: show every stock location on each row */
+  const allLocBtn=el('button','tbtn');
+  const syncAllLoc=()=>{
+    const on=!!S.stockLocAll;
+    allLocBtn.innerHTML=(on?'📍 Toate locațiile':'📍 Locații pe scurt');
+    allLocBtn.style.cssText='border-color:#0369a1;color:'+(on?'#fff':'#0369a1')+';background:'+(on?'#0369a1':'#f0f9ff')+';font-weight:700';
+    allLocBtn.title=on?'Se afișează toate locațiile pentru fiecare material':'Se afișează primele 3 locații; click pentru a le extinde pe toate';
+  };
+  allLocBtn.addEventListener('click',()=>{
+    S.stockLocAll=!S.stockLocAll;S.stockLocExp={};syncAllLoc();rebuildTable();
+  });
+  syncAllLoc();
+  toolbar.appendChild(allLocBtn);
+
+  /* Location breakdown view */
+  const locViewBtn=el('button','tbtn');
+  locViewBtn.innerHTML='🗺 Vizualizare pe locații';
+  locViewBtn.style.cssText='border-color:#7c3aed;color:#7c3aed;background:#f5f3ff;font-weight:700';
+  locViewBtn.title='Grupează stocul pe locații (depozite)';
+  locViewBtn.addEventListener('click',()=>openStocLocatiiModal());
+  toolbar.appendChild(locViewBtn);
 
   /* Excel export button */
   const excelBtn=el('button','tbtn');
@@ -4444,7 +4573,9 @@ function getFilteredStock(){
   });
 }
 
+let _stkWrapRef=null;
 function buildTable(wrap){
+  _stkWrapRef=wrap;
   wrap.innerHTML='';
   _buildStkFull(wrap);
 }
@@ -4491,19 +4622,36 @@ function _buildStkTbody(){
         td.textContent=st.slUm||st.unit||'—';
         td.style.cssText+=';text-align:center;font-size:10.5px;color:#6b7280';
       } else if(colId==='loc'){
-        const locs=st.slLocations||[];
+        const locs=(st.slLocations||[]).slice().sort((a,b)=>(b.qty||0)-(a.qty||0));
         if(locs.length){
-          const lw=dv('');lw.style.cssText='display:flex;flex-wrap:wrap;gap:3px';
-          locs.slice(0,3).forEach(l=>{
+          td.style.cssText+=';white-space:normal;vertical-align:top';
+          const lw=dv('');lw.style.cssText='display:flex;flex-wrap:wrap;gap:3px;align-items:center';
+          const LIMIT=3;
+          const expanded=!!S.stockLocAll||!!(S.stockLocExp&&S.stockLocExp[code]);
+          const shown=(expanded||locs.length<=LIMIT)?locs:locs.slice(0,LIMIT);
+          shown.forEach(l=>{
             const lp=sp('');lp.textContent=`${l.loc}: ${fmtN(l.qty)}`;
             lp.style.cssText='display:inline-block;padding:1px 5px;border-radius:8px;font-size:9px;font-weight:600;background:#e0f2fe;color:#0369a1;border:1px solid #7dd3fc;white-space:nowrap';
             lw.appendChild(lp);
           });
-          if(locs.length>3){
-            const m=sp('');m.textContent=`+${locs.length-3}`;
-            m.style.cssText='font-size:9px;color:#94a3b8';
-            m.title=locs.slice(3).map(l=>`${l.loc}: ${fmtN(l.qty)}`).join(', ');
-            lw.appendChild(m);
+          if(locs.length>LIMIT){
+            const more=el('button');
+            more.textContent=expanded?'▲ mai puțin':`+${locs.length-LIMIT} locații`;
+            if(S.stockLocAll)more.style.display='none';
+            more.title=expanded?'Restrânge':locs.slice(LIMIT).map(l=>`${l.loc}: ${fmtN(l.qty)}`).join(' · ');
+            more.style.cssText='padding:1px 6px;border-radius:8px;font-size:9px;font-weight:700;background:#f1f5f9;color:#475569;border:1px dashed #94a3b8;cursor:pointer;white-space:nowrap';
+            more.addEventListener('click',e=>{
+              e.stopPropagation();
+              if(!S.stockLocExp)S.stockLocExp={};
+              if(expanded)delete S.stockLocExp[code];else S.stockLocExp[code]=true;
+              if(_stkWrapRef)_rebuildStkBody(_stkWrapRef);
+            });
+            lw.appendChild(more);
+          }
+          if(locs.length>1){
+            const tot=sp('');tot.textContent=`Σ ${fmtN(locs.reduce((s,l)=>s+(l.qty||0),0))} · ${locs.length} loc.`;
+            tot.style.cssText='display:block;width:100%;font-size:9px;color:#94a3b8;margin-top:2px;font-weight:600';
+            lw.appendChild(tot);
           }
           td.appendChild(lw);
         } else td.textContent='—';
