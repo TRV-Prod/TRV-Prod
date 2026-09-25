@@ -11385,7 +11385,7 @@ function renderNormare(){
   const tabBar=dv('');tabBar.style.cssText='display:flex;gap:0;border-bottom:2px solid var(--border);background:#fff;flex-shrink:0';
   let activeTab='operator';
 
-  const tabContent=dv('');tabContent.style.cssText='flex:1;overflow:auto';
+  const tabContent=dv('');tabContent.style.cssText='flex:1;min-height:0;display:flex;flex-direction:column;overflow:auto';
 
   const showTab=(id)=>{
     activeTab=id;
@@ -11414,336 +11414,341 @@ function renderNormare(){
   return page;
 }
 
-/* ─── OPERATOR INTERFACE ─── */
+/* ─── OPERATOR INTERFACE — componente din Planificare, grupate pe workcenter ─── */
 function renderNormOperator(){
-  const wrap=dv('');wrap.style.cssText='display:flex;height:100%;overflow:hidden;font-family:Arial,sans-serif';
+  const wrap=dv('');wrap.style.cssText='display:flex;flex-direction:column;flex:1;min-height:0;height:100%;overflow:hidden;font-family:Arial,sans-serif;background:#f8f9fb';
 
   let sessionActive=false,sessionStart=null,currentEventId='run',eventStart=null;
   let eventTotals={setup:0,deburr:0,pickup:0,ctc:0,run:0,other:0};
-  let rafId=null,selectedOrder=null,otherLabel='',quantity=1;
+  let rafId=null,selected=null,otherLabel='',quantity=1;
+  if(!S.normState)S.normState={wc:'',q:'',onlyNeeded:true};
+  const NS=S.normState;
 
-  // ── 1. LEFT PANEL: Order list (10%) ──
-  const leftPanel=dv('');leftPanel.style.cssText='width:10%;min-width:130px;max-width:200px;display:flex;flex-direction:column;border-right:2px solid var(--border);background:#f8f9fb;overflow:hidden;flex-shrink:0';
-  const lpHdr=dv('');lpHdr.style.cssText='padding:8px 8px 4px;font-size:9px;font-weight:800;color:#1e3a5f;text-transform:uppercase;letter-spacing:.06em;border-bottom:1px solid var(--border);background:#fff;flex-shrink:0';
-  lpHdr.textContent='Comenzi';
+  // ═══ TOP BAR ═══
+  const top=dv('');top.style.cssText='display:flex;align-items:center;gap:8px;padding:8px 12px;background:#fff;border-bottom:2px solid var(--border);flex-shrink:0;flex-wrap:wrap';
+  const mkLbl=t=>{const d=sp('');d.textContent=t;d.style.cssText='font-size:9.5px;font-weight:800;color:#94a3b8;text-transform:uppercase;letter-spacing:.05em';return d;};
+  const inCss='height:32px;padding:0 9px;border:1.5px solid var(--border);border-radius:5px;font-size:12px';
+
+  top.appendChild(mkLbl('Workcenter'));
+  const wcSel=el('select');wcSel.style.cssText=inCss+';font-weight:800;min-width:210px;max-width:300px;color:#1e3a5f';
+  top.appendChild(wcSel);
+
+  const srch=el('input');srch.placeholder='🔍 Cod, denumire, produs final...';srch.value=NS.q;
+  srch.style.cssText=inCss+';width:230px';
+  top.appendChild(srch);
+
+  const needLbl=el('label');needLbl.style.cssText='display:flex;align-items:center;gap:5px;font-size:11px;font-weight:700;color:#475569;cursor:pointer;white-space:nowrap';
+  const needCb=el('input');needCb.type='checkbox';needCb.checked=NS.onlyNeeded;needCb.style.cssText='width:15px;height:15px;cursor:pointer;accent-color:#1e3a5f';
+  needLbl.appendChild(needCb);needLbl.appendChild(document.createTextNode('Doar de prelucrat'));
+  top.appendChild(needLbl);
+
+  const sep=dv('');sep.style.cssText='width:1px;height:26px;background:var(--border)';top.appendChild(sep);
+
+  top.appendChild(mkLbl('Operator'));
+  const opInp=el('input');opInp.placeholder='Nume (min. 5 car.)';opInp.maxLength=60;opInp.value=S.session?.name||'';
+  opInp.style.cssText=inCss+';width:165px';
+  top.appendChild(opInp);
+
+  top.appendChild(mkLbl('Buc'));
+  const qtyInp=el('input');qtyInp.type='number';qtyInp.min=1;qtyInp.value=1;
+  qtyInp.style.cssText=inCss+';width:74px;font-size:14px;font-weight:800;text-align:center';
+  qtyInp.addEventListener('input',()=>quantity=parseInt(qtyInp.value)||1);
+  top.appendChild(qtyInp);
+
+  const startBtn=el('button');startBtn.textContent='▶ START';
+  startBtn.style.cssText='height:34px;padding:0 20px;border:none;border-radius:6px;background:#15803d;color:#fff;font-size:12.5px;font-weight:900;cursor:pointer;letter-spacing:.03em';
+  top.appendChild(startBtn);
+
+  const timerDisp=dv('');timerDisp.style.cssText='margin-left:auto;font-size:30px;font-weight:900;font-family:monospace;color:#1e3a5f;letter-spacing:1px;min-width:150px;text-align:right';
+  timerDisp.textContent='0:00:00';
+  top.appendChild(timerDisp);
+  wrap.appendChild(top);
+
+  // Selected-item strip
+  const selStrip=dv('');selStrip.style.cssText='padding:5px 12px;background:#eff6ff;border-bottom:1px solid #bfdbfe;font-size:11px;color:#1e3a5f;flex-shrink:0;white-space:nowrap;overflow-x:auto';
+  selStrip.textContent='Selectați un workcenter și o componentă din listă.';
+  wrap.appendChild(selStrip);
+
+  // ═══ MAIN ROW ═══
+  const main=dv('');main.style.cssText='flex:1;min-height:0;display:flex;overflow:hidden';
+  wrap.appendChild(main);
+
+  // ── LEFT: components for the selected workcenter ──
+  const leftPanel=dv('');leftPanel.style.cssText='width:23%;min-width:190px;max-width:360px;display:flex;flex-direction:column;border-right:2px solid var(--border);background:#fff;overflow:hidden;transition:width .3s ease';
+  const lpHdr=dv('');lpHdr.id='norm-lp-hdr';
+  lpHdr.style.cssText='padding:7px 10px;font-size:9.5px;font-weight:800;color:#1e3a5f;text-transform:uppercase;letter-spacing:.05em;border-bottom:1px solid var(--border);background:#f1f5f9;flex-shrink:0';
+  lpHdr.textContent='Componente';
   leftPanel.appendChild(lpHdr);
-  const srch=el('input');srch.placeholder='🔍 Caută...';srch.style.cssText='width:100%;padding:5px 8px;border:none;border-bottom:1px solid var(--border);font-size:11px;background:#fff;flex-shrink:0;outline:none';
-  leftPanel.appendChild(srch);
-  const orderList=dv('');orderList.style.cssText='flex:1;overflow-y:auto';
-  leftPanel.appendChild(orderList);
+  const itemList=dv('');itemList.style.cssText='flex:1;overflow-y:auto';
+  leftPanel.appendChild(itemList);
 
-  const renderOrderList=()=>{
-    const q=srch.value.toLowerCase();
-    orderList.innerHTML='';
-    (S.normCfg?.orders||[]).filter(o=>!q||(o.product+o.drawing+o.wc).toLowerCase().includes(q)).forEach(o=>{
-      const item=dv('');
-      const active=selectedOrder?.id===o.id;
-      item.style.cssText=`padding:8px 8px;cursor:pointer;border-bottom:1px solid #f1f5f9;font-size:11px;background:${active?'#eff6ff':'#fff'};border-left:${active?'3px solid #1d4ed8':'3px solid transparent'}`;
-      item.innerHTML=`<div style="font-weight:700;color:${active?'#1d4ed8':'#1e3a5f'};word-break:break-all">${o.product}</div>
-        ${o.drawing?`<div style="color:#6b7280;font-size:9px">${o.drawing}</div>`:''}
-        <div style="color:#94a3b8;font-size:9px">${o.wc||''}${o.machine?' · '+o.machine:''}</div>`;
-      item.addEventListener('click',()=>{if(!sessionActive){selectedOrder=o;renderOrderList();loadOrderDrawing(o);updateBow();}});
-      orderList.appendChild(item);
-    });
-  };
-  srch.addEventListener('input',renderOrderList);
-
-  // ── 2. CENTER PANEL: Drawing (≈70%) ──
-  const drawPanel=dv('');drawPanel.style.cssText='flex:1;display:flex;flex-direction:column;background:#1a1a2e;overflow:hidden;position:relative';
-
-  // Drawing toolbar
-  const drawToolbar=dv('');drawToolbar.style.cssText='display:flex;align-items:center;gap:6px;padding:6px 10px;background:#0f172a;flex-shrink:0;flex-wrap:wrap';
-  const productLbl=dv('');productLbl.style.cssText='font-size:11px;font-weight:700;color:#94a3b8;margin-right:auto';productLbl.textContent='Niciun produs selectat';
+  // ── CENTER: drawing ──
+  const drawPanel=dv('');drawPanel.style.cssText='flex:1;min-width:0;display:flex;flex-direction:column;background:#1a1a2e;overflow:hidden;position:relative';
+  const drawToolbar=dv('');drawToolbar.style.cssText='display:flex;align-items:center;gap:6px;padding:5px 10px;background:#0f172a;flex-shrink:0;flex-wrap:wrap';
+  const productLbl=dv('');productLbl.style.cssText='font-size:11px;font-weight:700;color:#94a3b8;margin-right:auto;white-space:nowrap;overflow:hidden;text-overflow:ellipsis';
+  productLbl.textContent='Niciun desen';
   drawToolbar.appendChild(productLbl);
-
   let drawZoom=1;
-  const mkZBtn=(txt,fn,style)=>{const b=el('button');b.textContent=txt;b.style.cssText=`height:30px;padding:0 10px;border:1px solid #334155;background:#1e293b;color:#94a3b8;border-radius:4px;cursor:pointer;font-size:13px;font-weight:700;${style||''}`;b.addEventListener('click',fn);return b;};
-  const zmLbl=dv('');zmLbl.style.cssText='color:#64748b;font-size:10px;font-weight:700;min-width:38px;text-align:center';zmLbl.textContent='100%';
-  let applyZoom=(z)=>{
+  const mkZBtn=(txt,fn,style)=>{const b=el('button');b.textContent=txt;b.style.cssText=`height:28px;padding:0 10px;border:1px solid #334155;background:#1e293b;color:#94a3b8;border-radius:4px;cursor:pointer;font-size:11px;font-weight:700;${style||''}`;b.addEventListener('click',fn);return b;};
+  const zmLbl=dv('');zmLbl.style.cssText='color:#64748b;font-size:10px;font-weight:700;min-width:36px;text-align:center';zmLbl.textContent='100%';
+  const applyZoom=(z)=>{
     drawZoom=Math.max(0.1,Math.min(8,z));zmLbl.textContent=Math.round(drawZoom*100)+'%';
-    const el2=drawViewer.querySelector('.draw-scalable');
-    if(el2)el2.style.transform=`scale(${drawZoom})`;
+    drawViewer.querySelectorAll('.draw-scalable').forEach(e2=>{e2.style.transformOrigin='top left';e2.style.transform=`scale(${drawZoom})`;});
   };
   drawToolbar.appendChild(zmLbl);
   drawToolbar.appendChild(mkZBtn('−',()=>applyZoom(drawZoom-0.25)));
-  drawToolbar.appendChild(mkZBtn('🔍+',()=>applyZoom(drawZoom+0.25),'font-size:14px;background:#0369a1;color:#fff;border-color:#0284c7'));
-  drawToolbar.appendChild(mkZBtn('⊡ Fit',()=>applyZoom(1)));
-  drawToolbar.appendChild(mkZBtn('⊞ Fill',()=>{
-    const img=drawViewer.querySelector('img');
-    if(!img)return;
-    const scaleW=drawViewer.clientWidth/img.naturalWidth;
-    const scaleH=drawViewer.clientHeight/img.naturalHeight;
-    applyZoom(Math.min(scaleW,scaleH)*0.95);
+  drawToolbar.appendChild(mkZBtn('🔍+',()=>applyZoom(drawZoom+0.25),'background:#0369a1;color:#fff;border-color:#0284c7'));
+  drawToolbar.appendChild(mkZBtn('⊡ 100%',()=>applyZoom(1)));
+  drawToolbar.appendChild(mkZBtn('⊞ Fit',()=>{
+    const c=drawViewer.querySelector('.draw-scalable');if(!c)return;
+    const w=c.naturalWidth||c.width||c.offsetWidth,h=c.naturalHeight||c.height||c.offsetHeight;
+    if(!w||!h)return;
+    applyZoom(Math.min((drawViewer.clientWidth-24)/w,(drawViewer.clientHeight-24)/h));
   }));
+  const dwgBtn=mkZBtn('📐 Caută desen',()=>{
+    if(!selected)return showToast('Selectați o componentă','err',2000);
+    openDrawingSearch(getDrawingNoFor(selected.matNo)||selected.matNo,selected.matNo);
+  },'background:#7c3aed;color:#fff;border-color:#8b5cf6');
+  drawToolbar.appendChild(dwgBtn);
   drawPanel.appendChild(drawToolbar);
 
-  // Drawing viewer area
-  const drawViewer=dv('');drawViewer.style.cssText='flex:1;overflow:auto;display:flex;align-items:flex-start;justify-content:flex-start;padding:10px;position:relative;cursor:default';
-  drawViewer.innerHTML=`<div style="width:100%;height:100%;display:flex;align-items:center;justify-content:center;color:#334155;font-size:13px;text-align:center;user-select:none">
-    <div>
-      <div style="font-size:40px;margin-bottom:10px">📐</div>
-      <div style="font-weight:700;margin-bottom:6px">Niciun desen</div>
-      <div style="font-size:11px;color:#475569">Selectați o comandă sau<br>adăugați desenul în configurare</div>
-    </div>
-  </div>`;
+  const drawViewer=dv('');drawViewer.style.cssText='flex:1;min-height:0;overflow:auto;padding:10px;position:relative;background:#1a1a2e';
+  const emptyDraw=(msg,sub)=>{drawViewer.innerHTML=`<div style="width:100%;height:100%;display:flex;align-items:center;justify-content:center;color:#334155;font-size:13px;text-align:center"><div><div style="font-size:40px;margin-bottom:10px">📐</div><div style="font-weight:700;margin-bottom:6px">${msg}</div><div style="font-size:11px;color:#475569">${sub||''}</div></div></div>`;};
+  emptyDraw('Niciun desen','Selectați o componentă din stânga');
+  drawPanel.appendChild(drawViewer);
 
-  // Pan support
+  // Pan + wheel zoom + pinch
   let panActive=false,panX=0,panY=0,panSX=0,panSY=0;
   drawViewer.addEventListener('mousedown',e=>{if(e.button!==0)return;panActive=true;panX=e.clientX;panY=e.clientY;panSX=drawViewer.scrollLeft;panSY=drawViewer.scrollTop;drawViewer.style.cursor='grabbing';});
   window.addEventListener('mouseup',()=>{panActive=false;drawViewer.style.cursor='default';});
   window.addEventListener('mousemove',e=>{if(!panActive)return;drawViewer.scrollLeft=panSX-(e.clientX-panX);drawViewer.scrollTop=panSY-(e.clientY-panY);});
   drawViewer.addEventListener('wheel',e=>{e.preventDefault();applyZoom(drawZoom+(e.deltaY<0?0.15:-0.15));},{passive:false});
-  // Pinch-to-zoom (touch devices)
-  let _pt1=null,_pt2=null,_pinchDist=0;
-  drawViewer.addEventListener('touchstart',e=>{
-    if(e.touches.length===2){e.preventDefault();_pt1=e.touches[0];_pt2=e.touches[1];_pinchDist=Math.hypot(_pt2.clientX-_pt1.clientX,_pt2.clientY-_pt1.clientY);}
-  },{passive:false});
+  let _pinchDist=0;
+  drawViewer.addEventListener('touchstart',e=>{if(e.touches.length===2){e.preventDefault();_pinchDist=Math.hypot(e.touches[1].clientX-e.touches[0].clientX,e.touches[1].clientY-e.touches[0].clientY);}},{passive:false});
   drawViewer.addEventListener('touchmove',e=>{
     if(e.touches.length===2){e.preventDefault();
       const d=Math.hypot(e.touches[1].clientX-e.touches[0].clientX,e.touches[1].clientY-e.touches[0].clientY);
-      if(_pinchDist>0){const ratio=d/_pinchDist;applyZoom(drawZoom*ratio);_pinchDist=d;}
-    }
+      if(_pinchDist>0){applyZoom(drawZoom*(d/_pinchDist));_pinchDist=d;}}
   },{passive:false});
-  drawViewer.addEventListener('touchend',e=>{if(e.touches.length<2){_pt1=null;_pt2=null;_pinchDist=0;}});
+  drawViewer.addEventListener('touchend',e=>{if(e.touches.length<2)_pinchDist=0;});
 
-  drawPanel.appendChild(drawViewer);
-  // Draggable resize handle between left and draw
-  const handle1=dv('');handle1.style.cssText='width:5px;background:#e2e8f0;cursor:col-resize;flex-shrink:0;transition:background .15s;position:relative;z-index:10';
-  handle1.addEventListener('mouseenter',()=>handle1.style.background='#94a3b8');
-  handle1.addEventListener('mouseleave',()=>handle1.style.background='#e2e8f0');
-  let resizing=false,resizeTarget=null,resizeStart=0,leftW=0,rightW=0;
-  const mkResizer=(h,leftEl,rightEl)=>{
-    h.addEventListener('mousedown',e=>{
-      e.preventDefault();resizing=true;resizeTarget={h,leftEl,rightEl};
-      resizeStart=e.clientX;leftW=leftEl.offsetWidth;rightW=rightEl.offsetWidth;
-      document.body.style.cursor='col-resize';document.body.style.userSelect='none';
-    });
-  };
-  window.addEventListener('mousemove',e=>{
-    if(!resizing||!resizeTarget)return;
-    const total=resizeTarget.leftEl.offsetWidth+resizeTarget.rightEl.offsetWidth;
-    const dx=e.clientX-resizeStart;
-    const newLeft=Math.max(80,Math.min(total-80,leftW+dx));
-    const newRight=total-newLeft;
-    const pctL=newLeft/(wrap.offsetWidth||800)*100;
-    const pctR=newRight/(wrap.offsetWidth||800)*100;
-    resizeTarget.leftEl.style.width=pctL+'%';resizeTarget.leftEl.style.minWidth='';resizeTarget.leftEl.style.maxWidth='';
-    resizeTarget.rightEl.style.width=pctR+'%';resizeTarget.rightEl.style.minWidth='';resizeTarget.rightEl.style.maxWidth='';
-  });
-  window.addEventListener('mouseup',()=>{if(resizing){resizing=false;document.body.style.cursor='';document.body.style.userSelect='';resizeTarget=null;}});
-  mkResizer(handle1,leftPanel,drawPanel);
-  wrap.appendChild(leftPanel);wrap.appendChild(handle1);wrap.appendChild(drawPanel);
-
-  // ── PDF.js renderer (works on ALL platforms incl. Android) ──
-  let _pdfjsLib=null;
-  let _pdfDoc=null;
-  let _pdfPage=1;
-  let _pdfTotalPages=1;
-
-  const loadPdfJs=(cb)=>{
-    if(_pdfjsLib){cb(_pdfjsLib);return;}
-    const s=document.createElement('script');
-    s.src='https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js';
-    s.onload=()=>{
-      _pdfjsLib=window.pdfjsLib;
-      _pdfjsLib.GlobalWorkerOptions.workerSrc='https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
-      cb(_pdfjsLib);
-    };
-    s.onerror=()=>cb(null);
-    document.head.appendChild(s);
-  };
-
-  const renderPdfPage=(canvas,doc,pageNum,scale)=>{
-    return doc.getPage(pageNum).then(page=>{
-      const vp=page.getViewport({scale});
-      canvas.width=vp.width;canvas.height=vp.height;
-      return page.render({canvasContext:canvas.getContext('2d'),viewport:vp}).promise;
-    });
-  };
-
-  const renderDrawing=(dataUrl,mimeType)=>{
-    drawViewer.innerHTML='';drawViewer.style.alignItems='flex-start';drawViewer.style.justifyContent='flex-start';
-    const isPDF=mimeType==='application/pdf'||(dataUrl&&dataUrl.startsWith('data:application/pdf'));
-
-    if(isPDF){
-      // Show loading
-      drawViewer.innerHTML=`<div style="width:100%;height:100%;display:flex;align-items:center;justify-content:center;flex-direction:column;gap:10px;color:#64748b">
-        <div style="font-size:30px">⏳</div><div style="font-size:13px">Se încarcă PDF-ul...</div></div>`;
-
-      loadPdfJs(lib=>{
-        if(!lib){
-          drawViewer.innerHTML='<div style="color:#dc2626;padding:20px;text-align:center">PDF.js nu a putut fi încărcat. Verificați conexiunea.</div>';return;
-        }
-        // Convert data URL to Uint8Array for PDF.js
-        const b64=dataUrl.split(',')[1];
-        const bin=atob(b64);const arr=new Uint8Array(bin.length);
-        for(let i=0;i<bin.length;i++)arr[i]=bin.charCodeAt(i);
-
-        lib.getDocument({data:arr}).promise.then(doc=>{
-          _pdfDoc=doc;_pdfTotalPages=doc.numPages;_pdfPage=1;
-          drawViewer.innerHTML='';
-
-          // Page container (scalable)
-          const canvasWrap=dv('');canvasWrap.className='draw-scalable';
-          canvasWrap.style.cssText='transform-origin:top left;display:inline-block;background:#fff;box-shadow:0 4px 24px rgba(0,0,0,.4)';
-          const canvas=document.createElement('canvas');
-          canvasWrap.appendChild(canvas);drawViewer.appendChild(canvasWrap);
-
-          // Page nav bar (only if multi-page)
-          if(_pdfTotalPages>1){
-            const nav=dv('');nav.style.cssText='position:sticky;top:0;left:0;z-index:10;display:flex;align-items:center;gap:8px;padding:5px 8px;background:rgba(15,23,42,.8);border-radius:0 0 6px 0;margin-bottom:6px;width:max-content';
-            const prev=el('button');prev.textContent='◀';prev.style.cssText='height:28px;padding:0 10px;border:1px solid #334155;background:#1e293b;color:#94a3b8;border-radius:4px;cursor:pointer;font-size:12px';
-            const next=el('button');next.textContent='▶';next.style.cssText='height:28px;padding:0 10px;border:1px solid #334155;background:#1e293b;color:#94a3b8;border-radius:4px;cursor:pointer;font-size:12px';
-            const pgLbl=dv('');pgLbl.style.cssText='color:#94a3b8;font-size:11px;font-weight:700;min-width:70px;text-align:center';
-            const updatePage=(p)=>{_pdfPage=Math.max(1,Math.min(_pdfTotalPages,p));pgLbl.textContent=`${_pdfPage} / ${_pdfTotalPages}`;renderPdfPage(canvas,doc,_pdfPage,drawZoom*2);};
-            prev.addEventListener('click',()=>updatePage(_pdfPage-1));
-            next.addEventListener('click',()=>updatePage(_pdfPage+1));
-            nav.appendChild(prev);nav.appendChild(pgLbl);nav.appendChild(next);
-            drawViewer.insertBefore(nav,canvasWrap);
-            updatePage(1);
-          } else {
-            renderPdfPage(canvas,doc,1,drawZoom*2);
-          }
-
-          // Override applyZoom so toolbar zoom buttons trigger PDF re-render
-          applyZoom=(z)=>{
-            drawZoom=Math.max(0.1,Math.min(8,z));
-            zmLbl.textContent=Math.round(drawZoom*100)+'%';
-            renderPdfPage(canvas,doc,_pdfPage,drawZoom*2);
-          };
-
-        }).catch(e=>{drawViewer.innerHTML=`<div style="color:#dc2626;padding:20px;text-align:center">Eroare PDF: ${e.message}</div>`;});
-      });
-    } else {
-      const imgWrap=dv('');imgWrap.style.cssText='transform-origin:top left;display:block';imgWrap.className='draw-scalable';
-      const img=el('img');img.src=dataUrl;img.style.cssText='display:block;max-width:none;user-select:none';
-      img.addEventListener('load',()=>applyZoom(Math.min(drawViewer.clientWidth/img.naturalWidth,drawViewer.clientHeight/img.naturalHeight)*0.95));
-      img.addEventListener('error',()=>{drawViewer.innerHTML='<div style="color:#dc2626;padding:20px">Eroare la încărcarea imaginii.</div>';});
-      imgWrap.appendChild(img);drawViewer.appendChild(imgWrap);
-      // Restore default zoom handlers for images
-      // Restore default applyZoom for images
-      applyZoom=(z)=>{
-        drawZoom=Math.max(0.1,Math.min(8,z));zmLbl.textContent=Math.round(drawZoom*100)+'%';
-        const el2=drawViewer.querySelector('.draw-scalable');
-        if(el2)el2.style.transform=`scale(${drawZoom})`;
-      };
-    }
-  };
-
-  const loadOrderDrawing=(o)=>{
-    productLbl.textContent=o.product+(o.drawing?' — '+o.drawing:'');
-    if(o.drawingData){renderDrawing(o.drawingData,o.drawingMime||'');}
-    else{drawViewer.innerHTML=`<div style="width:100%;height:100%;display:flex;align-items:center;justify-content:center;color:#475569;font-size:13px;text-align:center"><div><div style="font-size:36px;margin-bottom:8px">📐</div>Niciun desen atașat comenzii.</div></div>`;}
-  };
-
-  const updateBow=()=>{
-    const bowDiv=document.getElementById('norm-bow-strip');if(!bowDiv)return;
-    if(!selectedOrder){bowDiv.textContent='Selectați o comandă';return;}
-    const o=selectedOrder;
-    bowDiv.innerHTML=`<b style="color:#1e3a5f">${o.product}</b> <span style="color:#6b7280">${o.drawing?'/ '+o.drawing:''}</span> <span style="color:#94a3b8">· ${o.wc||''}${o.machine?' / '+o.machine:''}</span>`;
-  };
-
-  // ── 3. RIGHT PANEL: Controls (20%) ──
-  const rightPanel=dv('');rightPanel.style.cssText='width:20%;min-width:200px;max-width:280px;display:flex;flex-direction:column;border-left:2px solid var(--border);background:#fff;overflow:hidden;flex-shrink:0';
-
-  // Operator controls top
-  const ctrlTop=dv('');ctrlTop.style.cssText='padding:8px;border-bottom:1px solid var(--border);background:#f8f9fb;flex-shrink:0';
-
-  // BOW strip
-  const bowStrip=dv('');bowStrip.id='norm-bow-strip';bowStrip.style.cssText='font-size:10px;padding:4px 6px;background:#eff6ff;border-radius:4px;margin-bottom:6px;color:#6b7280;min-height:24px';bowStrip.textContent='Selectați o comandă';
-  ctrlTop.appendChild(bowStrip);
-
-  const opInp=el('input');opInp.placeholder='Operator (min. 5 car.)';opInp.maxLength=60;opInp.value=S.session?.name||'';
-  opInp.style.cssText='width:100%;height:30px;padding:0 8px;border:1.5px solid var(--border);border-radius:4px;font-size:11px;margin-bottom:5px';
-  ctrlTop.appendChild(opInp);
-
-  const qtyRow=dv('');qtyRow.style.cssText='display:flex;gap:5px;align-items:center;margin-bottom:6px';
-  qtyRow.innerHTML='<span style="font-size:10px;font-weight:700;color:#6b7280;white-space:nowrap">Buc produse:</span>';
-  const qtyInp=el('input');qtyInp.type='number';qtyInp.min=1;qtyInp.value=1;
-  qtyInp.style.cssText='flex:1;height:28px;padding:0 6px;border:1.5px solid var(--border);border-radius:4px;font-size:13px;font-weight:700;text-align:center';
-  qtyInp.addEventListener('input',()=>quantity=parseInt(qtyInp.value)||1);
-  qtyRow.appendChild(qtyInp);ctrlTop.appendChild(qtyRow);
-
-  const startBtn=el('button');startBtn.textContent='▶ START NORMARE';
-  startBtn.style.cssText='width:100%;height:38px;border:none;border-radius:6px;background:#15803d;color:#fff;font-size:12px;font-weight:800;cursor:pointer';
-  startBtn.addEventListener('click',()=>{
-    if(!sessionActive){
-      if(!selectedOrder){showToast('Selectați o comandă!','err',2000);return;}
-      if((opInp.value||'').trim().length<5){opInp.style.borderColor='#dc2626';opInp.focus();showToast('Introduceți operatorul (min. 5 caractere)','err',2500);return;}
-      opInp.style.borderColor='';
-      sessionActive=true;sessionStart=Date.now();eventStart=Date.now();currentEventId='run';
-      // Auto-hide order list panel
-      leftPanel.style.width='0';leftPanel.style.minWidth='0';leftPanel.style.overflow='hidden';
-      leftPanel.style.transition='width .3s ease';
-      eventTotals={setup:0,deburr:0,pickup:0,ctc:0,run:0,other:0};
-      quantity=parseInt(qtyInp.value)||1;
-      startBtn.textContent='⏹ STOP';startBtn.style.background='#dc2626';
-      opInp.disabled=true;orderSel2.disabled=true;qtyInp.disabled=true;
-      updateEvtBtns();startTicker();
-    } else {stopSession();}
-  });
-  ctrlTop.appendChild(startBtn);
-
-  // Order "selector" for right panel (hidden, controlled by left list)
-  const orderSel2=el('select');orderSel2.style.display='none';ctrlTop.appendChild(orderSel2);
-  rightPanel.appendChild(ctrlTop);
-
-  // Main timer
-  const timerDisp=dv('');timerDisp.style.cssText='text-align:center;font-size:32px;font-weight:900;font-family:monospace;color:#1e3a5f;padding:10px 6px 4px;letter-spacing:1px;border-bottom:1px solid #f1f5f9;flex-shrink:0;background:#f8fafc';
-  timerDisp.textContent='0:00:00';
-  rightPanel.appendChild(timerDisp);
-
-  // Events area (scrollable)
-  const evtArea=dv('');evtArea.style.cssText='flex:1;overflow-y:auto;padding:6px;display:flex;flex-direction:column;gap:5px';
-
+  // ── RIGHT: events ──
+  const rightPanel=dv('');rightPanel.style.cssText='width:22%;min-width:190px;max-width:320px;display:flex;flex-direction:column;border-left:2px solid var(--border);background:#f8f9fb;overflow:hidden';
+  const evtArea=dv('');evtArea.style.cssText='flex:1;min-height:0;overflow-y:auto;padding:7px;display:flex;flex-direction:column;gap:6px';
   const otherInp=el('input');otherInp.placeholder='Descrieți evenimentul...';
   otherInp.style.cssText='display:none;height:26px;padding:0 8px;border:1.5px solid #6b7280;border-radius:4px;font-size:11px;width:100%;margin-top:4px';
   otherInp.addEventListener('input',()=>otherLabel=otherInp.value.trim());
-
   const evtBtns=new Map();
   NORM_EVENTS.forEach(evt=>{
     const card=dv('');card.style.cssText=`border:2px solid ${evt.color}66;border-radius:7px;background:#fff;overflow:hidden;transition:all .15s`;
-    const row=dv('');row.style.cssText='display:flex;align-items:center;gap:0';
+    const row=dv('');row.style.cssText='display:flex;align-items:center';
     const btn=el('button');
-    btn.style.cssText=`flex:1;padding:14px 8px;border:none;background:transparent;cursor:pointer;font-size:11px;font-weight:700;color:${evt.color};text-align:left;min-height:52px;word-break:break-word;white-space:normal;line-height:1.3`;
+    btn.style.cssText=`flex:1;padding:14px 8px;border:none;background:transparent;cursor:pointer;font-size:11.5px;font-weight:800;color:${evt.color};text-align:left;min-height:50px`;
     btn.textContent=evt.label;btn.disabled=true;
     btn.addEventListener('click',()=>{
       if(!sessionActive)return;
       if(evt.id==='other'&&!otherLabel.trim()){otherInp.style.display='block';otherInp.focus();return;}
       switchEvent(evt.id);
     });
-    const timer2=dv('');timer2.dataset.eid=evt.id;timer2.className='norm-evt-t';
-    timer2.style.cssText=`font-family:monospace;font-size:11px;font-weight:800;color:${evt.color};padding:4px 6px;background:${evt.bg};border-radius:4px;white-space:nowrap;flex-shrink:0`;
-    timer2.textContent='0:00';
-    row.appendChild(btn);row.appendChild(timer2);card.appendChild(row);
+    const t2=dv('');t2.dataset.eid=evt.id;t2.className='norm-evt-t';
+    t2.style.cssText=`font-family:monospace;font-size:11.5px;font-weight:800;color:${evt.color};padding:4px 7px;background:${evt.bg};border-radius:4px;white-space:nowrap`;
+    t2.textContent='0:00';
+    row.appendChild(btn);row.appendChild(t2);card.appendChild(row);
     if(evt.id==='other')card.appendChild(otherInp);
     evtBtns.set(evt.id,{card,btn});
     evtArea.appendChild(card);
   });
   rightPanel.appendChild(evtArea);
-
-  // Per-piece results strip (bottom)
-  const resultsStrip=dv('');resultsStrip.id='norm-results-strip';resultsStrip.style.cssText='padding:6px 8px;border-top:2px solid var(--border);background:#f0fdf4;font-size:10px;color:#15803d;flex-shrink:0;min-height:36px';
-  resultsStrip.textContent='';
+  const resultsStrip=dv('');resultsStrip.style.cssText='padding:6px 9px;border-top:2px solid var(--border);background:#f0fdf4;font-size:10px;flex-shrink:0;min-height:14px';
   rightPanel.appendChild(resultsStrip);
-  // Resize handle between draw and right panel
-  const handle2=dv('');handle2.style.cssText='width:5px;background:#e2e8f0;cursor:col-resize;flex-shrink:0;transition:background .15s;position:relative;z-index:10';
-  handle2.addEventListener('mouseenter',()=>handle2.style.background='#94a3b8');
-  handle2.addEventListener('mouseleave',()=>handle2.style.background='#e2e8f0');
-  mkResizer(handle2,drawPanel,rightPanel);
-  // Make drawPanel flex:1 initially so handles work by pixels then we swap to %
-  drawPanel.style.flex='';
-  const totalW=()=>wrap.offsetWidth||window.innerWidth;
-  const initPcts=()=>{
-    const tot=totalW();
-    leftPanel.style.width='10%';leftPanel.style.minWidth='';leftPanel.style.maxWidth='';
-    rightPanel.style.width='20%';rightPanel.style.minWidth='';rightPanel.style.maxWidth='';
-    drawPanel.style.width='calc(70% - 10px)';drawPanel.style.flex='';
-  };
-  setTimeout(initPcts,10);
-  wrap.appendChild(handle2);wrap.appendChild(rightPanel);
 
-  // ── Logic functions ──
+  // Resizers
+  const mkResizer=(h,leftEl,rightEl)=>{
+    h.style.cssText='width:5px;background:#e2e8f0;cursor:col-resize;flex-shrink:0;z-index:10';
+    h.addEventListener('mouseenter',()=>h.style.background='#94a3b8');
+    h.addEventListener('mouseleave',()=>h.style.background='#e2e8f0');
+    h.addEventListener('mousedown',e=>{
+      e.preventDefault();
+      const sx=e.clientX,lw=leftEl.offsetWidth,rw=rightEl.offsetWidth,tot=lw+rw;
+      const mm=ev=>{
+        const nl=Math.max(80,Math.min(tot-120,lw+(ev.clientX-sx)));
+        leftEl.style.width=nl+'px';leftEl.style.minWidth='';leftEl.style.maxWidth='';leftEl.style.flex='none';
+        if(rightEl===rightPanel){rightEl.style.width=(tot-nl)+'px';rightEl.style.minWidth='';rightEl.style.maxWidth='';}
+      };
+      const mu=()=>{document.removeEventListener('mousemove',mm);document.removeEventListener('mouseup',mu);document.body.style.userSelect='';};
+      document.body.style.userSelect='none';
+      document.addEventListener('mousemove',mm);document.addEventListener('mouseup',mu);
+    });
+  };
+  const h1=dv(''),h2=dv('');
+  mkResizer(h1,leftPanel,drawPanel);mkResizer(h2,drawPanel,rightPanel);
+  main.appendChild(leftPanel);main.appendChild(h1);main.appendChild(drawPanel);main.appendChild(h2);main.appendChild(rightPanel);
+
+  // ═══ DATA: components per workcenter, from Planificare ═══
+  let allRows=[];
+  const loadRows=()=>{
+    try{allRows=(typeof buildDispozitiiData==='function')?buildDispozitiiData():[];}
+    catch(e){console.warn('[Normare]',e);allRows=[];}
+  };
+  const wcCounts=()=>{
+    const m=new Map();
+    allRows.forEach(r=>{
+      if(!r.wcName)return;
+      if(!m.has(r.wcName))m.set(r.wcName,{n:0,need:0});
+      const o=m.get(r.wcName);o.n++;if((r.dePrelucrat||0)>0)o.need++;
+    });
+    return m;
+  };
+  const fillWcSel=()=>{
+    const counts=wcCounts();
+    const wcs=[...counts.keys()].sort((a,b)=>a.localeCompare(b,'ro'));
+    wcSel.innerHTML='<option value="">— alegeți workcenterul —</option>'+
+      wcs.map(w=>`<option value="${w.replace(/"/g,'&quot;')}">${w} (${counts.get(w).need}/${counts.get(w).n})</option>`).join('');
+    if(NS.wc&&wcs.includes(NS.wc))wcSel.value=NS.wc;else NS.wc=wcSel.value='';
+  };
+
+  const visibleRows=()=>{
+    const q=(NS.q||'').toLowerCase();
+    return allRows.filter(r=>{
+      if(NS.wc&&r.wcName!==NS.wc)return false;
+      if(!NS.wc)return false;
+      if(NS.onlyNeeded&&!((r.dePrelucrat||0)>0))return false;
+      if(q&&!((r.matNo+' '+(r.matName||'')+' '+r.itemNo).toLowerCase().includes(q)))return false;
+      return true;
+    }).sort((a,b)=>{
+      const pa=parseFloat(a.prio),pb=parseFloat(b.prio);
+      if(!isNaN(pa)&&!isNaN(pb)&&pa!==pb)return pa-pb;
+      if(!isNaN(pa)&&isNaN(pb))return -1;
+      if(isNaN(pa)&&!isNaN(pb))return 1;
+      return (b.dePrelucrat||0)-(a.dePrelucrat||0);
+    });
+  };
+
+  const renderItems=()=>{
+    itemList.innerHTML='';
+    if(!S.planData||!S.planData.size){
+      itemList.innerHTML='<div style="padding:22px 14px;text-align:center;color:#94a3b8;font-size:11.5px;line-height:1.6"><div style="font-size:30px;margin-bottom:8px">📋</div>Niciun produs în <b>Planificare</b>.<br>Adăugați produse acolo întâi.</div>';
+      lpHdr.textContent='Componente';return;
+    }
+    if(!NS.wc){
+      itemList.innerHTML='<div style="padding:22px 14px;text-align:center;color:#94a3b8;font-size:11.5px"><div style="font-size:30px;margin-bottom:8px">⚙</div>Alegeți un workcenter<br>din selectorul de sus.</div>';
+      lpHdr.textContent='Componente';return;
+    }
+    const rows=visibleRows();
+    lpHdr.textContent=`Componente · ${rows.length}`;
+    if(!rows.length){
+      itemList.innerHTML='<div style="padding:22px 14px;text-align:center;color:#94a3b8;font-size:11.5px">Nicio componentă'+(NS.onlyNeeded?'<br>de prelucrat pe acest workcenter.':' găsită.')+'</div>';
+      return;
+    }
+    rows.forEach(r=>{
+      const act=selected&&selected.matNo===r.matNo&&selected.itemNo===r.itemNo&&selected.wcName===r.wcName;
+      const it=dv('');
+      it.style.cssText=`padding:7px 9px;cursor:${sessionActive?'not-allowed':'pointer'};border-bottom:1px solid #f1f5f9;font-size:11px;background:${act?'#eff6ff':'#fff'};border-left:3px solid ${act?'#1d4ed8':'transparent'}`;
+      it.innerHTML=
+        `<div style="display:flex;align-items:baseline;gap:5px">
+           ${r.prio?`<span style="font-size:9px;font-weight:800;color:#b45309;background:#fef3c7;border-radius:3px;padding:0 4px">${r.prio}</span>`:''}
+           <b style="font-family:monospace;color:${act?'#1d4ed8':'#1e3a5f'};word-break:break-all">${r.matNo}</b>
+         </div>
+         ${r.matName?`<div style="color:#6b7280;font-size:9.5px;margin-top:1px">${r.matName}</div>`:''}
+         <div style="display:flex;gap:6px;align-items:center;margin-top:3px;flex-wrap:wrap">
+           <span style="font-size:9px;color:#94a3b8">${r.itemNo}</span>
+           <span style="margin-left:auto;font-size:10px;font-weight:800;color:${(r.dePrelucrat||0)>0?'#dc2626':'#15803d'}">${(r.dePrelucrat||0)>0?fmtN(r.dePrelucrat)+' buc':'✓'}</span>
+         </div>`;
+      it.addEventListener('click',()=>{
+        if(sessionActive){showToast('Opriți sesiunea curentă întâi','err',2000);return;}
+        selected=r;
+        if((r.dePrelucrat||0)>0){quantity=Math.round(r.dePrelucrat);qtyInp.value=quantity;}
+        renderItems();updateSelStrip();loadDrawingFor(r);
+      });
+      itemList.appendChild(it);
+    });
+  };
+
+  const updateSelStrip=()=>{
+    if(!selected){selStrip.textContent='Selectați un workcenter și o componentă din listă.';return;}
+    const r=selected;
+    selStrip.innerHTML=`<b style="font-family:monospace;color:#1e3a5f">${r.matNo}</b>`+
+      (r.matName?` <span style="color:#475569">${r.matName}</span>`:'')+
+      ` <span style="color:#94a3b8">· FP: ${r.itemNo}</span>`+
+      ` <span style="color:#7c3aed;font-weight:700">· ${r.wcName}</span>`+
+      (r.opNo?` <span style="color:#94a3b8">· Op ${r.opNo}</span>`:'')+
+      ` <span style="color:#dc2626;font-weight:800">· De prelucrat: ${fmtN(r.dePrelucrat||0)}</span>`+
+      (r.execTimeMin?` <span style="color:#0369a1">· Timp calc.: ${fmtBowTime(r.execTimeMin)}</span>`:'');
+  };
+
+  // ── Drawing loading: shared drawings index → canvas ──
+  async function loadDrawingFor(r){
+    const dn=getDrawingNoFor(r.matNo);
+    productLbl.textContent=r.matNo+(dn?' · '+dn:'');
+    // 1) A configured order with an embedded drawing wins
+    const cfgOrd=(S.normCfg?.orders||[]).find(o=>o.product===r.matNo&&o.drawingData);
+    if(cfgOrd){renderEmbedded(cfgOrd);return;}
+    if(!dn){emptyDraw('Fără număr de desen','Folosiți 📐 Caută desen');return;}
+    emptyDraw('⏳ Se caută desenul...',dn);
+    try{
+      const names=await _loadDwgIndex();
+      if(!names){emptyDraw('Index de desene indisponibil','Un administrator trebuie să indexeze folderul');return;}
+      let matches=_prefixRange(names,dn);
+      if(typeof _filterLatestEditions==='function')matches=_filterLatestEditions(matches);
+      if(!matches.length){emptyDraw('Niciun desen găsit pentru '+dn,'Folosiți 📐 Caută desen');return;}
+      const handle=await _ensureDwgHandle();
+      if(!handle){emptyDraw('Folderul de desene nu este selectat','Apăsați 📐 Caută desen pentru a-l alege');return;}
+      const fname=matches[0];
+      const fh=await handle.getFileHandle(fname);
+      const file=await fh.getFile();
+      const url=URL.createObjectURL(file);
+      const res=await _buildStampedPages(r.matNo,url,/\.pdf$/i.test(fname));
+      drawViewer.innerHTML='';
+      const holder=dv('');holder.style.cssText='display:inline-block';
+      res.canvases.forEach(c=>{
+        c.className='draw-scalable';
+        c.style.cssText='display:block;margin:0 0 10px;background:#fff;transform-origin:top left';
+        holder.appendChild(c);
+      });
+      drawViewer.appendChild(holder);
+      productLbl.textContent=r.matNo+' · '+fname+(matches.length>1?` (+${matches.length-1})`:'');
+      // Fit to viewer
+      const c0=res.canvases[0];
+      if(c0)applyZoom(Math.min((drawViewer.clientWidth-24)/c0.width,(drawViewer.clientHeight-24)/c0.height));
+    }catch(e){
+      console.warn('[Normare] drawing',e);
+      emptyDraw('Desenul nu a putut fi deschis',e.message);
+    }
+  }
+  function renderEmbedded(o){
+    const mime=o.drawingMime||'';
+    drawViewer.innerHTML='';
+    if(/pdf/i.test(mime)){
+      loadPdfJsGlobal(async lib=>{
+        if(!lib){emptyDraw('PDF.js indisponibil','');return;}
+        try{
+          const bin=atob((o.drawingData||'').split(',').pop());
+          const arr=new Uint8Array(bin.length);for(let i=0;i<bin.length;i++)arr[i]=bin.charCodeAt(i);
+          const doc=await lib.getDocument({data:arr}).promise;
+          drawViewer.innerHTML='';
+          const holder=dv('');holder.style.cssText='display:inline-block';
+          for(let p=1;p<=doc.numPages;p++){
+            const pg=await doc.getPage(p);const vp=pg.getViewport({scale:2});
+            const cv=document.createElement('canvas');cv.width=vp.width;cv.height=vp.height;
+            cv.className='draw-scalable';cv.style.cssText='display:block;margin:0 0 10px;background:#fff;transform-origin:top left';
+            await pg.render({canvasContext:cv.getContext('2d'),viewport:vp}).promise;
+            holder.appendChild(cv);
+          }
+          drawViewer.appendChild(holder);
+          const c0=holder.querySelector('canvas');
+          if(c0)applyZoom(Math.min((drawViewer.clientWidth-24)/c0.width,(drawViewer.clientHeight-24)/c0.height));
+        }catch(e){emptyDraw('Eroare la randare',e.message);}
+      });
+    } else {
+      const img=el('img');img.src=o.drawingData;img.className='draw-scalable';
+      img.style.cssText='display:block;transform-origin:top left;background:#fff';
+      drawViewer.appendChild(img);
+      img.onload=()=>applyZoom(Math.min((drawViewer.clientWidth-24)/img.naturalWidth,(drawViewer.clientHeight-24)/img.naturalHeight));
+    }
+    productLbl.textContent=o.product+(o.drawing?' · '+o.drawing:'');
+  }
+
+  // ═══ Session logic ═══
   const updateEvtBtns=()=>{
     NORM_EVENTS.forEach(evt=>{
       const {card,btn}=evtBtns.get(evt.id);
@@ -11754,56 +11759,55 @@ function renderNormOperator(){
       card.style.transform=active?'scale(1.02)':'scale(1)';
       card.style.boxShadow=active?`0 2px 10px ${evt.color}44`:'none';
     });
-    if(currentEventId==='other'&&sessionActive)otherInp.style.display='block';
-    else otherInp.style.display='none';
+    otherInp.style.display=(currentEventId==='other'&&sessionActive)?'block':'none';
   };
-
   const switchEvent=(newId)=>{
     if(!sessionActive)return;
     const now=Date.now();
     if(currentEventId&&eventStart)eventTotals[currentEventId]=(eventTotals[currentEventId]||0)+(now-eventStart);
     currentEventId=newId;eventStart=now;updateEvtBtns();
   };
-
   const startTicker=()=>{
     if(rafId)cancelAnimationFrame(rafId);
     const tick=()=>{
       if(!sessionActive)return;
       const now=Date.now();
       timerDisp.textContent=fmtMs(now-sessionStart);
-      evtArea.querySelectorAll('.norm-evt-t').forEach(el2=>{
-        const eid=el2.dataset.eid;
+      evtArea.querySelectorAll('.norm-evt-t').forEach(e2=>{
+        const eid=e2.dataset.eid;
         const t=(eventTotals[eid]||0)+(eid===currentEventId&&eventStart?(now-eventStart):0);
-        const s=Math.floor(t/1000),m2=Math.floor(s/60),s2=s%60;
-        el2.textContent=`${m2}:${String(s2).padStart(2,'0')}`;
+        const s=Math.floor(t/1000);
+        e2.textContent=`${Math.floor(s/60)}:${String(s%60).padStart(2,'0')}`;
       });
       rafId=requestAnimationFrame(tick);
     };
     rafId=requestAnimationFrame(tick);
   };
-
+  const setLocked=(lock)=>{
+    opInp.disabled=lock;qtyInp.disabled=lock;wcSel.disabled=lock;srch.disabled=lock;needCb.disabled=lock;
+    leftPanel.style.width=lock?'0':'23%';
+    leftPanel.style.minWidth=lock?'0':'190px';
+    leftPanel.style.overflow=lock?'hidden':'';
+    h1.style.display=lock?'none':'';
+  };
   const stopSession=()=>{
     if(rafId){cancelAnimationFrame(rafId);rafId=null;}
     const now=Date.now();
     if(currentEventId&&eventStart)eventTotals[currentEventId]=(eventTotals[currentEventId]||0)+(now-eventStart);
     sessionActive=false;
-    startBtn.textContent='▶ START NORMARE';startBtn.style.background='#15803d';
-    // Restore order list panel
-    leftPanel.style.width='10%';leftPanel.style.minWidth='130px';leftPanel.style.overflow='';leftPanel.style.transition='width .3s ease';
-    opInp.disabled=false;orderSel2.disabled=false;qtyInp.disabled=false;
-    updateEvtBtns();
+    startBtn.textContent='▶ START';startBtn.style.background='#15803d';
+    setLocked(false);updateEvtBtns();renderItems();
     const totalMs=now-sessionStart;
     const sess={
       id:`NS_${Date.now()}`,ts:new Date().toISOString(),
       operator:(opInp.value||'').trim(),
-      product:selectedOrder?.product||'',drawing:selectedOrder?.drawing||'',
-      opeNo:selectedOrder?.opeNo||'',
-      wc:selectedOrder?.wc||'',machine:selectedOrder?.machine||'',
+      product:selected?.matNo||'',drawing:selected?getDrawingNoFor(selected.matNo):'',
+      opeNo:selected?.opNo||'',wc:selected?.wcName||'',machine:'',
+      finalProduct:selected?.itemNo||'',
       quantity,totalMs,totalFmt:fmtMs(totalMs),
       events:Object.fromEntries(Object.entries(eventTotals).map(([k,v])=>[k,{ms:v,fmt:fmtMs(v)}])),
       otherLabel,perPieceMs:quantity>0?Math.round(totalMs/quantity):0,
     };
-    // Per-piece results
     if(quantity>0){
       const ppMs=Math.round(totalMs/quantity);
       resultsStrip.innerHTML=`<div style="font-weight:800;color:#15803d;margin-bottom:2px">⏱ Per piesă: <span style="font-size:13px">${fmtMs(ppMs)}</span></div>
@@ -11814,11 +11818,25 @@ function renderNormOperator(){
     sessionStart=null;eventStart=null;currentEventId='run';
     eventTotals={setup:0,deburr:0,pickup:0,ctc:0,run:0,other:0};
     timerDisp.textContent='0:00:00';
-    evtArea.querySelectorAll('.norm-evt-t').forEach(el2=>el2.textContent='0:00');
+    evtArea.querySelectorAll('.norm-evt-t').forEach(e2=>e2.textContent='0:00');
   };
+  startBtn.addEventListener('click',()=>{
+    if(sessionActive){stopSession();return;}
+    if(!selected){showToast('Selectați o componentă!','err',2200);return;}
+    if((opInp.value||'').trim().length<5){opInp.style.borderColor='#dc2626';opInp.focus();showToast('Introduceți operatorul (min. 5 caractere)','err',2500);return;}
+    opInp.style.borderColor='';
+    sessionActive=true;sessionStart=Date.now();eventStart=Date.now();currentEventId='run';
+    eventTotals={setup:0,deburr:0,pickup:0,ctc:0,run:0,other:0};
+    quantity=parseInt(qtyInp.value)||1;
+    startBtn.textContent='⏹ STOP';startBtn.style.background='#dc2626';
+    setLocked(true);updateEvtBtns();startTicker();
+  });
 
-  renderOrderList();
-  updateBow();
+  wcSel.addEventListener('change',()=>{NS.wc=wcSel.value;selected=null;updateSelStrip();emptyDraw('Niciun desen','Selectați o componentă din stânga');renderItems();});
+  srch.addEventListener('input',()=>{NS.q=srch.value;renderItems();});
+  needCb.addEventListener('change',()=>{NS.onlyNeeded=needCb.checked;fillWcSel();renderItems();});
+
+  loadRows();fillWcSel();renderItems();updateSelStrip();updateEvtBtns();
   return wrap;
 }
 
