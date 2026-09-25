@@ -11449,6 +11449,14 @@ function renderNormOperator(){
   opInp.style.cssText=inCss+';width:165px';
   top.appendChild(opInp);
 
+  top.appendChild(mkLbl('Mașină'));
+  const machInp=el('input');machInp.placeholder='Utilaj / post lucru';machInp.maxLength=60;
+  machInp.setAttribute('list','norm-mach-dl');
+  machInp.value=(()=>{try{return localStorage.getItem('trv_norm_machine')||'';}catch(_){return'';}})();
+  machInp.style.cssText=inCss+';width:150px';
+  const machDl=el('datalist');machDl.id='norm-mach-dl';
+  top.appendChild(machInp);top.appendChild(machDl);
+
   top.appendChild(mkLbl('Buc'));
   const qtyInp=el('input');qtyInp.type='number';qtyInp.min=1;qtyInp.value=1;
   qtyInp.style.cssText=inCss+';width:74px;font-size:14px;font-weight:800;text-align:center';
@@ -11654,8 +11662,9 @@ function renderNormOperator(){
            <span style="font-size:9px;color:#94a3b8">${r.itemNo}</span>
            <span style="margin-left:auto;font-size:10px;font-weight:800;color:${(r.dePrelucrat||0)>0?'#dc2626':'#15803d'}">${(r.dePrelucrat||0)>0?fmtN(r.dePrelucrat)+' buc':'✓'}</span>
          </div>`;
+      if(sessionActive&&!act)it.style.opacity='.4';
       it.addEventListener('click',()=>{
-        if(sessionActive){showToast('Opriți sesiunea curentă întâi','err',2000);return;}
+        if(sessionActive){showToast('⏱ Normare în curs pentru '+(selected?selected.matNo:'')+' — apăsați STOP pentru a schimba','err',3000);return;}
         selected=r;
         if((r.dePrelucrat||0)>0){quantity=Math.round(r.dePrelucrat);qtyInp.value=quantity;}
         renderItems();updateSelStrip();loadDrawingFor(r);
@@ -11784,7 +11793,7 @@ function renderNormOperator(){
     rafId=requestAnimationFrame(tick);
   };
   const setLocked=(lock)=>{
-    opInp.disabled=lock;qtyInp.disabled=lock;wcSel.disabled=lock;srch.disabled=lock;needCb.disabled=lock;
+    opInp.disabled=lock;machInp.disabled=lock;qtyInp.disabled=lock;wcSel.disabled=lock;srch.disabled=lock;needCb.disabled=lock;
     leftPanel.style.width=lock?'0':'23%';
     leftPanel.style.minWidth=lock?'0':'190px';
     leftPanel.style.overflow=lock?'hidden':'';
@@ -11802,8 +11811,11 @@ function renderNormOperator(){
       id:`NS_${Date.now()}`,ts:new Date().toISOString(),
       operator:(opInp.value||'').trim(),
       product:selected?.matNo||'',drawing:selected?getDrawingNoFor(selected.matNo):'',
-      opeNo:selected?.opNo||'',wc:selected?.wcName||'',machine:'',
+      opeNo:selected?.opNo||'',wc:selected?.wcName||'',
+      machine:(machInp.value||'').trim(),
       finalProduct:selected?.itemNo||'',
+      bowRunT:selected?.bowRunT||0,bowSetupT:selected?.bowSetupT||0,
+      bowTotalMin:selected?((selected.bowRunT||0)*quantity+(selected.bowSetupT||0)):0,
       quantity,totalMs,totalFmt:fmtMs(totalMs),
       events:Object.fromEntries(Object.entries(eventTotals).map(([k,v])=>[k,{ms:v,fmt:fmtMs(v)}])),
       otherLabel,perPieceMs:quantity>0?Math.round(totalMs/quantity):0,
@@ -11832,11 +11844,28 @@ function renderNormOperator(){
     setLocked(true);updateEvtBtns();startTicker();
   });
 
-  wcSel.addEventListener('change',()=>{NS.wc=wcSel.value;selected=null;updateSelStrip();emptyDraw('Niciun desen','Selectați o componentă din stânga');renderItems();});
+  wcSel.addEventListener('change',()=>{NS.wc=wcSel.value;selected=null;fillMachines();updateSelStrip();emptyDraw('Niciun desen','Selectați o componentă din stânga');renderItems();});
   srch.addEventListener('input',()=>{NS.q=srch.value;renderItems();});
   needCb.addEventListener('change',()=>{NS.onlyNeeded=needCb.checked;fillWcSel();renderItems();});
 
-  loadRows();fillWcSel();renderItems();updateSelStrip();updateEvtBtns();
+  // Machine suggestions: equipment inventory (filtered by workcenter when possible) + past sessions
+  const fillMachines=()=>{
+    const set=new Set();
+    const wcl=(NS.wc||'').toLowerCase();
+    (S.masini||[]).forEach(m=>{
+      if(m.status==='Scos din uz')return;
+      const nm=[m.brand,m.model].filter(Boolean).join(' ');
+      if(!nm)return;
+      const cat=(m.category||'').toLowerCase();
+      if(wcl&&cat&&!(wcl.includes(cat.split(/[ /-]/)[0])||cat.includes(wcl.replace(/^\d+-/,'').split(' ')[0].toLowerCase())))return;
+      set.add(nm+(m.serial?' · '+m.serial:''));
+    });
+    (S.normSessions||[]).forEach(s=>{if(s.machine)set.add(s.machine);});
+    machDl.innerHTML=[...set].sort().map(v=>`<option value="${String(v).replace(/"/g,'&quot;')}">`).join('');
+  };
+  machInp.addEventListener('change',()=>{try{localStorage.setItem('trv_norm_machine',machInp.value.trim());}catch(_){}});
+
+  loadRows();fillWcSel();renderItems();updateSelStrip();updateEvtBtns();fillMachines();
   return wrap;
 }
 
@@ -12037,8 +12066,11 @@ function renderNormHistory(){
     <th style="padding:8px 10px;text-align:left">WC / Mașină</th>
     <th style="padding:8px 10px;text-align:right">Buc</th>
     <th style="padding:8px 10px;text-align:right">Total</th>
-    <th style="padding:8px 10px;text-align:right">Setup</th>
-    <th style="padding:8px 10px;text-align:right">RUN</th>
+    <th style="padding:8px 10px;text-align:right;background:#0f2540" title="Setup time din BOW">Setup BOW</th>
+    <th style="padding:8px 10px;text-align:right">Setup real</th>
+    <th style="padding:8px 10px;text-align:right;background:#0f2540" title="Run time din BOW, per bucată">RUN BOW/buc</th>
+    <th style="padding:8px 10px;text-align:right">RUN real/buc</th>
+    <th style="padding:8px 10px;text-align:right;background:#0f2540" title="Timp real vs. timp normat BOW">Δ</th>
     <th style="padding:8px 10px;text-align:right">Debavurare</th>
     <th style="padding:8px 10px;text-align:right">Altele</th>
   </tr></thead>`;
@@ -12069,8 +12101,34 @@ function renderNormHistory(){
     tr.appendChild(mkTd(`${s.wc||''}${s.machine?' / '+s.machine:''}`));
     tr.appendChild(mkTd(s.quantity,'padding:6px 10px;text-align:right;font-weight:800;color:#1d4ed8'));
     tr.appendChild(mkTd(s.totalFmt,'padding:6px 10px;text-align:right;font-weight:900;font-family:monospace;color:#15803d'));
-    tr.appendChild(mkTd(s.events?.setup?.fmt||'—','padding:6px 10px;text-align:right;font-family:monospace'));
-    tr.appendChild(mkTd(s.events?.run?.fmt||'—','padding:6px 10px;text-align:right;font-family:monospace;font-weight:700;color:#15803d'));
+    // ── BOW (normat) vs. real ──
+    const nMin=v=>v>0?fmtBowTime(v):'—';
+    const msMin=ms=>ms/60000;
+    const qty=s.quantity||1;
+    const bSet=s.bowSetupT||0, bRun=s.bowRunT||0;
+    const rSetM=msMin(s.events?.setup?.ms||0);
+    const rRunPer=msMin((s.events?.run?.ms||0))/qty;
+    const cmp=(real,norm)=>{
+      if(!norm)return 'color:#94a3b8';
+      return real>norm*1.1?'color:#dc2626;font-weight:800':real<norm*0.9?'color:#15803d;font-weight:800':'color:#1e3a5f;font-weight:700';
+    };
+    tr.appendChild(mkTd(nMin(bSet),'padding:6px 10px;text-align:right;font-family:monospace;background:#f1f5f9;color:#475569'));
+    tr.appendChild(mkTd(rSetM>0?fmtBowTime(rSetM):'—','padding:6px 10px;text-align:right;font-family:monospace;'+cmp(rSetM,bSet)));
+    tr.appendChild(mkTd(nMin(bRun),'padding:6px 10px;text-align:right;font-family:monospace;background:#f1f5f9;color:#475569'));
+    tr.appendChild(mkTd(rRunPer>0?fmtBowTime(rRunPer):'—','padding:6px 10px;text-align:right;font-family:monospace;'+cmp(rRunPer,bRun)));
+    // Δ on the whole job: real total vs. BOW (setup + run×qty)
+    const bowTot=s.bowTotalMin||(bRun*qty+bSet);
+    const realTot=msMin(s.totalMs||0);
+    let dTxt='—',dCss='padding:6px 10px;text-align:right;font-family:monospace;background:#f8fafc;color:#94a3b8';
+    if(bowTot>0&&realTot>0){
+      const pct=Math.round((realTot/bowTot-1)*100);
+      dTxt=(pct>0?'+':'')+pct+'%';
+      dCss='padding:6px 10px;text-align:right;font-family:monospace;font-weight:800;background:#f8fafc;color:'+(pct>10?'#dc2626':pct<-10?'#15803d':'#1e3a5f');
+    }
+    const dTd=mkTd(dTxt,dCss);
+    dTd.title=bowTot>0?`Normat BOW: ${fmtBowTime(bowTot)} · Real: ${fmtBowTime(realTot)}`:'Fără timpi BOW';
+    tr.appendChild(dTd);
+
     tr.appendChild(mkTd(s.events?.deburr?.fmt||'—','padding:6px 10px;text-align:right;font-family:monospace'));
     tr.appendChild(mkTd(s.events?.other?.ms>0?(s.events.other.fmt+(s.otherLabel?' ('+s.otherLabel+')':'')):'—','padding:6px 10px;text-align:right;font-family:monospace;color:#6b7280'));
     tbody_.appendChild(tr);
@@ -12093,8 +12151,33 @@ function showSessionDetail(s){
       <div><b>Produs:</b> ${s.product}</div><div><b>Desen:</b> ${s.drawing||'—'}</div>
       <div><b>Operator:</b> ${s.operator}</div><div><b>WC / Mașină:</b> ${s.wc}${s.machine?' / '+s.machine:''}</div>
       <div><b>Cantitate:</b> <span style="font-weight:800;color:#1d4ed8">${s.quantity} buc</span></div>
+      ${s.finalProduct?`<div><b>Produs final:</b> ${s.finalProduct}</div>`:''}
       <div><b>Data:</b> ${new Date(s.ts).toLocaleString('ro-RO')}</div>
     </div>
+    ${(()=>{
+      const q=s.quantity||1,bR=s.bowRunT||0,bS=s.bowSetupT||0;
+      if(!bR&&!bS)return '';
+      const bowTot=s.bowTotalMin||(bR*q+bS);
+      const realTot=(s.totalMs||0)/60000;
+      const realSet=(s.events?.setup?.ms||0)/60000;
+      const realRun=(s.events?.run?.ms||0)/60000/q;
+      const pct=bowTot>0?Math.round((realTot/bowTot-1)*100):0;
+      const col=pct>10?'#dc2626':pct<-10?'#15803d':'#1e3a5f';
+      const line=(l,n,r)=>`<tr><td style="padding:3px 7px;color:#475569">${l}</td>
+        <td style="padding:3px 7px;text-align:right;font-family:monospace;color:#64748b">${n>0?fmtBowTime(n):'—'}</td>
+        <td style="padding:3px 7px;text-align:right;font-family:monospace;font-weight:800;color:${!n?'#64748b':r>n*1.1?'#dc2626':r<n*0.9?'#15803d':'#1e3a5f'}">${r>0?fmtBowTime(r):'—'}</td></tr>`;
+      return `<div style="margin-bottom:10px;border:1px solid var(--border);border-radius:7px;overflow:hidden">
+        <div style="background:#f1f5f9;padding:5px 10px;font-size:9.5px;font-weight:800;color:#475569;text-transform:uppercase;letter-spacing:.04em">Normat (BOW) vs. realizat</div>
+        <table style="width:100%;border-collapse:collapse;font-size:11.5px">
+          <tr style="background:#fafbfc;color:#94a3b8;font-size:9.5px;text-transform:uppercase">
+            <th style="padding:3px 7px;text-align:left"></th><th style="padding:3px 7px;text-align:right">BOW</th><th style="padding:3px 7px;text-align:right">Real</th></tr>
+          ${line('Setup',bS,realSet)}
+          ${line('Run / bucată',bR,realRun)}
+          ${line('Total lucrare',bowTot,realTot)}
+        </table>
+        <div style="padding:5px 10px;background:#f8fafc;font-size:11.5px;font-weight:800;color:${col};text-align:right">Abatere: ${pct>0?'+':''}${pct}%</div>
+      </div>`;
+    })()}
     <div style="background:#f0fdf4;border:2px solid #86efac;border-radius:6px;padding:8px 14px;margin-bottom:10px;text-align:center">
       <div style="font-size:9px;color:#15803d;font-weight:700;text-transform:uppercase">Timp Total</div>
       <div style="font-size:24px;font-weight:900;font-family:monospace;color:#15803d">${s.totalFmt}</div>
@@ -15613,6 +15696,7 @@ function buildDispozitiiData(){
       rows.push({
         itemNo,prio,matNo,matName,matType,
         wcName:op.wcName,opNo:op.opNo,opSeq:op.seq,opNoNum:op.opNoNum,
+        bowRunT:op.runT||0,bowSetupT:op.setupT||0,
         totalNec:unitsNeeded,onHand,
         wipAtWC,wipBefore,wipTotal:Math.max(0,stock.totalWIP||0),
         wipDownstream,
