@@ -11465,7 +11465,8 @@ function renderNormOperator(){
   top.appendChild(mkLbl('Buc'));
   const qtyInp=el('input');qtyInp.type='number';qtyInp.min=1;qtyInp.value=1;
   qtyInp.style.cssText=inCss+';width:74px;font-size:14px;font-weight:800;text-align:center';
-  qtyInp.addEventListener('input',()=>quantity=parseInt(qtyInp.value)||1);
+  qtyInp.title='Cantitatea poate fi modificată oricând; la STOP veți confirma bucățile efectiv realizate';
+  qtyInp.addEventListener('input',()=>quantity=Math.max(1,parseInt(qtyInp.value)||1));
   top.appendChild(qtyInp);
 
   const startBtn=el('button');startBtn.textContent='▶ START';
@@ -11857,13 +11858,40 @@ function renderNormOperator(){
     rafId=requestAnimationFrame(tick);
   };
   const setLocked=(lock)=>{
-    opInp.disabled=lock;machInp.disabled=lock;opeSel.disabled=lock||!opeRows.length;qtyInp.disabled=lock;wcSel.disabled=lock;srch.disabled=lock;needCb.disabled=lock;
+    opInp.disabled=lock;machInp.disabled=lock;opeSel.disabled=lock||!opeRows.length;wcSel.disabled=lock;srch.disabled=lock;needCb.disabled=lock;
     leftPanel.style.width=lock?'0':'23%';
     leftPanel.style.minWidth=lock?'0':'190px';
     leftPanel.style.overflow=lock?'hidden':'';
     h1.style.display=lock?'none':'';
   };
-  const stopSession=()=>{
+  const askFinalQty=(def)=>new Promise(resolve=>{
+    document.getElementById('norm-qty-ask')?.remove();
+    const ov=dv('');ov.id='norm-qty-ask';
+    ov.style.cssText='position:fixed;inset:0;background:rgba(0,0,0,.55);z-index:9700;display:flex;align-items:center;justify-content:center;padding:16px';
+    const box=dv('');box.style.cssText='background:#fff;border-radius:12px;box-shadow:0 24px 70px rgba(0,0,0,.4);width:min(420px,95vw);overflow:hidden';
+    const hd=dv('');hd.style.cssText='background:#15803d;color:#fff;padding:12px 18px;font-weight:800;font-size:14px';
+    hd.textContent='⏹ Sesiune încheiată';box.appendChild(hd);
+    const bd=dv('');bd.style.cssText='padding:18px 20px;text-align:center';
+    bd.innerHTML=`<div style="font-size:12.5px;color:#475569;margin-bottom:6px">Câte bucăți ați realizat efectiv?</div>
+      <div style="font-size:11px;color:#94a3b8;margin-bottom:14px;font-family:monospace">${selected?selected.matNo:''}${selected&&selected.opSeq!=null?' · Seq '+selected.opSeq:''}</div>`;
+    const inp=el('input');inp.type='number';inp.min=0;inp.step='1';inp.value=def;
+    inp.style.cssText='width:150px;height:52px;padding:0 12px;border:2.5px solid #15803d;border-radius:8px;font-size:26px;font-weight:900;text-align:center;color:#15803d';
+    bd.appendChild(inp);
+    const hint=dv('');hint.style.cssText='font-size:10.5px;color:#94a3b8;margin-top:10px;line-height:1.5';
+    hint.textContent='Valoarea se folosește la calculul timpului per bucată din Istoric.';
+    bd.appendChild(hint);box.appendChild(bd);
+    const ft=dv('');ft.style.cssText='padding:10px 20px;border-top:1px solid var(--border);display:flex;gap:8px;justify-content:flex-end';
+    const ok=el('button');ok.textContent='✓ Salvează sesiunea';
+    ok.style.cssText='height:38px;padding:0 20px;border:none;border-radius:6px;background:#15803d;color:#fff;font-size:13px;font-weight:800;cursor:pointer';
+    const done=()=>{const v=Math.max(0,parseInt(inp.value)||0);ov.remove();resolve(v);};
+    ok.addEventListener('click',done);
+    inp.addEventListener('keydown',e=>{if(e.key==='Enter'){e.preventDefault();done();}});
+    ft.appendChild(ok);box.appendChild(ft);
+    ov.appendChild(box);document.body.appendChild(ov);
+    setTimeout(()=>{inp.focus();inp.select();},60);
+  });
+
+  const stopSession=async()=>{
     if(rafId){cancelAnimationFrame(rafId);rafId=null;}
     const now=Date.now();
     if(currentEventId&&eventStart)eventTotals[currentEventId]=(eventTotals[currentEventId]||0)+(now-eventStart);
@@ -11871,6 +11899,11 @@ function renderNormOperator(){
     startBtn.textContent='▶ START';startBtn.style.background='#15803d';
     setLocked(false);updateEvtBtns();renderItems();refreshStartState();
     const totalMs=now-sessionStart;
+    // Ask how many pieces were actually produced
+    const planned=quantity;
+    const realized=await askFinalQty(planned);
+    quantity=Math.max(1,realized||1);
+    qtyInp.value=quantity;
     const sess={
       id:`NS_${Date.now()}`,ts:new Date().toISOString(),
       operator:(opInp.value||'').trim(),
@@ -11881,16 +11914,16 @@ function renderNormOperator(){
       finalProduct:selected?.itemNo||'',
       bowRunT:selected?.bowRunT||0,bowSetupT:selected?.bowSetupT||0,
       bowTotalMin:selected?((selected.bowRunT||0)*quantity+(selected.bowSetupT||0)):0,
-      quantity,totalMs,totalFmt:fmtMs(totalMs),
+      quantity,quantityPlanned:planned,totalMs,totalFmt:fmtMs(totalMs),
       events:Object.fromEntries(Object.entries(eventTotals).map(([k,v])=>[k,{ms:v,fmt:fmtMs(v)}])),
       otherLabel,perPieceMs:quantity>0?Math.round(totalMs/quantity):0,
     };
     if(quantity>0){
-      const ppMs=Math.round(totalMs/quantity);
-      resultsStrip.innerHTML=`<div style="font-weight:800;color:#15803d;margin-bottom:2px">⏱ Per piesă (fără setup): <span style="font-size:13px">${fmtMs(Math.round(((totalMs-(eventTotals.setup||0))/quantity)))}</span></div>
-        <div style="color:#059669;font-size:9px">RUN/buc: ${fmtMs(Math.round((eventTotals.run||0)/quantity))} · Setup/sesiune: ${fmtMs(eventTotals.setup||0)}</div>`;
+      const runPer=Math.round((eventTotals.run||0)/quantity);
+      resultsStrip.innerHTML=`<div style="font-weight:800;color:#15803d;margin-bottom:2px">⏱ RUN/buc: <span style="font-size:13px">${fmtMs(runPer)}</span> · ${quantity} buc</div>
+        <div style="color:#059669;font-size:9px">Setup/sesiune: ${fmtMs(eventTotals.setup||0)}${realized!==planned?` · planificat ${planned} buc`:''}</div>`;
     }
-    saveNormSession(sess).then(()=>showToast('✓ Sesiune salvată','ok',3000));
+    saveNormSession(sess).then(()=>showToast('✓ Sesiune salvată · '+quantity+' buc','ok',3000));
     showSessionSummary(sess);
     sessionStart=null;eventStart=null;currentEventId='run';
     eventTotals={setup:0,deburr:0,pickup:0,ctc:0,run:0,other:0};
@@ -12186,7 +12219,10 @@ function renderNormHistory(){
     tr.appendChild(mkTd(s.operator));
     tr.appendChild(mkTd((s.opeSeq!==''&&s.opeSeq!=null?('Seq '+s.opeSeq):'')+(s.opeNo?(s.opeSeq!==''&&s.opeSeq!=null?' · ':'')+s.opeNo:'')||'—','padding:6px 10px;font-family:monospace;font-weight:700;color:#92400e'));
     tr.appendChild(mkTd(`${s.wc||''}${s.machine?' / '+s.machine:''}`));
-    tr.appendChild(mkTd(s.quantity,'padding:6px 10px;text-align:right;font-weight:800;color:#1d4ed8'));
+    {const qTd=mkTd(String(s.quantity)+((s.quantityPlanned!=null&&s.quantityPlanned!==s.quantity)?`<div style="font-size:9px;color:#94a3b8;font-weight:600">plan: ${s.quantityPlanned}</div>`:''),
+      'padding:6px 10px;text-align:right;font-weight:800;color:#1d4ed8');
+     if(s.quantityPlanned!=null&&s.quantityPlanned!==s.quantity)qTd.title=`Realizat ${s.quantity} buc față de ${s.quantityPlanned} planificate`;
+     tr.appendChild(qTd);}
     // ── Timed total (2 decimals, minutes) vs. BOW ──
     const SEPc='border-left:3px solid #0f172a;';
     const msMin=ms=>(ms||0)/60000;
