@@ -11420,7 +11420,7 @@ function renderNormOperator(){
 
   let sessionActive=false,sessionStart=null,currentEventId='run',eventStart=null;
   let eventTotals={setup:0,deburr:0,pickup:0,ctc:0,run:0,other:0};
-  let rafId=null,selected=null,otherLabel='',quantity=1;
+  let rafId=null,selected=null,selectedComp=null,opeRows=[],otherLabel='',quantity=1;
   if(!S.normState)S.normState={wc:'',q:'',onlyNeeded:true};
   const NS=S.normState;
 
@@ -11448,6 +11448,11 @@ function renderNormOperator(){
   const opInp=el('input');opInp.placeholder='Nume (min. 5 car.)';opInp.maxLength=60;opInp.value=S.session?.name||'';
   opInp.style.cssText=inCss+';width:165px';
   top.appendChild(opInp);
+
+  top.appendChild(mkLbl('Ope No'));
+  const opeSel=el('select');opeSel.style.cssText=inCss+';min-width:130px;font-weight:800;color:#92400e';
+  opeSel.disabled=true;opeSel.innerHTML='<option value="">— componenta —</option>';
+  top.appendChild(opeSel);
 
   top.appendChild(mkLbl('Mașină'));
   const machInp=el('input');machInp.placeholder='Utilaj / post lucru';machInp.maxLength=60;
@@ -11632,6 +11637,30 @@ function renderNormOperator(){
     });
   };
 
+  const fillOpeSel=(comp)=>{
+    opeRows=(comp&&comp._ops?comp._ops:[]).slice()
+      .sort((a,b)=>(a.opSeq||0)-(b.opSeq||0)||String(a.opNo).localeCompare(String(b.opNo)));
+    if(!opeRows.length){
+      opeSel.disabled=true;opeSel.innerHTML='<option value="">— fără operație —</option>';return;
+    }
+    opeSel.disabled=sessionActive;
+    opeSel.innerHTML=opeRows.map((r,i)=>{
+      const lab=(r.opNo||('Op '+(i+1)))+
+        (r.bowRunT?` · run ${fmtBowTime(r.bowRunT)}`:'')+
+        (r.bowSetupT?` · setup ${fmtBowTime(r.bowSetupT)}`:'')+
+        ((r.dePrelucrat||0)>0?` · ${fmtN(r.dePrelucrat)} buc`:'');
+      return `<option value="${i}">${lab}</option>`;
+    }).join('');
+    opeSel.value='0';
+  };
+  opeSel.addEventListener('change',()=>{
+    const r=opeRows[parseInt(opeSel.value)||0];
+    if(!r)return;
+    selected=r;
+    if((r.dePrelucrat||0)>0){quantity=Math.round(r.dePrelucrat);qtyInp.value=quantity;}
+    updateSelStrip();
+  });
+
   const renderItems=()=>{
     itemList.innerHTML='';
     if(!S.planData||!S.planData.size){
@@ -11642,14 +11671,22 @@ function renderNormOperator(){
       itemList.innerHTML='<div style="padding:22px 14px;text-align:center;color:#94a3b8;font-size:11.5px"><div style="font-size:30px;margin-bottom:8px">⚙</div>Alegeți un workcenter<br>din selectorul de sus.</div>';
       lpHdr.textContent='Componente';return;
     }
-    const rows=visibleRows();
+    const rowsAll=visibleRows();
+    // One line per component (a component can have several operations on the same WC)
+    const seen=new Map();
+    rowsAll.forEach(r=>{
+      const k=r.itemNo+'|'+r.matNo;
+      if(!seen.has(k))seen.set(k,{...r,_ops:[r]});
+      else seen.get(k)._ops.push(r);
+    });
+    const rows=[...seen.values()];
     lpHdr.textContent=`Componente · ${rows.length}`;
     if(!rows.length){
       itemList.innerHTML='<div style="padding:22px 14px;text-align:center;color:#94a3b8;font-size:11.5px">Nicio componentă'+(NS.onlyNeeded?'<br>de prelucrat pe acest workcenter.':' găsită.')+'</div>';
       return;
     }
     rows.forEach(r=>{
-      const act=selected&&selected.matNo===r.matNo&&selected.itemNo===r.itemNo&&selected.wcName===r.wcName;
+      const act=selectedComp&&selectedComp.matNo===r.matNo&&selectedComp.itemNo===r.itemNo;
       const it=dv('');
       it.style.cssText=`padding:7px 9px;cursor:${sessionActive?'not-allowed':'pointer'};border-bottom:1px solid #f1f5f9;font-size:11px;background:${act?'#eff6ff':'#fff'};border-left:3px solid ${act?'#1d4ed8':'transparent'}`;
       it.innerHTML=
@@ -11660,14 +11697,17 @@ function renderNormOperator(){
          ${r.matName?`<div style="color:#6b7280;font-size:9.5px;margin-top:1px">${r.matName}</div>`:''}
          <div style="display:flex;gap:6px;align-items:center;margin-top:3px;flex-wrap:wrap">
            <span style="font-size:9px;color:#94a3b8">${r.itemNo}</span>
+           ${r._ops&&r._ops.length>1?`<span style="font-size:9px;font-weight:800;color:#92400e;background:#fef3c7;border-radius:3px;padding:0 4px">${r._ops.length} op</span>`:''}
            <span style="margin-left:auto;font-size:10px;font-weight:800;color:${(r.dePrelucrat||0)>0?'#dc2626':'#15803d'}">${(r.dePrelucrat||0)>0?fmtN(r.dePrelucrat)+' buc':'✓'}</span>
          </div>`;
       if(sessionActive&&!act)it.style.opacity='.4';
       it.addEventListener('click',()=>{
         if(sessionActive){showToast('⏱ Normare în curs pentru '+(selected?selected.matNo:'')+' — apăsați STOP pentru a schimba','err',3000);return;}
-        selected=r;
-        if((r.dePrelucrat||0)>0){quantity=Math.round(r.dePrelucrat);qtyInp.value=quantity;}
-        renderItems();updateSelStrip();loadDrawingFor(r);
+        selectedComp=r;
+        fillOpeSel(r);
+        selected=opeRows[0]||r;
+        if((selected.dePrelucrat||0)>0){quantity=Math.round(selected.dePrelucrat);qtyInp.value=quantity;}
+        renderItems();updateSelStrip();loadDrawingFor(selected);refreshStartState();
       });
       itemList.appendChild(it);
     });
@@ -11680,7 +11720,7 @@ function renderNormOperator(){
       (r.matName?` <span style="color:#475569">${r.matName}</span>`:'')+
       ` <span style="color:#94a3b8">· FP: ${r.itemNo}</span>`+
       ` <span style="color:#7c3aed;font-weight:700">· ${r.wcName}</span>`+
-      (r.opNo?` <span style="color:#94a3b8">· Op ${r.opNo}</span>`:'')+
+      (r.opNo?` <span style="background:#fef3c7;color:#92400e;font-weight:800;border-radius:3px;padding:1px 6px">Op ${r.opNo}</span>`:'')+
       ` <span style="color:#dc2626;font-weight:800">· De prelucrat: ${fmtN(r.dePrelucrat||0)}</span>`+
       (r.execTimeMin?` <span style="color:#0369a1">· Timp calc.: ${fmtBowTime(r.execTimeMin)}</span>`:'');
   };
@@ -11793,7 +11833,7 @@ function renderNormOperator(){
     rafId=requestAnimationFrame(tick);
   };
   const setLocked=(lock)=>{
-    opInp.disabled=lock;machInp.disabled=lock;qtyInp.disabled=lock;wcSel.disabled=lock;srch.disabled=lock;needCb.disabled=lock;
+    opInp.disabled=lock;machInp.disabled=lock;opeSel.disabled=lock||!opeRows.length;qtyInp.disabled=lock;wcSel.disabled=lock;srch.disabled=lock;needCb.disabled=lock;
     leftPanel.style.width=lock?'0':'23%';
     leftPanel.style.minWidth=lock?'0':'190px';
     leftPanel.style.overflow=lock?'hidden':'';
@@ -11805,7 +11845,7 @@ function renderNormOperator(){
     if(currentEventId&&eventStart)eventTotals[currentEventId]=(eventTotals[currentEventId]||0)+(now-eventStart);
     sessionActive=false;
     startBtn.textContent='▶ START';startBtn.style.background='#15803d';
-    setLocked(false);updateEvtBtns();renderItems();
+    setLocked(false);updateEvtBtns();renderItems();refreshStartState();
     const totalMs=now-sessionStart;
     const sess={
       id:`NS_${Date.now()}`,ts:new Date().toISOString(),
@@ -11834,17 +11874,21 @@ function renderNormOperator(){
   };
   startBtn.addEventListener('click',()=>{
     if(sessionActive){stopSession();return;}
-    if(!selected){showToast('Selectați o componentă!','err',2200);return;}
+    if(!selectedComp){showToast('Selectați o componentă din listă!','err',2200);return;}
     if((opInp.value||'').trim().length<5){opInp.style.borderColor='#dc2626';opInp.focus();showToast('Introduceți operatorul (min. 5 caractere)','err',2500);return;}
     opInp.style.borderColor='';
+    if(!(machInp.value||'').trim()){machInp.style.borderColor='#dc2626';machInp.focus();showToast('Introduceți mașina pe care lucrați','err',2500);return;}
+    machInp.style.borderColor='';
+    if(!opeRows.length||!selected||!selected.opNo){opeSel.style.borderColor='#dc2626';showToast('Selectați operația (Ope No)','err',2500);return;}
+    opeSel.style.borderColor='';
     sessionActive=true;sessionStart=Date.now();eventStart=Date.now();currentEventId='run';
     eventTotals={setup:0,deburr:0,pickup:0,ctc:0,run:0,other:0};
     quantity=parseInt(qtyInp.value)||1;
     startBtn.textContent='⏹ STOP';startBtn.style.background='#dc2626';
-    setLocked(true);updateEvtBtns();startTicker();
+    setLocked(true);updateEvtBtns();startTicker();startBtn.style.opacity='1';
   });
 
-  wcSel.addEventListener('change',()=>{NS.wc=wcSel.value;selected=null;fillMachines();updateSelStrip();emptyDraw('Niciun desen','Selectați o componentă din stânga');renderItems();});
+  wcSel.addEventListener('change',()=>{NS.wc=wcSel.value;selected=null;selectedComp=null;opeRows=[];opeSel.disabled=true;opeSel.innerHTML='<option value="">— componenta —</option>';fillMachines();updateSelStrip();emptyDraw('Niciun desen','Selectați o componentă din stânga');renderItems();});
   srch.addEventListener('input',()=>{NS.q=srch.value;renderItems();});
   needCb.addEventListener('change',()=>{NS.onlyNeeded=needCb.checked;fillWcSel();renderItems();});
 
@@ -11865,7 +11909,16 @@ function renderNormOperator(){
   };
   machInp.addEventListener('change',()=>{try{localStorage.setItem('trv_norm_machine',machInp.value.trim());}catch(_){}});
 
-  loadRows();fillWcSel();renderItems();updateSelStrip();updateEvtBtns();fillMachines();
+  const refreshStartState=()=>{
+    if(sessionActive)return;
+    const ok=!!selectedComp&&(opInp.value||'').trim().length>=5&&!!(machInp.value||'').trim()&&!!(selected&&selected.opNo);
+    startBtn.style.opacity=ok?'1':'.5';
+    startBtn.title=ok?'Pornește normarea':'Completați: componentă, operator (min. 5 car.), mașină și Ope No';
+  };
+  [opInp,machInp].forEach(i=>i.addEventListener('input',refreshStartState));
+  opeSel.addEventListener('change',refreshStartState);
+
+  loadRows();fillWcSel();renderItems();updateSelStrip();updateEvtBtns();fillMachines();refreshStartState();
   return wrap;
 }
 
@@ -12057,22 +12110,31 @@ function renderNormHistory(){
   }
   if(!sessions.length){wrap.innerHTML='<div style="text-align:center;padding:40px;color:var(--text3)">Nu există sesiuni de normare salvate.</div>';return wrap;}
   const tbl=el('table');tbl.style.cssText='width:100%;border-collapse:collapse;font-size:11.5px';
-  tbl.innerHTML=`<thead><tr style="background:#1e3a5f;color:#fff">
-    ${S.session?.role==='admin'?'<th style="padding:8px 10px;width:60px"></th>':''}
+  const adm=S.session?.role==='admin';
+  const SEP='border-left:3px solid #64748b';
+  tbl.innerHTML=`<thead>
+  <tr style="background:#0f2540;color:#fff;font-size:10px;text-transform:uppercase;letter-spacing:.06em">
+    ${adm?'<th style="padding:6px 10px"></th>':''}
+    <th colspan="6" style="padding:6px 10px;text-align:left;font-weight:800">Identificare</th>
+    <th colspan="5" style="padding:6px 10px;text-align:center;font-weight:900;background:#166534;${SEP}">⏱ Normare realizată</th>
+    <th colspan="3" style="padding:6px 10px;text-align:center;font-weight:900;background:#475569;${SEP}">📐 Timpi BOW (normat)</th>
+  </tr>
+  <tr style="background:#1e3a5f;color:#fff">
+    ${adm?'<th style="padding:8px 10px;width:60px"></th>':''}
     <th style="padding:8px 10px;text-align:left">Data</th>
     <th style="padding:8px 10px;text-align:left">Produs</th>
     <th style="padding:8px 10px;text-align:left">Operator</th>
     <th style="padding:8px 10px;text-align:left">Ope No</th>
     <th style="padding:8px 10px;text-align:left">WC / Mașină</th>
     <th style="padding:8px 10px;text-align:right">Buc</th>
-    <th style="padding:8px 10px;text-align:right">Total</th>
-    <th style="padding:8px 10px;text-align:right;background:#0f2540" title="Setup time din BOW">Setup BOW</th>
-    <th style="padding:8px 10px;text-align:right">Setup real</th>
-    <th style="padding:8px 10px;text-align:right;background:#0f2540" title="Run time din BOW, per bucată">RUN BOW/buc</th>
-    <th style="padding:8px 10px;text-align:right">RUN real/buc</th>
-    <th style="padding:8px 10px;text-align:right;background:#0f2540" title="Timp real vs. timp normat BOW">Δ</th>
-    <th style="padding:8px 10px;text-align:right">Debavurare</th>
-    <th style="padding:8px 10px;text-align:right">Altele</th>
+    <th style="padding:8px 10px;text-align:right;background:#15803d;${SEP}">Total</th>
+    <th style="padding:8px 10px;text-align:right;background:#15803d">Setup</th>
+    <th style="padding:8px 10px;text-align:right;background:#15803d">RUN/buc</th>
+    <th style="padding:8px 10px;text-align:right;background:#15803d">Debavurare</th>
+    <th style="padding:8px 10px;text-align:right;background:#15803d">Altele</th>
+    <th style="padding:8px 10px;text-align:right;background:#64748b;${SEP}">Setup</th>
+    <th style="padding:8px 10px;text-align:right;background:#64748b">RUN/buc</th>
+    <th style="padding:8px 10px;text-align:right;background:#64748b" title="Timp real vs. normat">Δ total</th>
   </tr></thead>`;
   const tbody_=el('tbody');
   sessions.forEach((s,i)=>{
@@ -12100,8 +12162,8 @@ function renderNormHistory(){
     tr.appendChild(mkTd(s.opeNo||'—','padding:6px 10px;font-family:monospace;font-weight:700;color:#92400e'));
     tr.appendChild(mkTd(`${s.wc||''}${s.machine?' / '+s.machine:''}`));
     tr.appendChild(mkTd(s.quantity,'padding:6px 10px;text-align:right;font-weight:800;color:#1d4ed8'));
-    tr.appendChild(mkTd(s.totalFmt,'padding:6px 10px;text-align:right;font-weight:900;font-family:monospace;color:#15803d'));
-    // ── BOW (normat) vs. real ──
+    // ── Realized vs. BOW ──
+    const SEPc='border-left:3px solid #94a3b8;';
     const nMin=v=>v>0?fmtBowTime(v):'—';
     const msMin=ms=>ms/60000;
     const qty=s.quantity||1;
@@ -12109,28 +12171,29 @@ function renderNormHistory(){
     const rSetM=msMin(s.events?.setup?.ms||0);
     const rRunPer=msMin((s.events?.run?.ms||0))/qty;
     const cmp=(real,norm)=>{
-      if(!norm)return 'color:#94a3b8';
+      if(!norm)return 'color:#1e3a5f';
       return real>norm*1.1?'color:#dc2626;font-weight:800':real<norm*0.9?'color:#15803d;font-weight:800':'color:#1e3a5f;font-weight:700';
     };
-    tr.appendChild(mkTd(nMin(bSet),'padding:6px 10px;text-align:right;font-family:monospace;background:#f1f5f9;color:#475569'));
-    tr.appendChild(mkTd(rSetM>0?fmtBowTime(rSetM):'—','padding:6px 10px;text-align:right;font-family:monospace;'+cmp(rSetM,bSet)));
-    tr.appendChild(mkTd(nMin(bRun),'padding:6px 10px;text-align:right;font-family:monospace;background:#f1f5f9;color:#475569'));
-    tr.appendChild(mkTd(rRunPer>0?fmtBowTime(rRunPer):'—','padding:6px 10px;text-align:right;font-family:monospace;'+cmp(rRunPer,bRun)));
-    // Δ on the whole job: real total vs. BOW (setup + run×qty)
+    const GRN='padding:6px 10px;text-align:right;font-family:monospace;background:#f0fdf4;';
+    const GRY='padding:6px 10px;text-align:right;font-family:monospace;background:#f1f5f9;color:#475569;';
+    tr.appendChild(mkTd(s.totalFmt,GRN+SEPc+'font-weight:900;color:#15803d'));
+    tr.appendChild(mkTd(rSetM>0?fmtBowTime(rSetM):'—',GRN+cmp(rSetM,bSet)));
+    tr.appendChild(mkTd(rRunPer>0?fmtBowTime(rRunPer):'—',GRN+cmp(rRunPer,bRun)));
+    tr.appendChild(mkTd(s.events?.deburr?.fmt||'—',GRN+'color:#475569'));
+    tr.appendChild(mkTd(s.events?.other?.ms>0?(s.events.other.fmt+(s.otherLabel?' ('+s.otherLabel+')':'')):'—',GRN+'color:#6b7280'));
+    tr.appendChild(mkTd(nMin(bSet),GRY+SEPc));
+    tr.appendChild(mkTd(nMin(bRun),GRY));
     const bowTot=s.bowTotalMin||(bRun*qty+bSet);
     const realTot=msMin(s.totalMs||0);
-    let dTxt='—',dCss='padding:6px 10px;text-align:right;font-family:monospace;background:#f8fafc;color:#94a3b8';
+    let dTxt='—',dCss=GRY;
     if(bowTot>0&&realTot>0){
       const pct=Math.round((realTot/bowTot-1)*100);
       dTxt=(pct>0?'+':'')+pct+'%';
-      dCss='padding:6px 10px;text-align:right;font-family:monospace;font-weight:800;background:#f8fafc;color:'+(pct>10?'#dc2626':pct<-10?'#15803d':'#1e3a5f');
+      dCss='padding:6px 10px;text-align:right;font-family:monospace;font-weight:900;background:#f1f5f9;color:'+(pct>10?'#dc2626':pct<-10?'#15803d':'#1e3a5f');
     }
     const dTd=mkTd(dTxt,dCss);
     dTd.title=bowTot>0?`Normat BOW: ${fmtBowTime(bowTot)} · Real: ${fmtBowTime(realTot)}`:'Fără timpi BOW';
     tr.appendChild(dTd);
-
-    tr.appendChild(mkTd(s.events?.deburr?.fmt||'—','padding:6px 10px;text-align:right;font-family:monospace'));
-    tr.appendChild(mkTd(s.events?.other?.ms>0?(s.events.other.fmt+(s.otherLabel?' ('+s.otherLabel+')':'')):'—','padding:6px 10px;text-align:right;font-family:monospace;color:#6b7280'));
     tbody_.appendChild(tr);
   });
   tbl.appendChild(tbody_);wrap.appendChild(tbl);
