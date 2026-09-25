@@ -11449,7 +11449,7 @@ function renderNormOperator(){
   opInp.style.cssText=inCss+';width:165px';
   top.appendChild(opInp);
 
-  top.appendChild(mkLbl('Ope No'));
+  top.appendChild(mkLbl('Ope Seq'));
   const opeSel=el('select');opeSel.style.cssText=inCss+';min-width:130px;font-weight:800;color:#92400e';
   opeSel.disabled=true;opeSel.innerHTML='<option value="">— componenta —</option>';
   top.appendChild(opeSel);
@@ -11501,7 +11501,7 @@ function renderNormOperator(){
   const productLbl=dv('');productLbl.style.cssText='font-size:11px;font-weight:700;color:#94a3b8;margin-right:auto;white-space:nowrap;overflow:hidden;text-overflow:ellipsis';
   productLbl.textContent='Niciun desen';
   drawToolbar.appendChild(productLbl);
-  let drawZoom=1;
+  let drawZoom=1,_normDwgFile=null;
   const mkZBtn=(txt,fn,style)=>{const b=el('button');b.textContent=txt;b.style.cssText=`height:28px;padding:0 10px;border:1px solid #334155;background:#1e293b;color:#94a3b8;border-radius:4px;cursor:pointer;font-size:11px;font-weight:700;${style||''}`;b.addEventListener('click',fn);return b;};
   const zmLbl=dv('');zmLbl.style.cssText='color:#64748b;font-size:10px;font-weight:700;min-width:36px;text-align:center';zmLbl.textContent='100%';
   const applyZoom=(z)=>{
@@ -11523,6 +11523,26 @@ function renderNormOperator(){
     openDrawingSearch(getDrawingNoFor(selected.matNo)||selected.matNo,selected.matNo);
   },'background:#7c3aed;color:#fff;border-color:#8b5cf6');
   drawToolbar.appendChild(dwgBtn);
+  const prtBtn=mkZBtn('🖨 Printează',()=>{
+    if(!selected)return showToast('Selectați o componentă','err',2000);
+    if(_normDwgFile){_printDrawingWithCode(selected.matNo,_normDwgFile.name,_normDwgFile.url,_normDwgFile.isPdf);return;}
+    const cvs=[...drawViewer.querySelectorAll('canvas.draw-scalable')];
+    const imgs=[...drawViewer.querySelectorAll('img.draw-scalable')];
+    if(!cvs.length&&!imgs.length)return showToast('Niciun desen de printat','err',2000);
+    const pages=cvs.length?cvs.map(c2=>c2.toDataURL('image/png')):imgs.map(i2=>i2.src);
+    const land=(cvs[0]?cvs[0].width>=cvs[0].height:imgs[0].naturalWidth>=imgs[0].naturalHeight);
+    const w=window.open('','_blank','width=1200,height=900');
+    if(!w)return showToast('Permiteți popup-urile pentru printare','err',3500);
+    w.document.open();
+    w.document.write('<!DOCTYPE html><html><head><meta charset="UTF-8"><title>'+selected.matNo+'</title>'+
+      '<style>*{margin:0;padding:0}.pg{page-break-after:always;text-align:center;padding:6px}.pg:last-child{page-break-after:auto}'+
+      '.pg img{max-width:100%;height:auto}@page{size:A3 '+(land?'landscape':'portrait')+';margin:5mm}'+
+      '@media print{.pg{padding:0}.pg img{max-height:98vh}}</style></head><body>'+
+      pages.map(p=>'<div class="pg"><img src="'+p+'"></div>').join('')+
+      '<scr'+'ipt>window.onload=function(){setTimeout(function(){window.print();},400);};</scr'+'ipt></body></html>');
+    w.document.close();
+  },'background:#0369a1;color:#fff;border-color:#0284c7');
+  drawToolbar.appendChild(prtBtn);
   drawPanel.appendChild(drawToolbar);
 
   const drawViewer=dv('');drawViewer.style.cssText='flex:1;min-height:0;overflow:auto;padding:10px;position:relative;background:#1a1a2e';
@@ -11645,8 +11665,10 @@ function renderNormOperator(){
     }
     opeSel.disabled=sessionActive;
     opeSel.innerHTML=opeRows.map((r,i)=>{
-      const lab=(r.opNo||('Op '+(i+1)))+
-        (r.bowRunT?` · run ${fmtBowTime(r.bowRunT)}`:'')+
+      const seq=(r.opSeq!=null&&r.opSeq!=='')?r.opSeq:(i+1);
+      const lab='Seq '+seq+
+        (r.opNo?` (Op ${r.opNo})`:'')+
+        (r.bowRunT?` · run ${fmtBowTime(r.bowRunT)}/buc`:'')+
         (r.bowSetupT?` · setup ${fmtBowTime(r.bowSetupT)}`:'')+
         ((r.dePrelucrat||0)>0?` · ${fmtN(r.dePrelucrat)} buc`:'');
       return `<option value="${i}">${lab}</option>`;
@@ -11720,13 +11742,14 @@ function renderNormOperator(){
       (r.matName?` <span style="color:#475569">${r.matName}</span>`:'')+
       ` <span style="color:#94a3b8">· FP: ${r.itemNo}</span>`+
       ` <span style="color:#7c3aed;font-weight:700">· ${r.wcName}</span>`+
-      (r.opNo?` <span style="background:#fef3c7;color:#92400e;font-weight:800;border-radius:3px;padding:1px 6px">Op ${r.opNo}</span>`:'')+
+      (r.opSeq!=null?` <span style="background:#fef3c7;color:#92400e;font-weight:800;border-radius:3px;padding:1px 6px">Seq ${r.opSeq}${r.opNo?' · Op '+r.opNo:''}</span>`:'')+
       ` <span style="color:#dc2626;font-weight:800">· De prelucrat: ${fmtN(r.dePrelucrat||0)}</span>`+
       (r.execTimeMin?` <span style="color:#0369a1">· Timp calc.: ${fmtBowTime(r.execTimeMin)}</span>`:'');
   };
 
   // ── Drawing loading: shared drawings index → canvas ──
   async function loadDrawingFor(r){
+    _normDwgFile=null;
     const dn=getDrawingNoFor(r.matNo);
     productLbl.textContent=r.matNo+(dn?' · '+dn:'');
     // 1) A configured order with an embedded drawing wins
@@ -11746,7 +11769,8 @@ function renderNormOperator(){
       const fh=await handle.getFileHandle(fname);
       const file=await fh.getFile();
       const url=URL.createObjectURL(file);
-      const res=await _buildStampedPages(r.matNo,url,/\.pdf$/i.test(fname));
+      _normDwgFile={name:fname,url,isPdf:/\.pdf$/i.test(fname)};
+      const res=await _buildStampedPages(r.matNo,url,_normDwgFile.isPdf);
       drawViewer.innerHTML='';
       const holder=dv('');holder.style.cssText='display:inline-block';
       res.canvases.forEach(c=>{
@@ -11851,7 +11875,8 @@ function renderNormOperator(){
       id:`NS_${Date.now()}`,ts:new Date().toISOString(),
       operator:(opInp.value||'').trim(),
       product:selected?.matNo||'',drawing:selected?getDrawingNoFor(selected.matNo):'',
-      opeNo:selected?.opNo||'',wc:selected?.wcName||'',
+      opeNo:selected?.opNo||'',opeSeq:(selected&&selected.opSeq!=null)?selected.opSeq:'',
+      wc:selected?.wcName||'',
       machine:(machInp.value||'').trim(),
       finalProduct:selected?.itemNo||'',
       bowRunT:selected?.bowRunT||0,bowSetupT:selected?.bowSetupT||0,
@@ -11862,8 +11887,8 @@ function renderNormOperator(){
     };
     if(quantity>0){
       const ppMs=Math.round(totalMs/quantity);
-      resultsStrip.innerHTML=`<div style="font-weight:800;color:#15803d;margin-bottom:2px">⏱ Per piesă: <span style="font-size:13px">${fmtMs(ppMs)}</span></div>
-        <div style="color:#059669;font-size:9px">RUN/buc: ${fmtMs(Math.round((eventTotals.run||0)/quantity))} · Setup total: ${fmtMs(eventTotals.setup||0)}</div>`;
+      resultsStrip.innerHTML=`<div style="font-weight:800;color:#15803d;margin-bottom:2px">⏱ Per piesă (fără setup): <span style="font-size:13px">${fmtMs(Math.round(((totalMs-(eventTotals.setup||0))/quantity)))}</span></div>
+        <div style="color:#059669;font-size:9px">RUN/buc: ${fmtMs(Math.round((eventTotals.run||0)/quantity))} · Setup/sesiune: ${fmtMs(eventTotals.setup||0)}</div>`;
     }
     saveNormSession(sess).then(()=>showToast('✓ Sesiune salvată','ok',3000));
     showSessionSummary(sess);
@@ -11879,7 +11904,7 @@ function renderNormOperator(){
     opInp.style.borderColor='';
     if(!(machInp.value||'').trim()){machInp.style.borderColor='#dc2626';machInp.focus();showToast('Introduceți mașina pe care lucrați','err',2500);return;}
     machInp.style.borderColor='';
-    if(!opeRows.length||!selected||!selected.opNo){opeSel.style.borderColor='#dc2626';showToast('Selectați operația (Ope No)','err',2500);return;}
+    if(!opeRows.length||!selected||selected.opSeq==null){opeSel.style.borderColor='#dc2626';showToast('Selectați operația (Ope Seq)','err',2500);return;}
     opeSel.style.borderColor='';
     sessionActive=true;sessionStart=Date.now();eventStart=Date.now();currentEventId='run';
     eventTotals={setup:0,deburr:0,pickup:0,ctc:0,run:0,other:0};
@@ -11911,9 +11936,9 @@ function renderNormOperator(){
 
   const refreshStartState=()=>{
     if(sessionActive)return;
-    const ok=!!selectedComp&&(opInp.value||'').trim().length>=5&&!!(machInp.value||'').trim()&&!!(selected&&selected.opNo);
+    const ok=!!selectedComp&&(opInp.value||'').trim().length>=5&&!!(machInp.value||'').trim()&&!!(selected&&selected.opSeq!=null);
     startBtn.style.opacity=ok?'1':'.5';
-    startBtn.title=ok?'Pornește normarea':'Completați: componentă, operator (min. 5 car.), mașină și Ope No';
+    startBtn.title=ok?'Pornește normarea':'Completați: componentă, operator (min. 5 car.), mașină și Ope Seq';
   };
   [opInp,machInp].forEach(i=>i.addEventListener('input',refreshStartState));
   opeSel.addEventListener('change',refreshStartState);
@@ -12111,30 +12136,34 @@ function renderNormHistory(){
   if(!sessions.length){wrap.innerHTML='<div style="text-align:center;padding:40px;color:var(--text3)">Nu există sesiuni de normare salvate.</div>';return wrap;}
   const tbl=el('table');tbl.style.cssText='width:100%;border-collapse:collapse;font-size:11.5px';
   const adm=S.session?.role==='admin';
-  const SEP='border-left:3px solid #64748b';
+  const SEP='border-left:3px solid #0f172a';
   tbl.innerHTML=`<thead>
-  <tr style="background:#0f2540;color:#fff;font-size:10px;text-transform:uppercase;letter-spacing:.06em">
-    ${adm?'<th style="padding:6px 10px"></th>':''}
-    <th colspan="6" style="padding:6px 10px;text-align:left;font-weight:800">Identificare</th>
-    <th colspan="5" style="padding:6px 10px;text-align:center;font-weight:900;background:#166534;${SEP}">⏱ Normare realizată</th>
-    <th colspan="3" style="padding:6px 10px;text-align:center;font-weight:900;background:#475569;${SEP}">📐 Timpi BOW (normat)</th>
+  <tr style="color:#fff;font-size:10px;text-transform:uppercase;letter-spacing:.05em">
+    ${adm?'<th style="padding:6px 8px;background:#0f2540"></th>':''}
+    <th colspan="6" style="padding:6px 10px;text-align:left;font-weight:800;background:#0f2540">Identificare</th>
+    <th colspan="5" style="padding:6px 10px;text-align:center;font-weight:900;background:#166534;${SEP}">⏱ Timp cronometrat — TOTAL</th>
+    <th colspan="4" style="padding:6px 10px;text-align:center;font-weight:900;background:#0369a1;${SEP}">⏱ Timp cronometrat — PER PIESĂ</th>
+    <th colspan="3" style="padding:6px 10px;text-align:center;font-weight:900;background:#7c3aed;${SEP}">📐 Timp BOW — PER PIESĂ</th>
   </tr>
   <tr style="background:#1e3a5f;color:#fff">
-    ${adm?'<th style="padding:8px 10px;width:60px"></th>':''}
+    ${adm?'<th style="padding:8px 8px;width:56px"></th>':''}
     <th style="padding:8px 10px;text-align:left">Data</th>
     <th style="padding:8px 10px;text-align:left">Produs</th>
     <th style="padding:8px 10px;text-align:left">Operator</th>
-    <th style="padding:8px 10px;text-align:left">Ope No</th>
+    <th style="padding:8px 10px;text-align:left">Ope Seq</th>
     <th style="padding:8px 10px;text-align:left">WC / Mașină</th>
     <th style="padding:8px 10px;text-align:right">Buc</th>
     <th style="padding:8px 10px;text-align:right;background:#15803d;${SEP}">Total</th>
     <th style="padding:8px 10px;text-align:right;background:#15803d">Setup</th>
-    <th style="padding:8px 10px;text-align:right;background:#15803d">RUN/buc</th>
+    <th style="padding:8px 10px;text-align:right;background:#15803d">RUN</th>
     <th style="padding:8px 10px;text-align:right;background:#15803d">Debavurare</th>
     <th style="padding:8px 10px;text-align:right;background:#15803d">Altele</th>
-    <th style="padding:8px 10px;text-align:right;background:#64748b;${SEP}">Setup</th>
-    <th style="padding:8px 10px;text-align:right;background:#64748b">RUN/buc</th>
-    <th style="padding:8px 10px;text-align:right;background:#64748b" title="Timp real vs. normat">Δ total</th>
+    <th style="padding:8px 10px;text-align:right;background:#0284c7;${SEP}">RUN/buc</th>
+    <th style="padding:8px 10px;text-align:right;background:#0284c7">Alte/buc</th>
+    <th style="padding:8px 10px;text-align:right;background:#0284c7" title="Setup nu se împarte la bucăți — este pe sesiune">Total/buc*</th>
+    <th style="padding:8px 10px;text-align:right;background:#8b5cf6;${SEP}" title="Setup time din BOW — pe sesiune">Setup/sesiune</th>
+    <th style="padding:8px 10px;text-align:right;background:#8b5cf6">RUN/buc</th>
+    <th style="padding:8px 10px;text-align:right;background:#8b5cf6" title="RUN cronometrat/buc vs. RUN BOW/buc">Δ RUN/buc</th>
   </tr></thead>`;
   const tbody_=el('tbody');
   sessions.forEach((s,i)=>{
@@ -12159,40 +12188,52 @@ function renderNormHistory(){
     tr.appendChild(mkTd(dt,'padding:6px 10px;color:#6b7280'));
     tr.appendChild(mkTd(`<b style="font-family:monospace">${s.product}</b>`));
     tr.appendChild(mkTd(s.operator));
-    tr.appendChild(mkTd(s.opeNo||'—','padding:6px 10px;font-family:monospace;font-weight:700;color:#92400e'));
+    tr.appendChild(mkTd((s.opeSeq!==''&&s.opeSeq!=null?('Seq '+s.opeSeq):'')+(s.opeNo?(s.opeSeq!==''&&s.opeSeq!=null?' · ':'')+s.opeNo:'')||'—','padding:6px 10px;font-family:monospace;font-weight:700;color:#92400e'));
     tr.appendChild(mkTd(`${s.wc||''}${s.machine?' / '+s.machine:''}`));
     tr.appendChild(mkTd(s.quantity,'padding:6px 10px;text-align:right;font-weight:800;color:#1d4ed8'));
-    // ── Realized vs. BOW ──
-    const SEPc='border-left:3px solid #94a3b8;';
-    const nMin=v=>v>0?fmtBowTime(v):'—';
-    const msMin=ms=>ms/60000;
+    // ── Three sections: total timed · per piece timed · BOW per piece ──
+    const SEPc='border-left:3px solid #0f172a;';
+    const msMin=ms=>(ms||0)/60000;
     const qty=s.quantity||1;
-    const bSet=s.bowSetupT||0, bRun=s.bowRunT||0;
-    const rSetM=msMin(s.events?.setup?.ms||0);
-    const rRunPer=msMin((s.events?.run?.ms||0))/qty;
-    const cmp=(real,norm)=>{
-      if(!norm)return 'color:#1e3a5f';
-      return real>norm*1.1?'color:#dc2626;font-weight:800':real<norm*0.9?'color:#15803d;font-weight:800':'color:#1e3a5f;font-weight:700';
-    };
-    const GRN='padding:6px 10px;text-align:right;font-family:monospace;background:#f0fdf4;';
-    const GRY='padding:6px 10px;text-align:right;font-family:monospace;background:#f1f5f9;color:#475569;';
-    tr.appendChild(mkTd(s.totalFmt,GRN+SEPc+'font-weight:900;color:#15803d'));
-    tr.appendChild(mkTd(rSetM>0?fmtBowTime(rSetM):'—',GRN+cmp(rSetM,bSet)));
-    tr.appendChild(mkTd(rRunPer>0?fmtBowTime(rRunPer):'—',GRN+cmp(rRunPer,bRun)));
-    tr.appendChild(mkTd(s.events?.deburr?.fmt||'—',GRN+'color:#475569'));
-    tr.appendChild(mkTd(s.events?.other?.ms>0?(s.events.other.fmt+(s.otherLabel?' ('+s.otherLabel+')':'')):'—',GRN+'color:#6b7280'));
-    tr.appendChild(mkTd(nMin(bSet),GRY+SEPc));
-    tr.appendChild(mkTd(nMin(bRun),GRY));
-    const bowTot=s.bowTotalMin||(bRun*qty+bSet);
-    const realTot=msMin(s.totalMs||0);
-    let dTxt='—',dCss=GRY;
-    if(bowTot>0&&realTot>0){
-      const pct=Math.round((realTot/bowTot-1)*100);
+    const f=v=>v>0?fmtBowTime(v):'—';
+    // timed totals (minutes)
+    const tTot=msMin(s.totalMs), tSet=msMin(s.events?.setup?.ms), tRun=msMin(s.events?.run?.ms),
+          tDeb=msMin(s.events?.deburr?.ms), tOth=msMin(s.events?.other?.ms);
+    // BOW: setup is spread over the batch so everything is per piece
+    const bSetTot=s.bowSetupT||0, bRunPer=s.bowRunT||0;
+    const tTotPer=tTot/qty;
+    const cmp=(real,norm)=>!norm?'color:#1e3a5f':real>norm*1.1?'color:#dc2626;font-weight:800'
+      :real<norm*0.9?'color:#15803d;font-weight:800':'color:#1e3a5f;font-weight:700';
+    const G='padding:6px 10px;text-align:right;font-family:monospace;background:#f0fdf4;';
+    const B='padding:6px 10px;text-align:right;font-family:monospace;background:#eff6ff;';
+    const V='padding:6px 10px;text-align:right;font-family:monospace;background:#f5f3ff;color:#6d28d9;';
+    // § total timed
+    tr.appendChild(mkTd(s.totalFmt,G+SEPc+'font-weight:900;color:#15803d'));
+    tr.appendChild(mkTd(f(tSet),G+'color:#475569'));
+    tr.appendChild(mkTd(f(tRun),G+'color:#15803d;font-weight:700'));
+    tr.appendChild(mkTd(f(tDeb),G+'color:#475569'));
+    tr.appendChild(mkTd(tOth>0?(f(tOth)+(s.otherLabel?' ('+s.otherLabel+')':'')):'—',G+'color:#6b7280'));
+    // § per piece timed — setup stays per session, only RUN is divided
+    tr.appendChild(mkTd(f(tRun/qty),B+SEPc+'font-weight:900;'+cmp(tRun/qty,bRunPer)));
+    tr.appendChild(mkTd(f((tDeb+tOth)/qty),B+'color:#475569'));
+    const totPerPc=tRun/qty+(tDeb+tOth)/qty;
+    const tpTd=mkTd(f(totPerPc),B+'font-weight:700;color:#0369a1');
+    tpTd.title='RUN + debavurare + alte, per bucată (fără setup — acesta este pe sesiune)';
+    tr.appendChild(tpTd);
+    // § BOW — setup per session, run per piece
+    const bsTd=mkTd(f(bSetTot),V+SEPc+'font-weight:700');
+    bsTd.title='Setup time din BOW — pe sesiune/lot, nu per bucată';
+    tr.appendChild(bsTd);
+    tr.appendChild(mkTd(f(bRunPer),V+'font-weight:700'));
+    let dTxt='—',dCss=V;
+    if(bRunPer>0&&tRun>0){
+      const pct=Math.round(((tRun/qty)/bRunPer-1)*100);
       dTxt=(pct>0?'+':'')+pct+'%';
-      dCss='padding:6px 10px;text-align:right;font-family:monospace;font-weight:900;background:#f1f5f9;color:'+(pct>10?'#dc2626':pct<-10?'#15803d':'#1e3a5f');
+      dCss='padding:6px 10px;text-align:right;font-family:monospace;font-weight:900;background:#f5f3ff;color:'+(pct>10?'#dc2626':pct<-10?'#15803d':'#6d28d9');
     }
     const dTd=mkTd(dTxt,dCss);
-    dTd.title=bowTot>0?`Normat BOW: ${fmtBowTime(bowTot)} · Real: ${fmtBowTime(realTot)}`:'Fără timpi BOW';
+    dTd.title=bRunPer>0?`RUN BOW/buc: ${fmtBowTime(bRunPer)} · RUN cronometrat/buc: ${fmtBowTime(tRun/qty)}`+
+      (bSetTot>0?` · Setup BOW: ${fmtBowTime(bSetTot)} vs. real ${fmtBowTime(tSet)} (pe sesiune)`:''):'Fără timpi BOW';
     tr.appendChild(dTd);
     tbody_.appendChild(tr);
   });
@@ -12212,7 +12253,8 @@ function showSessionDetail(s){
   body.innerHTML=`
     <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:12px;font-size:12px">
       <div><b>Produs:</b> ${s.product}</div><div><b>Desen:</b> ${s.drawing||'—'}</div>
-      <div><b>Operator:</b> ${s.operator}</div><div><b>WC / Mașină:</b> ${s.wc}${s.machine?' / '+s.machine:''}</div>
+      <div><b>Operator:</b> ${s.operator}</div>
+      <div><b>Ope Seq:</b> ${s.opeSeq!==''&&s.opeSeq!=null?('Seq '+s.opeSeq):'—'}${s.opeNo?' · Op '+s.opeNo:''}</div><div><b>WC / Mașină:</b> ${s.wc}${s.machine?' / '+s.machine:''}</div>
       <div><b>Cantitate:</b> <span style="font-weight:800;color:#1d4ed8">${s.quantity} buc</span></div>
       ${s.finalProduct?`<div><b>Produs final:</b> ${s.finalProduct}</div>`:''}
       <div><b>Data:</b> ${new Date(s.ts).toLocaleString('ro-RO')}</div>
@@ -12220,25 +12262,32 @@ function showSessionDetail(s){
     ${(()=>{
       const q=s.quantity||1,bR=s.bowRunT||0,bS=s.bowSetupT||0;
       if(!bR&&!bS)return '';
-      const bowTot=s.bowTotalMin||(bR*q+bS);
-      const realTot=(s.totalMs||0)/60000;
-      const realSet=(s.events?.setup?.ms||0)/60000;
-      const realRun=(s.events?.run?.ms||0)/60000/q;
-      const pct=bowTot>0?Math.round((realTot/bowTot-1)*100):0;
-      const col=pct>10?'#dc2626':pct<-10?'#15803d':'#1e3a5f';
-      const line=(l,n,r)=>`<tr><td style="padding:3px 7px;color:#475569">${l}</td>
-        <td style="padding:3px 7px;text-align:right;font-family:monospace;color:#64748b">${n>0?fmtBowTime(n):'—'}</td>
-        <td style="padding:3px 7px;text-align:right;font-family:monospace;font-weight:800;color:${!n?'#64748b':r>n*1.1?'#dc2626':r<n*0.9?'#15803d':'#1e3a5f'}">${r>0?fmtBowTime(r):'—'}</td></tr>`;
+      const mm=ms=>(ms||0)/60000;
+      const tTot=mm(s.totalMs),tSet=mm(s.events?.setup?.ms),tRun=mm(s.events?.run?.ms),
+            tDeb=mm(s.events?.deburr?.ms),tOth=mm(s.events?.other?.ms);
+      const fx=v=>v>0?fmtBowTime(v):'—';
+      const col2=(r,n)=>!n?'#1e3a5f':r>n*1.1?'#dc2626':r<n*0.9?'#15803d':'#1e3a5f';
+      const pct=bR>0&&tRun>0?Math.round(((tRun/q)/bR-1)*100):null;
+      const pc=pct==null?'#94a3b8':pct>10?'#dc2626':pct<-10?'#15803d':'#6d28d9';
+      const row=(l,tot,per,bow,note)=>`<tr>
+        <td style="padding:4px 8px;color:#475569">${l}${note?`<div style="font-size:9px;color:#94a3b8">${note}</div>`:''}</td>
+        <td style="padding:4px 8px;text-align:right;font-family:monospace;background:#f0fdf4">${fx(tot)}</td>
+        <td style="padding:4px 8px;text-align:right;font-family:monospace;background:#eff6ff;font-weight:700;color:${per==null?'#cbd5e1':col2(per,bow)}">${per==null?'—':fx(per)}</td>
+        <td style="padding:4px 8px;text-align:right;font-family:monospace;background:#f5f3ff;color:#6d28d9">${bow?fx(bow):'—'}</td></tr>`;
       return `<div style="margin-bottom:10px;border:1px solid var(--border);border-radius:7px;overflow:hidden">
-        <div style="background:#f1f5f9;padding:5px 10px;font-size:9.5px;font-weight:800;color:#475569;text-transform:uppercase;letter-spacing:.04em">Normat (BOW) vs. realizat</div>
         <table style="width:100%;border-collapse:collapse;font-size:11.5px">
-          <tr style="background:#fafbfc;color:#94a3b8;font-size:9.5px;text-transform:uppercase">
-            <th style="padding:3px 7px;text-align:left"></th><th style="padding:3px 7px;text-align:right">BOW</th><th style="padding:3px 7px;text-align:right">Real</th></tr>
-          ${line('Setup',bS,realSet)}
-          ${line('Run / bucată',bR,realRun)}
-          ${line('Total lucrare',bowTot,realTot)}
+          <tr style="color:#fff;font-size:9px;text-transform:uppercase;letter-spacing:.04em">
+            <th style="padding:5px 8px;text-align:left;background:#0f2540"></th>
+            <th style="padding:5px 8px;text-align:right;background:#166534">Cronometrat total</th>
+            <th style="padding:5px 8px;text-align:right;background:#0369a1">Cronometrat/buc</th>
+            <th style="padding:5px 8px;text-align:right;background:#7c3aed">BOW</th></tr>
+          ${row('Setup',tSet,null,bS,'pe sesiune')}
+          ${row('Run',tRun,tRun/q,bR,'per bucată')}
+          ${row('Debavurare + alte',tDeb+tOth,(tDeb+tOth)/q,null,'')}
+          ${row('TOTAL sesiune',tTot,null,bS+bR*q,`${q} buc`)}
         </table>
-        <div style="padding:5px 10px;background:#f8fafc;font-size:11.5px;font-weight:800;color:${col};text-align:right">Abatere: ${pct>0?'+':''}${pct}%</div>
+        <div style="padding:5px 10px;background:#f8fafc;font-size:11.5px;font-weight:800;color:${pc};text-align:right">
+          ${pct==null?'Fără RUN în BOW':`Abatere RUN/buc: ${pct>0?'+':''}${pct}%`}</div>
       </div>`;
     })()}
     <div style="background:#f0fdf4;border:2px solid #86efac;border-radius:6px;padding:8px 14px;margin-bottom:10px;text-align:center">
