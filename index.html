@@ -12141,9 +12141,8 @@ function renderNormHistory(){
   <tr style="color:#fff;font-size:10px;text-transform:uppercase;letter-spacing:.05em">
     ${adm?'<th style="padding:6px 8px;background:#0f2540"></th>':''}
     <th colspan="6" style="padding:6px 10px;text-align:left;font-weight:800;background:#0f2540">Identificare</th>
-    <th colspan="5" style="padding:6px 10px;text-align:center;font-weight:900;background:#166534;${SEP}">⏱ Timp cronometrat — TOTAL</th>
-    <th colspan="4" style="padding:6px 10px;text-align:center;font-weight:900;background:#0369a1;${SEP}">⏱ Timp cronometrat — PER PIESĂ</th>
-    <th colspan="3" style="padding:6px 10px;text-align:center;font-weight:900;background:#7c3aed;${SEP}">📐 Timp BOW — PER PIESĂ</th>
+    <th colspan="5" style="padding:6px 10px;text-align:center;font-weight:900;background:#166534;${SEP}">⏱ Timp cronometrat — TOTAL (min)</th>
+    <th colspan="3" style="padding:6px 10px;text-align:center;font-weight:900;background:#7c3aed;${SEP}">📐 Timp BOW (min)</th>
   </tr>
   <tr style="background:#1e3a5f;color:#fff">
     ${adm?'<th style="padding:8px 8px;width:56px"></th>':''}
@@ -12158,12 +12157,9 @@ function renderNormHistory(){
     <th style="padding:8px 10px;text-align:right;background:#15803d">RUN</th>
     <th style="padding:8px 10px;text-align:right;background:#15803d">Debavurare</th>
     <th style="padding:8px 10px;text-align:right;background:#15803d">Altele</th>
-    <th style="padding:8px 10px;text-align:right;background:#0284c7;${SEP}">RUN/buc</th>
-    <th style="padding:8px 10px;text-align:right;background:#0284c7">Alte/buc</th>
-    <th style="padding:8px 10px;text-align:right;background:#0284c7" title="Setup nu se împarte la bucăți — este pe sesiune">Total/buc*</th>
     <th style="padding:8px 10px;text-align:right;background:#8b5cf6;${SEP}" title="Setup time din BOW — pe sesiune">Setup/sesiune</th>
     <th style="padding:8px 10px;text-align:right;background:#8b5cf6">RUN/buc</th>
-    <th style="padding:8px 10px;text-align:right;background:#8b5cf6" title="RUN cronometrat/buc vs. RUN BOW/buc">Δ RUN/buc</th>
+    <th style="padding:8px 10px;text-align:right;background:#8b5cf6" title="RUN cronometrat/buc vs. RUN BOW/buc">Abatere RUN</th>
   </tr></thead>`;
   const tbody_=el('tbody');
   sessions.forEach((s,i)=>{
@@ -12191,49 +12187,44 @@ function renderNormHistory(){
     tr.appendChild(mkTd((s.opeSeq!==''&&s.opeSeq!=null?('Seq '+s.opeSeq):'')+(s.opeNo?(s.opeSeq!==''&&s.opeSeq!=null?' · ':'')+s.opeNo:'')||'—','padding:6px 10px;font-family:monospace;font-weight:700;color:#92400e'));
     tr.appendChild(mkTd(`${s.wc||''}${s.machine?' / '+s.machine:''}`));
     tr.appendChild(mkTd(s.quantity,'padding:6px 10px;text-align:right;font-weight:800;color:#1d4ed8'));
-    // ── Three sections: total timed · per piece timed · BOW per piece ──
+    // ── Timed total (2 decimals, minutes) vs. BOW ──
     const SEPc='border-left:3px solid #0f172a;';
     const msMin=ms=>(ms||0)/60000;
     const qty=s.quantity||1;
-    const f=v=>v>0?fmtBowTime(v):'—';
-    // timed totals (minutes)
+    const f2=v=>v>0?v.toFixed(2):'—';
     const tTot=msMin(s.totalMs), tSet=msMin(s.events?.setup?.ms), tRun=msMin(s.events?.run?.ms),
           tDeb=msMin(s.events?.deburr?.ms), tOth=msMin(s.events?.other?.ms);
-    // BOW: setup is spread over the batch so everything is per piece
     const bSetTot=s.bowSetupT||0, bRunPer=s.bowRunT||0;
-    const tTotPer=tTot/qty;
-    const cmp=(real,norm)=>!norm?'color:#1e3a5f':real>norm*1.1?'color:#dc2626;font-weight:800'
-      :real<norm*0.9?'color:#15803d;font-weight:800':'color:#1e3a5f;font-weight:700';
     const G='padding:6px 10px;text-align:right;font-family:monospace;background:#f0fdf4;';
-    const B='padding:6px 10px;text-align:right;font-family:monospace;background:#eff6ff;';
     const V='padding:6px 10px;text-align:right;font-family:monospace;background:#f5f3ff;color:#6d28d9;';
-    // § total timed
-    tr.appendChild(mkTd(s.totalFmt,G+SEPc+'font-weight:900;color:#15803d'));
-    tr.appendChild(mkTd(f(tSet),G+'color:#475569'));
-    tr.appendChild(mkTd(f(tRun),G+'color:#15803d;font-weight:700'));
-    tr.appendChild(mkTd(f(tDeb),G+'color:#475569'));
-    tr.appendChild(mkTd(tOth>0?(f(tOth)+(s.otherLabel?' ('+s.otherLabel+')':'')):'—',G+'color:#6b7280'));
-    // § per piece timed — setup stays per session, only RUN is divided
-    tr.appendChild(mkTd(f(tRun/qty),B+SEPc+'font-weight:900;'+cmp(tRun/qty,bRunPer)));
-    tr.appendChild(mkTd(f((tDeb+tOth)/qty),B+'color:#475569'));
-    const totPerPc=tRun/qty+(tDeb+tOth)/qty;
-    const tpTd=mkTd(f(totPerPc),B+'font-weight:700;color:#0369a1');
-    tpTd.title='RUN + debavurare + alte, per bucată (fără setup — acesta este pe sesiune)';
-    tr.appendChild(tpTd);
-    // § BOW — setup per session, run per piece
-    const bsTd=mkTd(f(bSetTot),V+SEPc+'font-weight:700');
-    bsTd.title='Setup time din BOW — pe sesiune/lot, nu per bucată';
+    // § timed total
+    const totTd=mkTd(f2(tTot),G+SEPc+'font-weight:900;color:#15803d');
+    totTd.title='Timp total cronometrat: '+s.totalFmt;
+    tr.appendChild(totTd);
+    const setTd=mkTd(f2(tSet),G+(bSetTot>0?(tSet>bSetTot*1.1?'color:#dc2626;font-weight:800':tSet<bSetTot*0.9&&tSet>0?'color:#15803d;font-weight:800':'color:#1e3a5f;font-weight:700'):'color:#475569'));
+    if(bSetTot>0)setTd.title='Setup BOW: '+bSetTot.toFixed(2)+' min';
+    tr.appendChild(setTd);
+    const runPer=tRun/qty;
+    const runTd=mkTd(f2(tRun),G+'color:#15803d;font-weight:700');
+    runTd.title=runPer>0?('RUN per bucată: '+runPer.toFixed(2)+' min'):'';
+    tr.appendChild(runTd);
+    tr.appendChild(mkTd(f2(tDeb),G+'color:#475569'));
+    tr.appendChild(mkTd(tOth>0?(f2(tOth)+(s.otherLabel?' ('+s.otherLabel+')':'')):'—',G+'color:#6b7280'));
+    // § BOW
+    const bsTd=mkTd(f2(bSetTot),V+SEPc+'font-weight:700');
+    bsTd.title='Setup time din BOW — pe sesiune/lot';
     tr.appendChild(bsTd);
-    tr.appendChild(mkTd(f(bRunPer),V+'font-weight:700'));
+    const brTd=mkTd(f2(bRunPer),V+'font-weight:700');
+    brTd.title=bRunPer>0?('RUN BOW per bucată · pentru '+qty+' buc = '+(bRunPer*qty).toFixed(2)+' min'):'';
+    tr.appendChild(brTd);
     let dTxt='—',dCss=V;
     if(bRunPer>0&&tRun>0){
-      const pct=Math.round(((tRun/qty)/bRunPer-1)*100);
+      const pct=Math.round((runPer/bRunPer-1)*100);
       dTxt=(pct>0?'+':'')+pct+'%';
       dCss='padding:6px 10px;text-align:right;font-family:monospace;font-weight:900;background:#f5f3ff;color:'+(pct>10?'#dc2626':pct<-10?'#15803d':'#6d28d9');
     }
     const dTd=mkTd(dTxt,dCss);
-    dTd.title=bRunPer>0?`RUN BOW/buc: ${fmtBowTime(bRunPer)} · RUN cronometrat/buc: ${fmtBowTime(tRun/qty)}`+
-      (bSetTot>0?` · Setup BOW: ${fmtBowTime(bSetTot)} vs. real ${fmtBowTime(tSet)} (pe sesiune)`:''):'Fără timpi BOW';
+    dTd.title=bRunPer>0?`RUN cronometrat/buc: ${runPer.toFixed(2)} min · RUN BOW/buc: ${bRunPer.toFixed(2)} min`:'Fără RUN în BOW';
     tr.appendChild(dTd);
     tbody_.appendChild(tr);
   });
