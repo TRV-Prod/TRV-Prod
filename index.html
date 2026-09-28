@@ -7394,8 +7394,9 @@ function renderPlanVsLivrat(){
       else status='partial';
       const price=PRICE.get(it)||0;
       return {item:it,price,
-        valPlan:price*(p.qty||0),valTransit:price*transit,
-        valDeliv:price*(d.qty||0),valDiff:price*diff,
+        valPlan:price*(p.qty||0),
+        valDeliv:price*(transit+(d.qty||0)),
+        valDiff:price*diff,
         name:p.name||d.name||st?.slName||st?.name||'',
         cust:p.cust||[...(d.cust||[])].join(', '),
         plan:p.qty||0,transit,deliv:d.qty||0,diff,status,
@@ -7418,9 +7419,8 @@ function renderPlanVsLivrat(){
     {k:'transit',l:'− In Transit',w:'96px',a:'right',num:true,txt:r=>r.transit},
     {k:'deliv', l:'− Livrat',  w:'92px', a:'right',num:true,txt:r=>r.deliv},
     {k:'diff',  l:'= Diferență',w:'100px',a:'right',num:true,txt:r=>r.diff},
-    {k:'valPlan',l:'Val. planificată €',w:'118px',a:'right',num:true,txt:r=>r.valPlan},
-    {k:'valDeliv',l:'Val. livrată €',w:'112px',a:'right',num:true,txt:r=>r.valDeliv},
-    {k:'valDiff',l:'Val. diferență €',w:'118px',a:'right',num:true,txt:r=>r.valDiff},
+    {k:'valPlan',l:'Val. planificată €',w:'124px',a:'right',num:true,txt:r=>r.valPlan},
+    {k:'valDeliv',l:'Val. livrată €',w:'124px',a:'right',num:true,txt:r=>r.valDeliv},
     {k:'dates', l:'Date livrare',w:'140px',a:'left',txt:r=>r.dates},
     {k:'obs',   l:'Observații',w:'220px',a:'left',txt:r=>r.obs},
   ];
@@ -7476,8 +7476,9 @@ function renderPlanVsLivrat(){
     kpi.innerHTML=
       `<span style="padding:4px 10px;border-radius:6px;background:#f1f5f9;font-size:11.5px;font-weight:700;color:#1e3a5f">Săpt. ${F.wk} · ${rows.length}/${all.length} articole</span>`+
       Object.entries(ST).map(([k,v])=>`<span style="padding:4px 10px;border-radius:6px;background:${v.bg};color:${v.c};border:1px solid ${v.bd};font-size:11.5px;font-weight:700">${v.l}: ${cnt(k)}</span>`).join('')+
-      `<span style="padding:4px 10px;border-radius:6px;background:#eff6ff;color:#1d4ed8;font-size:11.5px;font-weight:700">Plan ${fmtN(sum(rows,'plan'))} · Tranzit ${fmtN(sum(rows,'transit'))} · Livrat ${fmtN(sum(rows,'deliv'))}</span>`+
-      `<span style="padding:4px 10px;border-radius:6px;background:#f0fdf4;color:#15803d;font-size:11.5px;font-weight:800">€ planificat ${fmtEur(sum(rows,'valPlan'))} · livrat ${fmtEur(sum(rows,'valDeliv'))} · rest ${fmtEur(sum(rows,'valDiff'))}</span>`+
+      `<span style="padding:4px 10px;border-radius:6px;background:#eff6ff;color:#1d4ed8;font-size:11.5px;font-weight:700">Buc: plan <b>${fmtN(sum(rows,'plan'))}</b> − tranzit <b>${fmtN(sum(rows,'transit'))}</b> − livrat <b>${fmtN(sum(rows,'deliv'))}</b> = <b style="color:${sum(rows,'diff')>0?'#dc2626':'#15803d'}">${fmtN(sum(rows,'diff'))}</b></span>`+
+      (()=>{const vp=sum(rows,'valPlan'),vd=sum(rows,'valDeliv'),vr=vp-vd;
+        return `<span style="padding:4px 10px;border-radius:6px;background:#f0fdf4;color:#15803d;font-size:11.5px;font-weight:800">€ planificat <b>${fmtEur(vp)}</b> · livrat <b>${fmtEur(vd)}</b> · diferență <b style="color:${vr>0?'#dc2626':vr<0?'#7c3aed':'#15803d'}">${fmtEur(vr)}</b></span>`;})()+
       (saved?.savedAt?`<span style="margin-left:auto;font-size:10.5px;color:#94a3b8;align-self:center">📌 fixată ${new Date(saved.savedAt).toLocaleString('ro-RO').slice(0,16)}${saved.by?' · '+saved.by:''}</span>`
         :`<span style="margin-left:auto;font-size:10.5px;color:#b45309;align-self:center">⚠ Planificare nefixată${normWeekLabel(S.planCurrentWeek)===F.wk?' — se folosește planul curent':''}</span>`);
 
@@ -7537,9 +7538,10 @@ function renderPlanVsLivrat(){
       tdD.title=`${fmtN(r.plan)} planificat − ${fmtN(r.transit)} tranzit − ${fmtN(r.deliv)} livrat = ${fmtN(r.diff)}`+
         (r.diff>0?' (rămas de livrat)':r.diff<0?' (livrat peste plan)':' (acoperit integral)');
       tr.appendChild(tdD);
-      tr.appendChild(mkTd(r.valPlan?fmtEur(r.valPlan):'—','text-align:right;font-weight:700;color:#1d4ed8;font-family:monospace;background:#f8fafc'));
-      tr.appendChild(mkTd(r.valDeliv?fmtEur(r.valDeliv):'—','text-align:right;font-weight:700;color:#15803d;font-family:monospace;background:#f8fafc'));
-      tr.appendChild(mkTd(r.valDiff?((r.valDiff>0?'+':'')+fmtEur(r.valDiff)):'—','text-align:right;font-weight:900;font-family:monospace;background:#f8fafc;color:'+(r.valDiff<0?'#dc2626':r.valDiff>0?'#7c3aed':'#15803d')));
+      tr.appendChild(mkTd(r.valPlan?fmtEur(r.valPlan):'—','text-align:right;font-weight:700;color:#1d4ed8;font-family:monospace;background:#f8fafc;border-left:2px solid #cbd5e1'));
+      const tdVD=mkTd(r.valDeliv?fmtEur(r.valDeliv):'—','text-align:right;font-weight:700;color:#15803d;font-family:monospace;background:#f8fafc');
+      tdVD.title=r.transit?`(${fmtN(r.transit)} tranzit + ${fmtN(r.deliv)} livrat) × ${fmtEur(r.price)} €`:`${fmtN(r.deliv)} × ${fmtEur(r.price)} €`;
+      tr.appendChild(tdVD);
       tr.appendChild(mkTd(r.dates?`<span style="font-size:10px;color:#94a3b8">${r.dates}</span>`:'—'));
       const tdO=el('td');tdO.style.cssText='padding:4px 8px';
       const inp=el('input');inp.type='text';inp.value=r.obs;inp.placeholder='Observații...';inp.disabled=!isAdmin;
@@ -7568,9 +7570,9 @@ function renderPlanVsLivrat(){
         const v=items.reduce((s,r)=>s+(r[k]||0),0);
         tr.appendChild(mkTd(fmtN(v),'text-align:right;font-weight:900;'+(k==='diff'?'border-left:2px solid #93c5fd;color:'+(v>0?'#dc2626':v<0?'#7c3aed':'#15803d'):'color:#1e3a5f')));
       });
-      ['valPlan','valDeliv','valDiff'].forEach(k=>{
+      ['valPlan','valDeliv'].forEach(k=>{
         const v=items.reduce((s,r)=>s+(r[k]||0),0);
-        tr.appendChild(mkTd(fmtEur(v),'text-align:right;font-weight:900;font-family:monospace;background:#c7ddf7;color:'+(k==='valDiff'?(v>0?'#dc2626':v<0?'#7c3aed':'#15803d'):'#0f2540')));
+        tr.appendChild(mkTd(fmtEur(v),'text-align:right;font-weight:900;font-family:monospace;background:#c7ddf7;color:#0f2540'+(k==='valPlan'?';border-left:2px solid #93c5fd':'')));
       });
       tr.appendChild(mkTd('',''));tr.appendChild(mkTd('',''));
       tb2.appendChild(tr);
@@ -7642,11 +7644,11 @@ function renderPlanVsLivrat(){
     const data=[head];
     const r2=v=>Math.round((v||0)*100)/100;
     const line=(r,g)=>[F.wk,g,ST[r.status].l,r.item,r.name,r.cust,r2(r.price),
-      r.plan,r.transit,r.deliv,r.diff,r2(r.valPlan),r2(r.valDeliv),r2(r.valDiff),r.dates,r.obs];
+      r.plan,r.transit,r.deliv,r.diff,r2(r.valPlan),r2(r.valDeliv),r.dates,r.obs];
     const S2=(items,k)=>r2(items.reduce((s,r)=>s+(r[k]||0),0));
     const sub=(label,items)=>[F.wk,'SUBTOTAL '+label,'','','','','',
       S2(items,'plan'),S2(items,'transit'),S2(items,'deliv'),S2(items,'diff'),
-      S2(items,'valPlan'),S2(items,'valDeliv'),S2(items,'valDiff'),'',''];
+      S2(items,'valPlan'),S2(items,'valDeliv'),'',''];
     if(F.group==='none'){
       rowsCache.forEach(r=>data.push(line(r,'')));
       data.push(sub('GENERAL',rowsCache));
@@ -7658,7 +7660,7 @@ function renderPlanVsLivrat(){
     }
     const wb=XLSX.utils.book_new();const ws=XLSX.utils.aoa_to_sheet(data);
     ws['!cols']=[{wch:10},{wch:18},{wch:13},{wch:20},{wch:32},{wch:24},{wch:11},
-      {wch:11},{wch:11},{wch:10},{wch:11},{wch:15},{wch:14},{wch:15},{wch:22},{wch:34}];
+      {wch:11},{wch:11},{wch:10},{wch:11},{wch:16},{wch:15},{wch:22},{wch:34}];
     XLSX.utils.book_append_sheet(wb,ws,'Planificat vs Livrat');
     XLSX.writeFile(wb,`Planificat_vs_Livrat_${F.wk}.xlsx`);
   });
