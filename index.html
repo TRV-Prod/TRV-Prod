@@ -7277,51 +7277,49 @@ function renderPlanVsLivrat(){
   const isAdmin=S.session?.role==='admin';
   const page=dv('');page.style.cssText='display:flex;flex-direction:column;flex:1;min-height:0;height:100%;overflow:hidden;background:#f8f9fb';
   if(!S.pvlData)S.pvlData={};
-  if(!S.pvlF)S.pvlF={wk:'',q:'',st:'all'};
-  const F=S.pvlF;
+  if(!S.pvlF)S.pvlF={wk:'',q:'',st:'all',cf:{},sort:null,dir:1,group:'none'};
+  const F=S.pvlF;if(!F.cf)F.cf={};if(!F.group)F.group='none';
 
   const tb=dv('');tb.style.cssText='display:flex;align-items:center;gap:8px;padding:10px 14px;background:#fff;border-bottom:2px solid var(--border);flex-wrap:wrap;flex-shrink:0';
   tb.innerHTML='<b style="font-size:14px;color:#1e3a5f">⚖ Planificat vs Livrat</b>';
   const inCss='height:32px;padding:0 9px;border:1.5px solid var(--border);border-radius:5px;font-size:12px';
-  const wkSel=el('select');wkSel.style.cssText=inCss+';font-weight:800;min-width:135px;color:#1e3a5f';
+  const wkSel=el('select');wkSel.style.cssText=inCss+';font-weight:800;min-width:145px;color:#1e3a5f';
   tb.appendChild(wkSel);
-  const q=el('input');q.placeholder='🔍 Cod, denumire, client...';q.value=F.q;q.style.cssText=inCss+';width:215px';
+  const q=el('input');q.placeholder='🔍 Caută în toate coloanele...';q.value=F.q;q.style.cssText=inCss+';width:215px';
   tb.appendChild(q);
   const stSel=el('select');stSel.style.cssText=inCss;
-  stSel.innerHTML='<option value="all">Toate liniile</option>'+
-    '<option value="nedeliv">Planificat nelivrat</option>'+
-    '<option value="neplan">Livrat neplanificat</option>'+
-    '<option value="partial">Livrat parțial</option>'+
-    '<option value="ok">Livrat integral</option>';
+  stSel.innerHTML='<option value="all">Toate liniile</option><option value="nedeliv">Planificat nelivrat</option><option value="neplan">Livrat neplanificat</option><option value="partial">Livrat parțial</option><option value="ok">Livrat integral</option>';
   stSel.value=F.st;tb.appendChild(stSel);
+  const grpSel=el('select');grpSel.style.cssText=inCss;
+  grpSel.innerHTML='<option value="none">Fără grupare</option><option value="status">Grupare: Status</option><option value="cust">Grupare: Client</option><option value="req">Grupare: Request date</option>';
+  grpSel.value=F.group;tb.appendChild(grpSel);
 
   const right=dv('');right.style.cssText='margin-left:auto;display:flex;gap:6px;flex-wrap:wrap';
   const bcss=(c2,bg)=>`height:32px;padding:0 12px;border:1.5px solid ${c2};border-radius:5px;background:${bg};color:${c2};cursor:pointer;font-size:12px;font-weight:700`;
+  const clrBtn=el('button');clrBtn.textContent='✕ Filtre';clrBtn.style.cssText=bcss('#64748b','#fff');
+  clrBtn.addEventListener('click',()=>{F.cf={};F.q='';F.st='all';q.value='';stSel.value='all';render();});
+  right.appendChild(clrBtn);
   let snapBtn=null;
   if(isAdmin){
-    snapBtn=el('button');snapBtn.textContent='📌 Fixează planificarea';
-    snapBtn.style.cssText=bcss('#b45309','#fffbeb');
+    snapBtn=el('button');snapBtn.textContent='📌 Fixează planificarea';snapBtn.style.cssText=bcss('#b45309','#fffbeb');
     snapBtn.title='Salvează pe server cantitățile planificate curente pentru săptămâna selectată';
     right.appendChild(snapBtn);
   }
   const xls=el('button');xls.textContent='⬇ Excel';xls.style.cssText=bcss('#15803d','#f0fdf4');
   right.appendChild(xls);
-  tb.appendChild(right);
-  page.appendChild(tb);
+  tb.appendChild(right);page.appendChild(tb);
 
   const kpi=dv('');kpi.style.cssText='display:flex;gap:8px;padding:8px 14px;background:#fff;border-bottom:1px solid var(--border);flex-wrap:wrap;flex-shrink:0';
   page.appendChild(kpi);
-  const body=dv('');body.style.cssText='flex:1;min-height:0;overflow:auto;padding:0';
+  const body=dv('');body.style.cssText='flex:1;min-height:0;overflow:auto';
   page.appendChild(body);
 
-  // ── Deliveries grouped by week ──
-  const delByWeek=()=>{
+  // ── Deliveries by week ──
+  const DEL=(()=>{
     const m=new Map();
     (S.perfLivrari||[]).forEach(r=>{
-      const wk=_pvlNormWeek(r['Week'],r['Period']);
-      if(!wk)return;
-      const item=String(r['Item']??'').trim();
-      if(!item)return;
+      const wk=_pvlNormWeek(r['Week'],r['Period']);if(!wk)return;
+      const item=String(r['Item']??'').trim();if(!item)return;
       const qv=parseFloat(String(r['Quantity']??'').replace(',','.'))||0;
       if(!m.has(wk))m.set(wk,new Map());
       const im=m.get(wk);
@@ -7332,19 +7330,29 @@ function renderPlanVsLivrat(){
       if(!e.name&&r['Name'])e.name=String(r['Name']).trim();
     });
     return m;
-  };
-  const DEL=delByWeek();
+  })();
+
+  // ── Earliest open Request date per item, from the Order Book ──
+  const REQ=(()=>{
+    const m=new Map();
+    (S.obData||[]).forEach(r=>{
+      const it=str(r['Item_no']||'').trim();if(!it)return;
+      const open=parseFloat(String(r['Open qty']??'0').replace(',','.'))||0;
+      const rd=r['Request dt'];if(!rd)return;
+      const d=new Date(rd);if(isNaN(d))return;
+      const cur=m.get(it);
+      if(!cur||d<cur.d)m.set(it,{d,open,raw:rd});
+    });
+    return m;
+  })();
+  const fmtReq=v=>{if(!v)return '';const d=new Date(v);return isNaN(d)?String(v):d.toLocaleDateString('ro-RO',{day:'2-digit',month:'2-digit',year:'numeric'});};
 
   const fillWeeks=()=>{
     const weeks=new Set([...DEL.keys(),...Object.keys(S.pvlData||{})]);
     weeks.add(_currentWkKey());
     if(S.planCurrentWeek)weeks.add(normWeekLabel(S.planCurrentWeek));
     const arr=[...weeks].filter(Boolean).sort().reverse();
-    wkSel.innerHTML=arr.map(w=>{
-      const saved=S.pvlData?.[w]?.planned?' 📌':'';
-      const d=DEL.get(w)?.size||0;
-      return `<option value="${w}">${w}${saved} · ${d} livrări</option>`;
-    }).join('');
+    wkSel.innerHTML=arr.map(w=>`<option value="${w}">${w}${S.pvlData?.[w]?.planned?' 📌':''} · ${DEL.get(w)?.size||0} livrări</option>`).join('');
     if(!F.wk||!arr.includes(F.wk)){
       const pw=normWeekLabel(S.planCurrentWeek);
       F.wk=(pw&&arr.includes(pw))?pw:(arr.includes(_currentWkKey())?_currentWkKey():(arr[0]||''));
@@ -7352,146 +7360,281 @@ function renderPlanVsLivrat(){
     wkSel.value=F.wk;
   };
 
-  // ── Build the rows for the selected week ──
   const buildRows=()=>{
-    const wk=F.wk;
-    const saved=S.pvlData?.[wk]||{};
-    // Planned: the server snapshot wins; otherwise the live plan
+    const wk=F.wk,saved=S.pvlData?.[wk]||{};
     const planned=new Map();
     if(saved.planned&&Object.keys(saved.planned).length){
       Object.entries(saved.planned).forEach(([it,o])=>planned.set(it,typeof o==='object'?o:{qty:o,name:'',cust:''}));
     } else if(normWeekLabel(S.planCurrentWeek)===wk||(!S.planCurrentWeek&&wk===_currentWkKey())){
-      [...(S.planData||new Map()).entries()].forEach(([it,p])=>{
-        planned.set(it,{qty:p.totalQty||0,
-          name:(p.entries?.[0]?.itemName)||'',
-          cust:[...new Set((p.entries||[]).map(e=>e.customer).filter(Boolean))].join(', ')});
-      });
+      [...(S.planData||new Map()).entries()].forEach(([it,p])=>planned.set(it,{qty:p.totalQty||0,
+        name:(p.entries?.[0]?.itemName)||'',cust:[...new Set((p.entries||[]).map(e=>e.customer).filter(Boolean))].join(', ')}));
     }
     const del=DEL.get(wk)||new Map();
-    const items=new Set([...planned.keys(),...del.keys()]);
     const obs=saved.obs||{};
-    return [...items].map(it=>{
+    return [...new Set([...planned.keys(),...del.keys()])].map(it=>{
       const p=planned.get(it)||{qty:0,name:'',cust:''};
       const d=del.get(it)||{qty:0,name:'',cust:new Set(),dates:new Set()};
       const st=S.stockIdx?.get(it);
       const transit=S.inTransitIdx?.[it]||0;
-      const diff=(d.qty||0)-(p.qty||0);
+      // In transit counts as already covered: it is subtracted from the plan
+      const planNet=Math.max(0,(p.qty||0)-transit);
+      const diff=(d.qty||0)-planNet;
       let status;
       if(!p.qty&&d.qty)status='neplan';
-      else if(p.qty&&!d.qty)status='nedeliv';
-      else if(d.qty>=p.qty)status='ok';
+      else if(planNet>0&&!d.qty)status='nedeliv';
+      else if((d.qty||0)>=planNet)status='ok';
       else status='partial';
+      const rq=REQ.get(it);
       return {item:it,name:p.name||d.name||st?.slName||st?.name||'',
         cust:p.cust||[...(d.cust||[])].join(', '),
-        plan:p.qty||0,deliv:d.qty||0,transit,diff,status,
-        dates:[...(d.dates||[])].sort().join(', '),
-        obs:obs[it]||''};
-    }).sort((a,b)=>{
-      const ord={nedeliv:0,partial:1,neplan:2,ok:3};
-      if(ord[a.status]!==ord[b.status])return ord[a.status]-ord[b.status];
-      return Math.abs(b.diff)-Math.abs(a.diff);
+        plan:p.qty||0,transit,planNet,deliv:d.qty||0,diff,status,
+        req:rq?rq.d.getTime():0,reqTxt:rq?fmtReq(rq.raw):'',
+        dates:[...(d.dates||[])].sort().join(', '),obs:obs[it]||''};
     });
   };
 
-  const ST={
-    nedeliv:{l:'Nelivrat',   c:'#991b1b',bg:'#fee2e2',bd:'#fca5a5'},
-    partial:{l:'Parțial',    c:'#92400e',bg:'#fef3c7',bd:'#fcd34d'},
-    neplan: {l:'Neplanificat',c:'#5b21b6',bg:'#ede9fe',bd:'#c4b5fd'},
-    ok:     {l:'Integral',   c:'#15803d',bg:'#dcfce7',bd:'#86efac'},
-  };
+  const ST={nedeliv:{l:'Nelivrat',c:'#991b1b',bg:'#fee2e2',bd:'#fca5a5'},
+    partial:{l:'Parțial',c:'#92400e',bg:'#fef3c7',bd:'#fcd34d'},
+    neplan:{l:'Neplanificat',c:'#5b21b6',bg:'#ede9fe',bd:'#c4b5fd'},
+    ok:{l:'Integral',c:'#15803d',bg:'#dcfce7',bd:'#86efac'}};
+
+  const COLS=[
+    {k:'status',l:'Status',   w:'110px',a:'left', txt:r=>ST[r.status].l},
+    {k:'item',  l:'Cod produs',w:'',    a:'left', txt:r=>r.item},
+    {k:'name',  l:'Denumire', w:'',     a:'left', txt:r=>r.name},
+    {k:'cust',  l:'Client',   w:'',     a:'left', txt:r=>r.cust},
+    {k:'req',   l:'Request date',w:'110px',a:'left',txt:r=>r.reqTxt,num:false},
+    {k:'plan',  l:'Planificat',w:'92px',a:'right',num:true,txt:r=>r.plan},
+    {k:'transit',l:'In Transit',w:'92px',a:'right',num:true,txt:r=>r.transit},
+    {k:'planNet',l:'De livrat',w:'92px',a:'right',num:true,txt:r=>r.planNet},
+    {k:'deliv', l:'Livrat',   w:'88px', a:'right',num:true,txt:r=>r.deliv},
+    {k:'diff',  l:'Diferență',w:'96px', a:'right',num:true,txt:r=>r.diff},
+    {k:'dates', l:'Date livrare',w:'140px',a:'left',txt:r=>r.dates},
+    {k:'obs',   l:'Observații',w:'220px',a:'left',txt:r=>r.obs},
+  ];
 
   let rowsCache=[];
-  function render(){
-    const all=buildRows();rowsCache=all;
+  function applyFilters(all){
     const qq=F.q.trim().toLowerCase();
-    const rows=all.filter(r=>{
+    return all.filter(r=>{
       if(F.st!=='all'&&r.status!==F.st)return false;
-      if(qq&&!((r.item+' '+r.name+' '+r.cust).toLowerCase().includes(qq)))return false;
+      if(qq&&!COLS.map(c2=>String(c2.txt(r)??'')).join(' ').toLowerCase().includes(qq))return false;
+      for(const[k,v]of Object.entries(F.cf)){
+        if(!v)continue;
+        const col=COLS.find(c2=>c2.k===k);if(!col)continue;
+        const cell=String(col.txt(r)??'').toLowerCase();
+        const nv=v.trim().toLowerCase();
+        if(col.num){
+          const m=nv.match(/^(>=|<=|>|<|=)?\s*(-?[\d.,]+)$/);
+          if(m){
+            const num=parseFloat(String(col.txt(r))||'0'),ref=parseFloat(m[2].replace(',','.'))||0;
+            const op=m[1]||'=';
+            if(op==='>'&&!(num>ref))return false;
+            if(op==='<'&&!(num<ref))return false;
+            if(op==='>='&&!(num>=ref))return false;
+            if(op==='<='&&!(num<=ref))return false;
+            if(op==='='&&num!==ref)return false;
+            continue;
+          }
+        }
+        if(!cell.includes(nv))return false;
+      }
       return true;
     });
+  }
+  function sortRows(rows){
+    if(!F.sort){
+      const ord={nedeliv:0,partial:1,neplan:2,ok:3};
+      return rows.sort((a,b)=>ord[a.status]-ord[b.status]||Math.abs(b.diff)-Math.abs(a.diff));
+    }
+    const col=COLS.find(c2=>c2.k===F.sort);
+    return rows.sort((a,b)=>{
+      if(F.sort==='req')return F.dir*((a.req||8e15)-(b.req||8e15));
+      const va=col.txt(a),vb=col.txt(b);
+      if(col.num)return F.dir*((parseFloat(va)||0)-(parseFloat(vb)||0));
+      return F.dir*String(va).localeCompare(String(vb),'ro',{numeric:true});
+    });
+  }
+
+  function render(){
+    const all=buildRows();
+    const rows=sortRows(applyFilters(all));rowsCache=rows;
     const cnt=s=>all.filter(r=>r.status===s).length;
     const saved=S.pvlData?.[F.wk];
+    const sum=(a,k)=>a.reduce((s,r)=>s+(r[k]||0),0);
     kpi.innerHTML=
-      `<span style="padding:4px 10px;border-radius:6px;background:#f1f5f9;font-size:11.5px;font-weight:700;color:#1e3a5f">Săpt. ${F.wk} · ${all.length} articole</span>`+
+      `<span style="padding:4px 10px;border-radius:6px;background:#f1f5f9;font-size:11.5px;font-weight:700;color:#1e3a5f">Săpt. ${F.wk} · ${rows.length}/${all.length} articole</span>`+
       Object.entries(ST).map(([k,v])=>`<span style="padding:4px 10px;border-radius:6px;background:${v.bg};color:${v.c};border:1px solid ${v.bd};font-size:11.5px;font-weight:700">${v.l}: ${cnt(k)}</span>`).join('')+
-      (saved?.savedAt?`<span style="margin-left:auto;font-size:10.5px;color:#94a3b8;align-self:center">📌 Planificare fixată ${new Date(saved.savedAt).toLocaleString('ro-RO').slice(0,16)}${saved.by?' · '+saved.by:''}</span>`
-        :`<span style="margin-left:auto;font-size:10.5px;color:#b45309;align-self:center">⚠ Planificare nefixată${normWeekLabel(S.planCurrentWeek)===F.wk?' — se folosește planul curent din Planificare':' — nicio planificare salvată pentru această săptămână'}</span>`);
+      `<span style="padding:4px 10px;border-radius:6px;background:#eff6ff;color:#1d4ed8;font-size:11.5px;font-weight:700">Plan ${fmtN(sum(rows,'plan'))} · Tranzit ${fmtN(sum(rows,'transit'))} · Livrat ${fmtN(sum(rows,'deliv'))}</span>`+
+      (saved?.savedAt?`<span style="margin-left:auto;font-size:10.5px;color:#94a3b8;align-self:center">📌 fixată ${new Date(saved.savedAt).toLocaleString('ro-RO').slice(0,16)}${saved.by?' · '+saved.by:''}</span>`
+        :`<span style="margin-left:auto;font-size:10.5px;color:#b45309;align-self:center">⚠ Planificare nefixată${normWeekLabel(S.planCurrentWeek)===F.wk?' — se folosește planul curent':''}</span>`);
 
     body.innerHTML='';
     if(!all.length){
       body.innerHTML='<div style="padding:40px;text-align:center;color:#94a3b8;font-size:13px"><div style="font-size:38px;margin-bottom:10px">⚖</div>Nicio planificare și nicio livrare pentru săptămâna '+F.wk+'.</div>';
       return;
     }
-    const tbl=el('table');tbl.style.cssText='width:100%;border-collapse:collapse;font-size:12px';
-    tbl.innerHTML='<thead><tr style="background:#1e3a5f;color:#fff;position:sticky;top:0;z-index:2">'+
-      ['Status','Cod produs','Denumire','Client','Planificat','Livrat','In Transit','Diferență','Livrări','Observații']
-        .map((h,i)=>`<th style="padding:8px 10px;text-align:${[4,5,6,7].includes(i)?'right':'left'};font-size:9.5px;font-weight:800;text-transform:uppercase;letter-spacing:.04em;white-space:nowrap${i===9?';min-width:210px':''}">${h}</th>`).join('')+
-      '</tr></thead>';
+    const tbl=el('table');tbl.className='pvl-table';tbl.style.cssText='width:100%;border-collapse:collapse;font-size:12px';
+    const thead=el('thead');
+    const hr=el('tr');hr.style.cssText='background:#1e3a5f;color:#fff;position:sticky;top:0;z-index:3';
+    COLS.forEach(col=>{
+      const th=el('th');
+      th.style.cssText=`padding:8px 10px;text-align:${col.a};font-size:9.5px;font-weight:800;text-transform:uppercase;letter-spacing:.04em;white-space:nowrap;cursor:pointer;user-select:none;${col.w?'width:'+col.w:''}`;
+      const act=F.sort===col.k;
+      th.innerHTML=col.l+`<span style="opacity:${act?1:.3};margin-left:3px;font-size:9px">${act?(F.dir===1?'▲':'▼'):'⇅'}</span>`;
+      th.addEventListener('click',()=>{if(F.sort===col.k)F.dir=-F.dir;else{F.sort=col.k;F.dir=col.num||col.k==='req'?-1:1;}render();});
+      hr.appendChild(th);
+    });
+    thead.appendChild(hr);
+    // Filter row
+    const fr=el('tr');fr.style.cssText='background:#f1f5f9;position:sticky;top:31px;z-index:2';
+    COLS.forEach(col=>{
+      const td=el('td');td.style.cssText='padding:3px 5px;border-bottom:1px solid var(--border)';
+      const i2=el('input');i2.type='text';i2.value=F.cf[col.k]||'';
+      i2.placeholder=col.num?'>10, <5, =3...':'filtru';
+      i2.style.cssText='width:100%;height:24px;padding:0 6px;border:1px solid '+(F.cf[col.k]?'#1d4ed8':'#cbd5e1')+';border-radius:3px;font-size:10.5px;box-sizing:border-box;background:'+(F.cf[col.k]?'#eff6ff':'#fff');
+      i2.addEventListener('input',()=>{
+        F.cf[col.k]=i2.value;
+        const ss=i2.selectionStart;render();
+        const nf=body.querySelector(`input[data-pvlf="${col.k}"]`);
+        if(nf){nf.focus();try{nf.setSelectionRange(ss,ss);}catch(_){}}
+      });
+      i2.setAttribute('data-pvlf',col.k);
+      td.appendChild(i2);fr.appendChild(td);
+    });
+    thead.appendChild(fr);tbl.appendChild(thead);
+
     const tb2=el('tbody');
-    rows.forEach((r,i)=>{
+    const mkTd=(html,css)=>{const t=el('td');t.style.cssText=(css||'')+';padding:6px 10px;vertical-align:middle';t.innerHTML=html;return t;};
+    const addRow=(r,i)=>{
       const s=ST[r.status];
       const tr=el('tr');tr.style.cssText=`border-bottom:1px solid #f1f5f9;background:${i%2?'#fafbfc':'#fff'}`;
-      const td=(html,css)=>{const t=el('td');t.style.cssText=(css||'')+';padding:6px 10px;vertical-align:middle';t.innerHTML=html;return t;};
-      tr.appendChild(td(`<span style="display:inline-block;padding:2px 9px;border-radius:10px;font-size:10px;font-weight:800;background:${s.bg};color:${s.c};border:1px solid ${s.bd};white-space:nowrap">${s.l}</span>`));
-      tr.appendChild(td(`<b style="font-family:monospace;color:#1e3a5f">${r.item}</b>`,'white-space:nowrap'));
-      tr.appendChild(td(r.name||'—','color:#475569'));
-      tr.appendChild(td(r.cust||'—','color:#6b7280;font-size:11px'));
-      tr.appendChild(td(r.plan?fmtN(r.plan):'<span style="color:#cbd5e1">0</span>','text-align:right;font-weight:800;color:#1d4ed8'));
-      tr.appendChild(td(r.deliv?fmtN(r.deliv):'<span style="color:#cbd5e1">0</span>','text-align:right;font-weight:800;color:#15803d'));
-      tr.appendChild(td(r.transit?fmtN(r.transit):'—','text-align:right;color:#7c3aed;font-weight:700'));
-      tr.appendChild(td((r.diff>0?'+':'')+fmtN(r.diff),'text-align:right;font-weight:900;color:'+(r.diff<0?'#dc2626':r.diff>0?'#7c3aed':'#15803d')));
-      tr.appendChild(td(r.dates?`<span style="font-size:10px;color:#94a3b8">${r.dates}</span>`:'—'));
-      // Observations
+      tr.appendChild(mkTd(`<span style="display:inline-block;padding:2px 9px;border-radius:10px;font-size:10px;font-weight:800;background:${s.bg};color:${s.c};border:1px solid ${s.bd};white-space:nowrap">${s.l}</span>`));
+      const tdI=mkTd(`<b style="font-family:monospace;color:#1e3a5f">${r.item}</b>`,'white-space:nowrap');
+      tdI.setAttribute('data-col','Item_no');tdI.dataset.pvlItem=r.item;
+      tr.appendChild(tdI);
+      tr.appendChild(mkTd(r.name||'—','color:#475569'));
+      tr.appendChild(mkTd(r.cust||'—','color:#6b7280;font-size:11px'));
+      const late=r.req&&r.req<Date.now();
+      tr.appendChild(mkTd(r.reqTxt||'—','white-space:nowrap;font-size:11px;'+(late&&r.status!=='ok'?'color:#dc2626;font-weight:800':'color:#475569')));
+      tr.appendChild(mkTd(r.plan?fmtN(r.plan):'<span style="color:#cbd5e1">0</span>','text-align:right;font-weight:800;color:#1d4ed8'));
+      tr.appendChild(mkTd(r.transit?fmtN(r.transit):'—','text-align:right;color:#7c3aed;font-weight:700'));
+      const tdNet=mkTd(fmtN(r.planNet),'text-align:right;font-weight:800;color:#0369a1');
+      tdNet.title=r.transit?`Planificat ${fmtN(r.plan)} − tranzit ${fmtN(r.transit)} = ${fmtN(r.planNet)}`:'';
+      tr.appendChild(tdNet);
+      tr.appendChild(mkTd(r.deliv?fmtN(r.deliv):'<span style="color:#cbd5e1">0</span>','text-align:right;font-weight:800;color:#15803d'));
+      tr.appendChild(mkTd((r.diff>0?'+':'')+fmtN(r.diff),'text-align:right;font-weight:900;color:'+(r.diff<0?'#dc2626':r.diff>0?'#7c3aed':'#15803d')));
+      tr.appendChild(mkTd(r.dates?`<span style="font-size:10px;color:#94a3b8">${r.dates}</span>`:'—'));
       const tdO=el('td');tdO.style.cssText='padding:4px 8px';
-      const inp=el('input');inp.type='text';inp.value=r.obs;inp.placeholder='Observații...';
-      inp.disabled=!isAdmin;
-      inp.style.cssText='width:100%;min-width:190px;height:28px;padding:0 8px;border:1px solid '+(r.obs?'#fbbf24':'#e2e8f0')+';border-radius:4px;font-size:11px;background:'+(r.obs?'#fffbeb':'#fff');
+      const inp=el('input');inp.type='text';inp.value=r.obs;inp.placeholder='Observații...';inp.disabled=!isAdmin;
+      inp.style.cssText='width:100%;min-width:180px;height:28px;padding:0 8px;border:1px solid '+(r.obs?'#fbbf24':'#e2e8f0')+';border-radius:4px;font-size:11px;background:'+(r.obs?'#fffbeb':'#fff');
       if(isAdmin){
         const saveObs=async()=>{
           const v=inp.value.trim();
           if(!S.pvlData[F.wk])S.pvlData[F.wk]={};
-          const w=S.pvlData[F.wk];
-          if(!w.obs)w.obs={};
+          const w=S.pvlData[F.wk];if(!w.obs)w.obs={};
           if(v)w.obs[r.item]=v;else delete w.obs[r.item];
           inp.style.borderColor=v?'#fbbf24':'#e2e8f0';inp.style.background=v?'#fffbeb':'#fff';
           await savePvl();
         };
-        inp.addEventListener('change',saveObs);
-        inp.addEventListener('blur',saveObs);
+        inp.addEventListener('change',saveObs);inp.addEventListener('blur',saveObs);
         inp.addEventListener('keydown',e=>{if(e.key==='Enter'){e.preventDefault();inp.blur();}});
       }
       tdO.appendChild(inp);tr.appendChild(tdO);
       tb2.appendChild(tr);
-    });
+    };
+    const subtotal=(label,items)=>{
+      const tr=el('tr');tr.style.cssText='background:#dbeafe;font-weight:800;border-bottom:2px solid #93c5fd';
+      const t1=el('td');t1.colSpan=5;
+      t1.style.cssText='padding:6px 10px;font-size:10.5px;font-weight:900;color:#1e3a5f;text-transform:uppercase;letter-spacing:.04em';
+      t1.textContent=`Subtotal ${label} · ${items.length} art.`;tr.appendChild(t1);
+      ['plan','transit','planNet','deliv','diff'].forEach(k=>{
+        const v=items.reduce((s,r)=>s+(r[k]||0),0);
+        tr.appendChild(mkTd(fmtN(v),'text-align:right;font-weight:900;color:'+(k==='diff'?(v<0?'#dc2626':'#15803d'):'#1e3a5f')));
+      });
+      tr.appendChild(mkTd('',''));tr.appendChild(mkTd('',''));
+      tb2.appendChild(tr);
+    };
+
+    if(F.group==='none'){
+      rows.forEach(addRow);
+      if(rows.length)subtotal('general',rows);
+    } else {
+      const keyOf=r=>F.group==='status'?ST[r.status].l:F.group==='cust'?(r.cust||'— fără client —'):(r.reqTxt||'— fără dată —');
+      const groups=new Map();
+      rows.forEach(r=>{const k=keyOf(r);if(!groups.has(k))groups.set(k,[]);groups.get(k).push(r);});
+      let i=0;
+      groups.forEach((items,k)=>{
+        const gh=el('tr');gh.style.cssText='background:#1e3a5f;color:#fff';
+        const gt=el('td');gt.colSpan=COLS.length;
+        gt.style.cssText='padding:6px 12px;font-size:11.5px;font-weight:800';
+        gt.textContent=k+' · '+items.length+' articole';
+        gh.appendChild(gt);tb2.appendChild(gh);
+        items.forEach(r=>addRow(r,i++));
+        subtotal(k,items);
+      });
+      if(groups.size>1)subtotal('GENERAL',rows);
+    }
     tbl.appendChild(tb2);body.appendChild(tbl);
     if(!rows.length)body.innerHTML+='<div style="padding:26px;text-align:center;color:#94a3b8">Nicio linie conform filtrelor.</div>';
   }
 
+  // Right-click → drawings / stock
+  body.addEventListener('contextmenu',e=>{
+    const td=e.target.closest('td[data-pvl-item]')||e.target.closest('[data-pvl-item]');
+    const cell=e.target.closest('td');
+    const item=(td&&td.dataset.pvlItem)||(cell&&cell.dataset&&cell.dataset.pvlItem);
+    if(!item)return;
+    e.preventDefault();
+    document.getElementById('u-ctx-active')?.remove();
+    const menu=dv('u-ctx-menu');menu.id='u-ctx-active';
+    menu.style.top=Math.min(e.clientY,window.innerHeight-170)+'px';
+    menu.style.left=Math.min(e.clientX,window.innerWidth-250)+'px';
+    const dn=getDrawingNoFor(item);
+    const add=(icon,label,fn)=>{const it=dv('u-ctx-item');it.innerHTML=`<span class="u-ctx-icon">${icon}</span><span>${label}</span>`;
+      it.addEventListener('click',()=>{menu.remove();fn();});menu.appendChild(it);};
+    add('📐','Desene tehnice'+(dn?' <b>'+dn+'</b>':''),()=>openDrawingSearch(dn||item,item));
+    add('📦','Detalii stoc',()=>openCompStockPopup(item,null,true));
+    add('📋','Copiază codul',()=>copyToClipboard(item,null));
+    document.body.appendChild(menu);
+    const cl=ev=>{if(!menu.contains(ev.target)){menu.remove();document.removeEventListener('mousedown',cl);}};
+    setTimeout(()=>document.addEventListener('mousedown',cl),10);
+  });
+
   wkSel.addEventListener('change',()=>{F.wk=wkSel.value;render();});
   q.addEventListener('input',()=>{F.q=q.value;render();});
   stSel.addEventListener('change',()=>{F.st=stSel.value;render();});
+  grpSel.addEventListener('change',()=>{F.group=grpSel.value;render();});
   if(snapBtn)snapBtn.addEventListener('click',async()=>{
     if(!S.planData||!S.planData.size){showToast('Nu există planificare curentă','err',2500);return;}
     const ex=S.pvlData?.[F.wk]?.planned;
     if(ex&&Object.keys(ex).length&&!confirm(`Săptămâna ${F.wk} are deja planificarea fixată.\nO înlocuiți cu planul curent?`))return;
     const planned={};
-    [...S.planData.entries()].forEach(([it,p])=>{
-      planned[it]={qty:p.totalQty||0,
-        name:(p.entries?.[0]?.itemName)||'',
-        cust:[...new Set((p.entries||[]).map(e=>e.customer).filter(Boolean))].join(', ')};
-    });
+    [...S.planData.entries()].forEach(([it,p])=>{planned[it]={qty:p.totalQty||0,
+      name:(p.entries?.[0]?.itemName)||'',cust:[...new Set((p.entries||[]).map(e=>e.customer).filter(Boolean))].join(', ')};});
     if(!S.pvlData[F.wk])S.pvlData[F.wk]={};
-    S.pvlData[F.wk].planned=planned;
-    S.pvlData[F.wk].savedAt=Date.now();
-    S.pvlData[F.wk].by=S.session?.name||S.session?.user||'admin';
+    Object.assign(S.pvlData[F.wk],{planned,savedAt:Date.now(),by:S.session?.name||S.session?.user||'admin'});
     if(await savePvl())showToast(`✓ Planificare fixată pentru ${F.wk} · ${Object.keys(planned).length} articole`,'ok',3000);
     fillWeeks();render();
   });
   xls.addEventListener('click',()=>{
-    const data=[['Săptămână','Status','Cod produs','Denumire','Client','Planificat','Livrat','In Transit','Diferență','Date livrare','Observații']];
-    rowsCache.forEach(r=>data.push([F.wk,ST[r.status].l,r.item,r.name,r.cust,r.plan,r.deliv,r.transit,r.diff,r.dates,r.obs]));
+    const head=['Săptămână','Grup',...COLS.map(c2=>c2.l)];
+    const data=[head];
+    const line=(r,g)=>[F.wk,g,ST[r.status].l,r.item,r.name,r.cust,r.reqTxt,r.plan,r.transit,r.planNet,r.deliv,r.diff,r.dates,r.obs];
+    const sub=(label,items)=>[F.wk,'SUBTOTAL '+label,'','','','','',
+      items.reduce((s,r)=>s+r.plan,0),items.reduce((s,r)=>s+r.transit,0),items.reduce((s,r)=>s+r.planNet,0),
+      items.reduce((s,r)=>s+r.deliv,0),items.reduce((s,r)=>s+r.diff,0),'',''];
+    if(F.group==='none'){
+      rowsCache.forEach(r=>data.push(line(r,'')));
+      data.push(sub('GENERAL',rowsCache));
+    } else {
+      const keyOf=r=>F.group==='status'?ST[r.status].l:F.group==='cust'?(r.cust||'—'):(r.reqTxt||'—');
+      const g=new Map();rowsCache.forEach(r=>{const k=keyOf(r);if(!g.has(k))g.set(k,[]);g.get(k).push(r);});
+      g.forEach((items,k)=>{items.forEach(r=>data.push(line(r,k)));data.push(sub(k,items));});
+      data.push(sub('GENERAL',rowsCache));
+    }
     const wb=XLSX.utils.book_new();const ws=XLSX.utils.aoa_to_sheet(data);
-    ws['!cols']=[{wch:10},{wch:14},{wch:20},{wch:32},{wch:24},{wch:11},{wch:10},{wch:10},{wch:11},{wch:22},{wch:34}];
+    ws['!cols']=[{wch:10},{wch:18},{wch:13},{wch:20},{wch:32},{wch:24},{wch:12},{wch:11},{wch:10},{wch:11},{wch:10},{wch:11},{wch:22},{wch:34}];
     XLSX.utils.book_append_sheet(wb,ws,'Planificat vs Livrat');
     XLSX.writeFile(wb,`Planificat_vs_Livrat_${F.wk}.xlsx`);
   });
