@@ -1298,6 +1298,7 @@ const S={
   perfLivrari:[],  // raw rows saved to Supabase
   paintIdx:null,
   masini:null,
+  pvlData:null,
   stocklistData:null,
   stocklistIdx:null,
   asmFP:null,
@@ -3537,6 +3538,7 @@ function render(){
       {id:'stocuri',label:'Stocuri'},
       {id:'rapoarte',label:'Rapoarte'},
       {id:'normare',label:'⏱ Normare'},
+      {id:'planlivrat',label:'⚖ Planificat vs Livrat'},
       {id:'scanari',label:'Raport Scanari'},
     ]},
     {id:'scanner',label:'📷 Scanner'},
@@ -3696,6 +3698,7 @@ function render(){
   else if(S.tab==='planv2')body.appendChild(renderPlanV2());
   else if(S.tab==='pwc')body.appendChild(renderPwcTab());
   else if(S.tab==='asamblare')body.appendChild(renderAsamblare());
+  else if(S.tab==='planlivrat')body.appendChild(renderPlanVsLivrat());
   else if(S.tab==='masini')body.appendChild(renderMasini());
   else if(S.tab==='normare')body.appendChild(renderNormare());
   else if(S.tab==='dctr')body.appendChild(renderDctrTab());
@@ -7172,6 +7175,262 @@ function openCompStockPopup(matNo,neededQty,showBom){
   document.body.appendChild(ov);
   const esc=e=>{if(e.key==='Escape'){ov.remove();document.removeEventListener('keydown',esc);}};
   document.addEventListener('keydown',esc);
+}
+/* ═══════════════════════════════════════════════════════════════
+   PLANIFICAT vs LIVRAT — raport săptămânal (Planificare + Livrări + In Transit)
+   Persistat pe server: data-planlivrat.json  {weeks:{'2026-38':{planned,obs,savedAt,by}}}
+═══════════════════════════════════════════════════════════════ */
+async function savePvl(){
+  if(!S.sbCfg)return false;
+  if(S.session?.role!=='admin'){showToast('Doar administratorii pot salva raportul','err',3000);return false;}
+  try{await sbUpload(S.sbCfg,'data-planlivrat.json',{weeks:S.pvlData||{},ts:Date.now()});return true;}
+  catch(e){console.warn('savePvl',e);showToast('Eroare la salvare: '+e.message,'err',3500);return false;}
+}
+async function loadPvl(){
+  if(!S.sbCfg)return;
+  try{
+    const d=await sbDownload(S.sbCfg,'data-planlivrat.json');
+    if(d&&d.weeks)S.pvlData=d.weeks;
+  }catch(e){console.warn('loadPvl',e);}
+  if(!S.pvlData)S.pvlData={};
+}
+// Deliveries use '2026-38'; some files use '2026-W38' or just '38'
+function _pvlNormWeek(w,period){
+  let s=String(w||'').trim();
+  if(!s)return '';
+  s=s.replace(/^(\d{4})[-\/]?W?(\d{1,2})$/i,(m,y,n)=>y+'-'+String(n).padStart(2,'0'));
+  if(/^\d{1,2}$/.test(s)){
+    const yr=String(period||'').slice(0,4)||String(new Date().getFullYear());
+    s=yr+'-'+s.padStart(2,'0');
+  }
+  return s;
+}
+
+function renderPlanVsLivrat(){
+  const isAdmin=S.session?.role==='admin';
+  const page=dv('');page.style.cssText='display:flex;flex-direction:column;flex:1;min-height:0;height:100%;overflow:hidden;background:#f8f9fb';
+  if(!S.pvlData)S.pvlData={};
+  if(!S.pvlF)S.pvlF={wk:'',q:'',st:'all'};
+  const F=S.pvlF;
+
+  const tb=dv('');tb.style.cssText='display:flex;align-items:center;gap:8px;padding:10px 14px;background:#fff;border-bottom:2px solid var(--border);flex-wrap:wrap;flex-shrink:0';
+  tb.innerHTML='<b style="font-size:14px;color:#1e3a5f">⚖ Planificat vs Livrat</b>';
+  const inCss='height:32px;padding:0 9px;border:1.5px solid var(--border);border-radius:5px;font-size:12px';
+  const wkSel=el('select');wkSel.style.cssText=inCss+';font-weight:800;min-width:135px;color:#1e3a5f';
+  tb.appendChild(wkSel);
+  const q=el('input');q.placeholder='🔍 Cod, denumire, client...';q.value=F.q;q.style.cssText=inCss+';width:215px';
+  tb.appendChild(q);
+  const stSel=el('select');stSel.style.cssText=inCss;
+  stSel.innerHTML='<option value="all">Toate liniile</option>'+
+    '<option value="nedeliv">Planificat nelivrat</option>'+
+    '<option value="neplan">Livrat neplanificat</option>'+
+    '<option value="partial">Livrat parțial</option>'+
+    '<option value="ok">Livrat integral</option>';
+  stSel.value=F.st;tb.appendChild(stSel);
+
+  const right=dv('');right.style.cssText='margin-left:auto;display:flex;gap:6px;flex-wrap:wrap';
+  const bcss=(c2,bg)=>`height:32px;padding:0 12px;border:1.5px solid ${c2};border-radius:5px;background:${bg};color:${c2};cursor:pointer;font-size:12px;font-weight:700`;
+  let snapBtn=null;
+  if(isAdmin){
+    snapBtn=el('button');snapBtn.textContent='📌 Fixează planificarea';
+    snapBtn.style.cssText=bcss('#b45309','#fffbeb');
+    snapBtn.title='Salvează pe server cantitățile planificate curente pentru săptămâna selectată';
+    right.appendChild(snapBtn);
+  }
+  const xls=el('button');xls.textContent='⬇ Excel';xls.style.cssText=bcss('#15803d','#f0fdf4');
+  right.appendChild(xls);
+  tb.appendChild(right);
+  page.appendChild(tb);
+
+  const kpi=dv('');kpi.style.cssText='display:flex;gap:8px;padding:8px 14px;background:#fff;border-bottom:1px solid var(--border);flex-wrap:wrap;flex-shrink:0';
+  page.appendChild(kpi);
+  const body=dv('');body.style.cssText='flex:1;min-height:0;overflow:auto;padding:0';
+  page.appendChild(body);
+
+  // ── Deliveries grouped by week ──
+  const delByWeek=()=>{
+    const m=new Map();
+    (S.perfLivrari||[]).forEach(r=>{
+      const wk=_pvlNormWeek(r['Week'],r['Period']);
+      if(!wk)return;
+      const item=String(r['Item']??'').trim();
+      if(!item)return;
+      const qv=parseFloat(String(r['Quantity']??'').replace(',','.'))||0;
+      if(!m.has(wk))m.set(wk,new Map());
+      const im=m.get(wk);
+      if(!im.has(item))im.set(item,{qty:0,name:String(r['Name']??'').trim(),cust:new Set(),dates:new Set()});
+      const e=im.get(item);e.qty+=qv;
+      if(r['Consi.name'])e.cust.add(String(r['Consi.name']).trim());
+      if(r['Date'])e.dates.add(String(r['Date']).trim());
+      if(!e.name&&r['Name'])e.name=String(r['Name']).trim();
+    });
+    return m;
+  };
+  const DEL=delByWeek();
+
+  const fillWeeks=()=>{
+    const weeks=new Set([...DEL.keys(),...Object.keys(S.pvlData||{})]);
+    weeks.add(_currentWkKey());
+    const arr=[...weeks].filter(Boolean).sort().reverse();
+    wkSel.innerHTML=arr.map(w=>{
+      const saved=S.pvlData?.[w]?.planned?' 📌':'';
+      const d=DEL.get(w)?.size||0;
+      return `<option value="${w}">${w}${saved} · ${d} livrări</option>`;
+    }).join('');
+    if(!F.wk||!arr.includes(F.wk))F.wk=arr.includes(_currentWkKey())?_currentWkKey():(arr[0]||'');
+    wkSel.value=F.wk;
+  };
+
+  // ── Build the rows for the selected week ──
+  const buildRows=()=>{
+    const wk=F.wk;
+    const saved=S.pvlData?.[wk]||{};
+    // Planned: the server snapshot wins; otherwise the live plan
+    const planned=new Map();
+    if(saved.planned&&Object.keys(saved.planned).length){
+      Object.entries(saved.planned).forEach(([it,o])=>planned.set(it,typeof o==='object'?o:{qty:o,name:'',cust:''}));
+    } else if(wk===_currentWkKey()){
+      [...(S.planData||new Map()).entries()].forEach(([it,p])=>{
+        planned.set(it,{qty:p.totalQty||0,
+          name:(p.entries?.[0]?.itemName)||'',
+          cust:[...new Set((p.entries||[]).map(e=>e.customer).filter(Boolean))].join(', ')});
+      });
+    }
+    const del=DEL.get(wk)||new Map();
+    const items=new Set([...planned.keys(),...del.keys()]);
+    const obs=saved.obs||{};
+    return [...items].map(it=>{
+      const p=planned.get(it)||{qty:0,name:'',cust:''};
+      const d=del.get(it)||{qty:0,name:'',cust:new Set(),dates:new Set()};
+      const st=S.stockIdx?.get(it);
+      const transit=S.inTransitIdx?.[it]||0;
+      const diff=(d.qty||0)-(p.qty||0);
+      let status;
+      if(!p.qty&&d.qty)status='neplan';
+      else if(p.qty&&!d.qty)status='nedeliv';
+      else if(d.qty>=p.qty)status='ok';
+      else status='partial';
+      return {item:it,name:p.name||d.name||st?.slName||st?.name||'',
+        cust:p.cust||[...(d.cust||[])].join(', '),
+        plan:p.qty||0,deliv:d.qty||0,transit,diff,status,
+        dates:[...(d.dates||[])].sort().join(', '),
+        obs:obs[it]||''};
+    }).sort((a,b)=>{
+      const ord={nedeliv:0,partial:1,neplan:2,ok:3};
+      if(ord[a.status]!==ord[b.status])return ord[a.status]-ord[b.status];
+      return Math.abs(b.diff)-Math.abs(a.diff);
+    });
+  };
+
+  const ST={
+    nedeliv:{l:'Nelivrat',   c:'#991b1b',bg:'#fee2e2',bd:'#fca5a5'},
+    partial:{l:'Parțial',    c:'#92400e',bg:'#fef3c7',bd:'#fcd34d'},
+    neplan: {l:'Neplanificat',c:'#5b21b6',bg:'#ede9fe',bd:'#c4b5fd'},
+    ok:     {l:'Integral',   c:'#15803d',bg:'#dcfce7',bd:'#86efac'},
+  };
+
+  let rowsCache=[];
+  function render(){
+    const all=buildRows();rowsCache=all;
+    const qq=F.q.trim().toLowerCase();
+    const rows=all.filter(r=>{
+      if(F.st!=='all'&&r.status!==F.st)return false;
+      if(qq&&!((r.item+' '+r.name+' '+r.cust).toLowerCase().includes(qq)))return false;
+      return true;
+    });
+    const cnt=s=>all.filter(r=>r.status===s).length;
+    const saved=S.pvlData?.[F.wk];
+    kpi.innerHTML=
+      `<span style="padding:4px 10px;border-radius:6px;background:#f1f5f9;font-size:11.5px;font-weight:700;color:#1e3a5f">Săpt. ${F.wk} · ${all.length} articole</span>`+
+      Object.entries(ST).map(([k,v])=>`<span style="padding:4px 10px;border-radius:6px;background:${v.bg};color:${v.c};border:1px solid ${v.bd};font-size:11.5px;font-weight:700">${v.l}: ${cnt(k)}</span>`).join('')+
+      (saved?.savedAt?`<span style="margin-left:auto;font-size:10.5px;color:#94a3b8;align-self:center">📌 Planificare fixată ${new Date(saved.savedAt).toLocaleString('ro-RO').slice(0,16)}${saved.by?' · '+saved.by:''}</span>`
+        :`<span style="margin-left:auto;font-size:10.5px;color:#b45309;align-self:center">⚠ Planificare nefixată — se folosește planul curent</span>`);
+
+    body.innerHTML='';
+    if(!all.length){
+      body.innerHTML='<div style="padding:40px;text-align:center;color:#94a3b8;font-size:13px"><div style="font-size:38px;margin-bottom:10px">⚖</div>Nicio planificare și nicio livrare pentru săptămâna '+F.wk+'.</div>';
+      return;
+    }
+    const tbl=el('table');tbl.style.cssText='width:100%;border-collapse:collapse;font-size:12px';
+    tbl.innerHTML='<thead><tr style="background:#1e3a5f;color:#fff;position:sticky;top:0;z-index:2">'+
+      ['Status','Cod produs','Denumire','Client','Planificat','Livrat','In Transit','Diferență','Livrări','Observații']
+        .map((h,i)=>`<th style="padding:8px 10px;text-align:${[4,5,6,7].includes(i)?'right':'left'};font-size:9.5px;font-weight:800;text-transform:uppercase;letter-spacing:.04em;white-space:nowrap${i===9?';min-width:210px':''}">${h}</th>`).join('')+
+      '</tr></thead>';
+    const tb2=el('tbody');
+    rows.forEach((r,i)=>{
+      const s=ST[r.status];
+      const tr=el('tr');tr.style.cssText=`border-bottom:1px solid #f1f5f9;background:${i%2?'#fafbfc':'#fff'}`;
+      const td=(html,css)=>{const t=el('td');t.style.cssText=(css||'')+';padding:6px 10px;vertical-align:middle';t.innerHTML=html;return t;};
+      tr.appendChild(td(`<span style="display:inline-block;padding:2px 9px;border-radius:10px;font-size:10px;font-weight:800;background:${s.bg};color:${s.c};border:1px solid ${s.bd};white-space:nowrap">${s.l}</span>`));
+      tr.appendChild(td(`<b style="font-family:monospace;color:#1e3a5f">${r.item}</b>`,'white-space:nowrap'));
+      tr.appendChild(td(r.name||'—','color:#475569'));
+      tr.appendChild(td(r.cust||'—','color:#6b7280;font-size:11px'));
+      tr.appendChild(td(r.plan?fmtN(r.plan):'<span style="color:#cbd5e1">0</span>','text-align:right;font-weight:800;color:#1d4ed8'));
+      tr.appendChild(td(r.deliv?fmtN(r.deliv):'<span style="color:#cbd5e1">0</span>','text-align:right;font-weight:800;color:#15803d'));
+      tr.appendChild(td(r.transit?fmtN(r.transit):'—','text-align:right;color:#7c3aed;font-weight:700'));
+      tr.appendChild(td((r.diff>0?'+':'')+fmtN(r.diff),'text-align:right;font-weight:900;color:'+(r.diff<0?'#dc2626':r.diff>0?'#7c3aed':'#15803d')));
+      tr.appendChild(td(r.dates?`<span style="font-size:10px;color:#94a3b8">${r.dates}</span>`:'—'));
+      // Observations
+      const tdO=el('td');tdO.style.cssText='padding:4px 8px';
+      const inp=el('input');inp.type='text';inp.value=r.obs;inp.placeholder='Observații...';
+      inp.disabled=!isAdmin;
+      inp.style.cssText='width:100%;min-width:190px;height:28px;padding:0 8px;border:1px solid '+(r.obs?'#fbbf24':'#e2e8f0')+';border-radius:4px;font-size:11px;background:'+(r.obs?'#fffbeb':'#fff');
+      if(isAdmin){
+        const saveObs=async()=>{
+          const v=inp.value.trim();
+          if(!S.pvlData[F.wk])S.pvlData[F.wk]={};
+          const w=S.pvlData[F.wk];
+          if(!w.obs)w.obs={};
+          if(v)w.obs[r.item]=v;else delete w.obs[r.item];
+          inp.style.borderColor=v?'#fbbf24':'#e2e8f0';inp.style.background=v?'#fffbeb':'#fff';
+          await savePvl();
+        };
+        inp.addEventListener('change',saveObs);
+        inp.addEventListener('blur',saveObs);
+        inp.addEventListener('keydown',e=>{if(e.key==='Enter'){e.preventDefault();inp.blur();}});
+      }
+      tdO.appendChild(inp);tr.appendChild(tdO);
+      tb2.appendChild(tr);
+    });
+    tbl.appendChild(tb2);body.appendChild(tbl);
+    if(!rows.length)body.innerHTML+='<div style="padding:26px;text-align:center;color:#94a3b8">Nicio linie conform filtrelor.</div>';
+  }
+
+  wkSel.addEventListener('change',()=>{F.wk=wkSel.value;render();});
+  q.addEventListener('input',()=>{F.q=q.value;render();});
+  stSel.addEventListener('change',()=>{F.st=stSel.value;render();});
+  if(snapBtn)snapBtn.addEventListener('click',async()=>{
+    if(!S.planData||!S.planData.size){showToast('Nu există planificare curentă','err',2500);return;}
+    const ex=S.pvlData?.[F.wk]?.planned;
+    if(ex&&Object.keys(ex).length&&!confirm(`Săptămâna ${F.wk} are deja planificarea fixată.\nO înlocuiți cu planul curent?`))return;
+    const planned={};
+    [...S.planData.entries()].forEach(([it,p])=>{
+      planned[it]={qty:p.totalQty||0,
+        name:(p.entries?.[0]?.itemName)||'',
+        cust:[...new Set((p.entries||[]).map(e=>e.customer).filter(Boolean))].join(', ')};
+    });
+    if(!S.pvlData[F.wk])S.pvlData[F.wk]={};
+    S.pvlData[F.wk].planned=planned;
+    S.pvlData[F.wk].savedAt=Date.now();
+    S.pvlData[F.wk].by=S.session?.name||S.session?.user||'admin';
+    if(await savePvl())showToast(`✓ Planificare fixată pentru ${F.wk} · ${Object.keys(planned).length} articole`,'ok',3000);
+    fillWeeks();render();
+  });
+  xls.addEventListener('click',()=>{
+    const data=[['Săptămână','Status','Cod produs','Denumire','Client','Planificat','Livrat','In Transit','Diferență','Date livrare','Observații']];
+    rowsCache.forEach(r=>data.push([F.wk,ST[r.status].l,r.item,r.name,r.cust,r.plan,r.deliv,r.transit,r.diff,r.dates,r.obs]));
+    const wb=XLSX.utils.book_new();const ws=XLSX.utils.aoa_to_sheet(data);
+    ws['!cols']=[{wch:10},{wch:14},{wch:20},{wch:32},{wch:24},{wch:11},{wch:10},{wch:10},{wch:11},{wch:22},{wch:34}];
+    XLSX.utils.book_append_sheet(wb,ws,'Planificat vs Livrat');
+    XLSX.writeFile(wb,`Planificat_vs_Livrat_${F.wk}.xlsx`);
+  });
+
+  body.innerHTML='<div style="padding:30px;text-align:center;color:#94a3b8">⏳ Se încarcă...</div>';
+  (async()=>{
+    if(!S._pvlLoaded){S._pvlLoaded=true;await loadPvl();}
+    fillWeeks();render();
+  })();
+  return page;
 }
 
 function renderPlanificare(){
