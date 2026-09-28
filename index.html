@@ -5912,14 +5912,57 @@ function removePlanEntry(itemNo, idx){
 }
 
 /* Import plan from Excel: Item number + quantity column */
+// Ask which ISO week the imported plan belongs to
+function askPlanWeek(defWeek){
+  return new Promise(resolve=>{
+    document.getElementById('plan-week-ask')?.remove();
+    const ov=dv('');ov.id='plan-week-ask';
+    ov.style.cssText='position:fixed;inset:0;background:rgba(0,0,0,.55);z-index:9700;display:flex;align-items:center;justify-content:center;padding:16px';
+    const box=dv('');box.style.cssText='background:#fff;border-radius:12px;box-shadow:0 24px 70px rgba(0,0,0,.4);width:min(440px,95vw);overflow:hidden';
+    const hd=dv('');hd.style.cssText='background:#1e3a5f;color:#fff;padding:12px 18px;font-weight:800;font-size:14px';
+    hd.textContent='📅 Pentru ce săptămână este planul?';box.appendChild(hd);
+    const bd=dv('');bd.style.cssText='padding:18px 20px;text-align:center';
+    bd.innerHTML='<div style="font-size:12.5px;color:#475569;margin-bottom:14px">Confirmați săptămâna de producție pentru planul importat.<br><span style="font-size:11px;color:#94a3b8">Format: AAAA-SS</span></div>';
+    const inp=el('input');inp.type='text';inp.value=defWeek;
+    inp.style.cssText='width:190px;height:50px;padding:0 12px;border:2.5px solid #1e3a5f;border-radius:8px;font-size:24px;font-weight:900;text-align:center;color:#1e3a5f;font-family:monospace';
+    bd.appendChild(inp);
+    const quick=dv('');quick.style.cssText='display:flex;gap:6px;justify-content:center;margin-top:12px;flex-wrap:wrap';
+    const cur=getCurrentWeekLabel();
+    [[-1,'← anterioară'],[0,'curentă'],[1,'următoare →']].forEach(([off,lab])=>{
+      const d=new Date();d.setDate(d.getDate()+off*7);
+      const wk=getISOWeekKey(d);
+      const b=el('button');b.textContent=lab+' ('+wk+')';
+      b.style.cssText='height:26px;padding:0 10px;border:1px solid var(--border);border-radius:13px;background:'+(wk===cur?'#eff6ff':'#fff')+';color:#475569;cursor:pointer;font-size:10.5px;font-weight:700';
+      b.addEventListener('click',()=>{inp.value=wk;inp.focus();});
+      quick.appendChild(b);
+    });
+    bd.appendChild(quick);box.appendChild(bd);
+    const ft=dv('');ft.style.cssText='padding:10px 20px;border-top:1px solid var(--border);display:flex;gap:8px;justify-content:flex-end';
+    const cancel=el('button');cancel.textContent='Anulează';
+    cancel.style.cssText='height:36px;padding:0 16px;border:1px solid var(--border);border-radius:6px;background:#fff;cursor:pointer;font-size:12px';
+    cancel.addEventListener('click',()=>{ov.remove();resolve(null);});
+    const ok=el('button');ok.textContent='✓ Importă planul';
+    ok.style.cssText='height:36px;padding:0 20px;border:none;border-radius:6px;background:#15803d;color:#fff;font-size:12.5px;font-weight:800;cursor:pointer';
+    const done=()=>{const w=normWeekLabel(inp.value);if(!w){inp.style.borderColor='#dc2626';return;}ov.remove();resolve(w);};
+    ok.addEventListener('click',done);
+    inp.addEventListener('keydown',e=>{if(e.key==='Enter'){e.preventDefault();done();}});
+    ft.appendChild(cancel);ft.appendChild(ok);box.appendChild(ft);
+    ov.appendChild(box);document.body.appendChild(ov);
+    setTimeout(()=>{inp.focus();inp.select();},60);
+  });
+}
+
 async function importPlan(file){
   const buf=await readFileAsBuffer(file);
   const wb=XLSX.read(new Uint8Array(buf),{type:'array'});
   const ws=wb.Sheets[wb.SheetNames[0]];
   const rows=XLSX.utils.sheet_to_json(ws,{defval:''});
-  // Detect columns — first column = itemNo, second = qty (any name)
   const keys=rows.length?Object.keys(rows[0]):[];
   if(keys.length<2){alert('Format invalid: trebuie cel putin 2 coloane (Item number, Cantitate).');return;}
+  // Confirm the production week before applying the plan
+  const wk=await askPlanWeek(normWeekLabel(S.planCurrentWeek)||getCurrentWeekLabel());
+  if(!wk)return;
+  S.planCurrentWeek=wk;
   const itemKey=keys[0], qtyKey=keys[1];
   S.planData=new Map();
   for(const row of rows){
@@ -5927,8 +5970,22 @@ async function importPlan(file){
     const qty=parseFloat(row[qtyKey])||0;
     if(itemNo&&qty>0) addToPlan(itemNo,qty);
   }
-  savePlan();
+  await savePlan();
+  // Publish the snapshot so Planificat vs Livrat has this week frozen
+  if(S.session?.role==='admin'){
+    if(!S.pvlData){await loadPvl();}
+    if(!S.pvlData)S.pvlData={};
+    const planned={};
+    [...S.planData.entries()].forEach(([it,p])=>{
+      planned[it]={qty:p.totalQty||0,
+        name:(p.entries?.[0]?.itemName)||'',
+        cust:[...new Set((p.entries||[]).map(e=>e.customer).filter(Boolean))].join(', ')};
+    });
+    S.pvlData[wk]={...(S.pvlData[wk]||{}),planned,savedAt:Date.now(),by:S.session?.name||S.session?.user||'admin'};
+    await savePvl();
+  }
   render();
+  showToast(`✓ Plan importat pentru săptămâna ${wk} · ${S.planData.size} produse`,'ok',3500);
 }
 
 /* Export plan to Excel */
@@ -5964,7 +6021,17 @@ function getISOWeek(d){
   return Math.round(((dt-week1)/86400000-3+(week1.getDay()+6)%7)/7)+1;
 }
 function getCurrentWeekLabel(){
-  return 'W'+getISOWeek(new Date());
+  return getISOWeekKey(new Date());   // 'YYYY-WW', e.g. 2026-39
+}
+// Accepts W39 / 39 / 2026-39 / 2026-W39 → '2026-39'
+function normWeekLabel(v,refYear){
+  let s=String(v||'').trim().toUpperCase().replace(/\s+/g,'');
+  if(!s)return '';
+  let m=s.match(/^(\d{4})[-\/]?W?(\d{1,2})$/);
+  if(m)return m[1]+'-'+String(+m[2]).padStart(2,'0');
+  m=s.match(/^W?(\d{1,2})$/);
+  if(m){const y=refYear||new Date().getFullYear();return y+'-'+String(+m[1]).padStart(2,'0');}
+  return s;
 }
 // Returns 'YYYY-WW' key matching Confirm_week format in OB
 function getISOWeekKey(d){
@@ -7271,13 +7338,17 @@ function renderPlanVsLivrat(){
   const fillWeeks=()=>{
     const weeks=new Set([...DEL.keys(),...Object.keys(S.pvlData||{})]);
     weeks.add(_currentWkKey());
+    if(S.planCurrentWeek)weeks.add(normWeekLabel(S.planCurrentWeek));
     const arr=[...weeks].filter(Boolean).sort().reverse();
     wkSel.innerHTML=arr.map(w=>{
       const saved=S.pvlData?.[w]?.planned?' 📌':'';
       const d=DEL.get(w)?.size||0;
       return `<option value="${w}">${w}${saved} · ${d} livrări</option>`;
     }).join('');
-    if(!F.wk||!arr.includes(F.wk))F.wk=arr.includes(_currentWkKey())?_currentWkKey():(arr[0]||'');
+    if(!F.wk||!arr.includes(F.wk)){
+      const pw=normWeekLabel(S.planCurrentWeek);
+      F.wk=(pw&&arr.includes(pw))?pw:(arr.includes(_currentWkKey())?_currentWkKey():(arr[0]||''));
+    }
     wkSel.value=F.wk;
   };
 
@@ -7289,7 +7360,7 @@ function renderPlanVsLivrat(){
     const planned=new Map();
     if(saved.planned&&Object.keys(saved.planned).length){
       Object.entries(saved.planned).forEach(([it,o])=>planned.set(it,typeof o==='object'?o:{qty:o,name:'',cust:''}));
-    } else if(wk===_currentWkKey()){
+    } else if(normWeekLabel(S.planCurrentWeek)===wk||(!S.planCurrentWeek&&wk===_currentWkKey())){
       [...(S.planData||new Map()).entries()].forEach(([it,p])=>{
         planned.set(it,{qty:p.totalQty||0,
           name:(p.entries?.[0]?.itemName)||'',
@@ -7344,7 +7415,7 @@ function renderPlanVsLivrat(){
       `<span style="padding:4px 10px;border-radius:6px;background:#f1f5f9;font-size:11.5px;font-weight:700;color:#1e3a5f">Săpt. ${F.wk} · ${all.length} articole</span>`+
       Object.entries(ST).map(([k,v])=>`<span style="padding:4px 10px;border-radius:6px;background:${v.bg};color:${v.c};border:1px solid ${v.bd};font-size:11.5px;font-weight:700">${v.l}: ${cnt(k)}</span>`).join('')+
       (saved?.savedAt?`<span style="margin-left:auto;font-size:10.5px;color:#94a3b8;align-self:center">📌 Planificare fixată ${new Date(saved.savedAt).toLocaleString('ro-RO').slice(0,16)}${saved.by?' · '+saved.by:''}</span>`
-        :`<span style="margin-left:auto;font-size:10.5px;color:#b45309;align-self:center">⚠ Planificare nefixată — se folosește planul curent</span>`);
+        :`<span style="margin-left:auto;font-size:10.5px;color:#b45309;align-self:center">⚠ Planificare nefixată${normWeekLabel(S.planCurrentWeek)===F.wk?' — se folosește planul curent din Planificare':' — nicio planificare salvată pentru această săptămână'}</span>`);
 
     body.innerHTML='';
     if(!all.length){
@@ -7460,9 +7531,14 @@ function renderPlanificare(){
   tb.appendChild(wkLbl);
   if(!S.planCurrentWeek) S.planCurrentWeek=getCurrentWeekLabel();
   if(S.sbCfg&&!S.planV2Meta?.loaded){loadPlanV2Meta().then(()=>{S.planV2Meta=S.planV2Meta||{priorities:{},observations:{}};S.planV2Meta.loaded=true;});}
-  const wkInp=el('input');wkInp.type='text';wkInp.value=S.planCurrentWeek;
-  wkInp.style.cssText='height:28px;width:70px;padding:0 8px;border:1px solid var(--border);border-radius:4px;font-size:12px;font-weight:700;color:var(--accent);text-align:center';
-  wkInp.addEventListener('input',e=>{S.planCurrentWeek=e.target.value.trim()||getCurrentWeekLabel();});
+  S.planCurrentWeek=normWeekLabel(S.planCurrentWeek)||getCurrentWeekLabel();
+  const wkInp=el('input');wkInp.type='text';wkInp.value=S.planCurrentWeek;wkInp.placeholder='2026-39';
+  wkInp.title='Formatul săptămânii: AAAA-SS (ex. 2026-39)';
+  wkInp.style.cssText='height:28px;width:92px;padding:0 8px;border:1px solid var(--border);border-radius:4px;font-size:12px;font-weight:800;color:var(--accent);text-align:center';
+  wkInp.addEventListener('change',e=>{
+    S.planCurrentWeek=normWeekLabel(e.target.value)||getCurrentWeekLabel();
+    wkInp.value=S.planCurrentWeek;
+  });
   tb.appendChild(wkInp);
 
   // ── Save to DB button ──
