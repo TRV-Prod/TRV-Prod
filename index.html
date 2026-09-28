@@ -6795,9 +6795,70 @@ async function openDrawingSearch(drawingNo,movexCode){
   const listPane=dv('');listPane.style.cssText='width:300px;min-width:210px;border-right:2px solid var(--border);display:flex;flex-direction:column;background:#f8f9fb;flex-shrink:0';
   const listInner=dv('');listInner.style.cssText='flex:1;overflow-y:auto';
   listPane.appendChild(listInner);
-  const viewPane=dv('');viewPane.style.cssText='flex:1;background:#1a1a2e;display:flex;align-items:center;justify-content:center;color:#64748b;font-size:13px;overflow:hidden;position:relative';
+  // Viewer column: zoom toolbar + scrollable canvas area
+  const viewCol=dv('');viewCol.style.cssText='flex:1;min-width:0;display:flex;flex-direction:column;background:#1a1a2e;overflow:hidden';
+  const zBar=dv('');zBar.style.cssText='display:flex;align-items:center;gap:6px;padding:5px 10px;background:#0f172a;flex-shrink:0;flex-wrap:wrap';
+  let dZoom=1;
+  const zLbl=dv('');zLbl.style.cssText='color:#64748b;font-size:10.5px;font-weight:800;min-width:42px;text-align:center;font-family:monospace';
+  zLbl.textContent='100%';
+  const applyDZoom=(z)=>{
+    dZoom=Math.max(0.05,Math.min(12,z));
+    zLbl.textContent=Math.round(dZoom*100)+'%';
+    viewPane.querySelectorAll('.dwg-scalable').forEach(e2=>{e2.style.transformOrigin='top left';e2.style.transform=`scale(${dZoom})`;});
+    const h=viewPane.querySelector('#dwg-holder');
+    if(h){
+      const f=viewPane.querySelector('.dwg-scalable');
+      if(f){const w=f.naturalWidth||f.width||f.offsetWidth,ht=f.naturalHeight||f.height||f.offsetHeight;
+        h.style.width=(w*dZoom)+'px';h.style.height=(ht*dZoom*(viewPane.querySelectorAll('.dwg-scalable').length))+'px';}
+    }
+  };
+  const zBtn=(txt,fn,st2)=>{const b=el('button');b.textContent=txt;
+    b.style.cssText=`height:26px;padding:0 10px;border:1px solid #334155;background:#1e293b;color:#94a3b8;border-radius:4px;cursor:pointer;font-size:11px;font-weight:700;${st2||''}`;
+    b.addEventListener('click',e=>{e.stopPropagation();fn();});return b;};
+  const fitZoom=()=>{
+    const f=viewPane.querySelector('.dwg-scalable');if(!f)return;
+    const w=f.naturalWidth||f.width,h=f.naturalHeight||f.height;
+    if(!w||!h)return;
+    applyDZoom(Math.min((viewPane.clientWidth-24)/w,(viewPane.clientHeight-24)/h));
+  };
+  zBar.appendChild(zBtn('−',()=>applyDZoom(dZoom-0.25)));
+  zBar.appendChild(zLbl);
+  zBar.appendChild(zBtn('＋',()=>applyDZoom(dZoom+0.25),'background:#0369a1;color:#fff;border-color:#0284c7'));
+  zBar.appendChild(zBtn('⊡ 100%',()=>applyDZoom(1)));
+  zBar.appendChild(zBtn('⊞ Fit',fitZoom));
+  zBar.appendChild(zBtn('↔ Lățime',()=>{
+    const f=viewPane.querySelector('.dwg-scalable');if(!f)return;
+    const w=f.naturalWidth||f.width;if(w)applyDZoom((viewPane.clientWidth-24)/w);
+  }));
+  const zHint=dv('');zHint.style.cssText='margin-left:auto;color:#475569;font-size:9.5px;white-space:nowrap';
+  zHint.textContent='Scroll = zoom · trage = deplasare · pinch pe tabletă';
+  zBar.appendChild(zHint);
+  viewCol.appendChild(zBar);
+
+  const viewPane=dv('');viewPane.style.cssText='flex:1;min-height:0;background:#1a1a2e;color:#64748b;font-size:13px;overflow:auto;position:relative;display:flex;align-items:center;justify-content:center';
   viewPane.innerHTML='<div style="text-align:center"><div style="font-size:36px;margin-bottom:8px">📄</div>Click pe un fișier pentru previzualizare</div>';
-  body.appendChild(listPane);body.appendChild(viewPane);
+  viewCol.appendChild(viewPane);
+
+  // Pan by dragging, zoom with the wheel, pinch on touch devices
+  let dPan=false,pX=0,pY=0,sX=0,sY=0;
+  viewPane.addEventListener('mousedown',e=>{if(e.button!==0)return;dPan=true;pX=e.clientX;pY=e.clientY;sX=viewPane.scrollLeft;sY=viewPane.scrollTop;viewPane.style.cursor='grabbing';});
+  window.addEventListener('mouseup',()=>{if(dPan){dPan=false;viewPane.style.cursor='';}});
+  window.addEventListener('mousemove',e=>{if(!dPan)return;viewPane.scrollLeft=sX-(e.clientX-pX);viewPane.scrollTop=sY-(e.clientY-pY);});
+  viewPane.addEventListener('wheel',e=>{
+    if(!viewPane.querySelector('.dwg-scalable'))return;
+    e.preventDefault();applyDZoom(dZoom*(e.deltaY<0?1.12:0.89));
+  },{passive:false});
+  let pDist=0;
+  viewPane.addEventListener('touchstart',e=>{if(e.touches.length===2){e.preventDefault();pDist=Math.hypot(e.touches[1].clientX-e.touches[0].clientX,e.touches[1].clientY-e.touches[0].clientY);}},{passive:false});
+  viewPane.addEventListener('touchmove',e=>{
+    if(e.touches.length!==2)return;e.preventDefault();
+    const d2=Math.hypot(e.touches[1].clientX-e.touches[0].clientX,e.touches[1].clientY-e.touches[0].clientY);
+    if(pDist>0){applyDZoom(dZoom*(d2/pDist));pDist=d2;}
+  },{passive:false});
+  viewPane.addEventListener('touchend',e=>{if(e.touches.length<2)pDist=0;});
+  viewPane.addEventListener('dblclick',()=>{dZoom===1?fitZoom():applyDZoom(1);});
+
+  body.appendChild(listPane);body.appendChild(viewCol);
 
   ov.appendChild(modal);
   ov.addEventListener('click',e=>{if(e.target===ov)ov.remove();});
@@ -6881,6 +6942,7 @@ async function openDrawingSearch(drawingNo,movexCode){
         if(activeItem){activeItem.style.background='';activeItem.style.borderLeft='';activeItem.style.fontWeight='';}
         activeItem=item;
         item.style.background='#dbeafe';item.style.borderLeft='3px solid #1d4ed8';item.style.fontWeight='700';
+        viewPane.style.alignItems='center';viewPane.style.justifyContent='center';
         viewPane.innerHTML='<div style="color:#64748b">⏳ Se încarcă...</div>';
         try{
           if(!handle)handle=await _ensureDwgHandle();
@@ -6898,13 +6960,15 @@ async function openDrawingSearch(drawingNo,movexCode){
             try{
               const res=await _buildStampedPages(wmCode,url,isPdfF);
               viewPane.innerHTML='';
-              const scroll=dv('');
-              scroll.style.cssText='width:100%;height:100%;overflow:auto;padding:10px;text-align:center;background:#1a1a2e';
+              viewPane.style.alignItems='flex-start';viewPane.style.justifyContent='flex-start';
+              const holder=dv('');holder.id='dwg-holder';holder.style.cssText='padding:10px;display:inline-block';
               res.canvases.forEach(c=>{
-                c.style.cssText='max-width:100%;height:auto;display:block;margin:0 auto 10px;background:#fff;box-shadow:0 3px 14px rgba(0,0,0,.45)';
-                scroll.appendChild(c);
+                c.className='dwg-scalable';
+                c.style.cssText='display:block;margin:0 0 10px;background:#fff;box-shadow:0 3px 14px rgba(0,0,0,.45);transform-origin:top left';
+                holder.appendChild(c);
               });
-              viewPane.appendChild(scroll);
+              viewPane.appendChild(holder);
+              setTimeout(fitZoom,30);
               _addDwgWatermark(viewPane,wmCode,fname,url,isPdfF,res.landscape);
             }catch(err){
               // Fallback to the native viewer if rendering fails
@@ -6914,13 +6978,17 @@ async function openDrawingSearch(drawingNo,movexCode){
                 em.style.cssText='width:100%;height:100%;border:none;background:#fff';
                 viewPane.appendChild(em);
               } else {
-                const img=el('img');img.src=url;
-                img.style.cssText='max-width:100%;max-height:100%;object-fit:contain';
-                viewPane.appendChild(img);
+                viewPane.style.alignItems='flex-start';viewPane.style.justifyContent='flex-start';
+                const holder=dv('');holder.id='dwg-holder';holder.style.cssText='padding:10px;display:inline-block';
+                const img=el('img');img.src=url;img.className='dwg-scalable';
+                img.style.cssText='display:block;background:#fff;transform-origin:top left';
+                img.onload=()=>setTimeout(fitZoom,20);
+                holder.appendChild(img);viewPane.appendChild(holder);
               }
               _addDwgWatermark(viewPane,wmCode,fname,url,isPdfF);
             }
           } else {
+            viewPane.style.alignItems='center';viewPane.style.justifyContent='center';
             const dl=dv('');dl.style.cssText='text-align:center;color:#94a3b8';
             dl.innerHTML='<div style="font-size:34px;margin-bottom:10px">📄</div><div style="margin-bottom:12px">Previzualizare indisponibilă</div>';
             const a=el('a');a.href=url;a.download=fname;a.textContent='⬇ Descarcă';
