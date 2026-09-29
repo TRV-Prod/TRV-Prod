@@ -11065,15 +11065,18 @@ function openOrientareModal(prefix){
     _oriResults=matchingFPs.map(fp=>{
       const planQ=planQty(fp.code);
       const fpStock=S.stockIdx.get(fp.code)||{onHand:0,totalWIP:0};
+      const _pRaw=String(S.planPrio?.[fp.code]??'').trim();
+      const _pM=_pRaw.replace(',','.').match(/-?\d+(\.\d+)?/);
+      const prio=_pM?parseFloat(_pM[0]):null, prioRaw=_pRaw;
       if(planQ<=0){
         // Not in plan → treated as complete, no assembly needed
-        return {code:fp.code,name:fp.name||'',planQty:0,onHand:fpStock.onHand||0,
-                apt:true,missing:[],planDone:true,notInPlan:true,totalComps:0};
+        return {code:fp.code,name:fp.name||'',planQty:0,onHand:fpStock.onHand||0,prio,prioRaw,
+                apt:true,missing:[],comps:[],planDone:true,notInPlan:true,totalComps:0};
       }
       // ── FP stock already covers the plan → PLAN REALIZAT, skip component check ──
       if((fpStock.onHand||0)>=planQ){
-        return {code:fp.code,name:fp.name||'',planQty:planQ,onHand:fpStock.onHand||0,
-                apt:true,missing:[],planDone:true,totalComps:0};
+        return {code:fp.code,name:fp.name||'',planQty:planQ,onHand:fpStock.onHand||0,prio,prioRaw,
+                apt:true,missing:[],comps:[],planDone:true,totalComps:0};
       }
       // Recursive: for PA components, if not enough stock, check their children (WE parts)
       const needMap=new Map();
@@ -11118,7 +11121,7 @@ function openOrientareModal(prefix){
       }
       comps.sort((a,b)=>(a.ok===b.ok)?(b.short-a.short||a.matNo.localeCompare(b.matNo)):(a.ok?1:-1));
       return {
-        code:fp.code,name:fp.name||'',planQty:planQ,onHand:fpStock.onHand||0,
+        code:fp.code,name:fp.name||'',planQty:planQ,onHand:fpStock.onHand||0,prio,prioRaw,
         apt:missing.length===0,missing:missing.sort((a,b)=>b.short-a.short),
         comps,totalComps:needMap.size,
       };
@@ -11135,6 +11138,8 @@ function openOrientareModal(prefix){
     _oriResults.sort((a,b)=>{
       const ra=rank(a),rb=rank(b);
       if(ra!==rb)return ra-rb;
+      const pa=a.prio!=null?a.prio:99999, pb=b.prio!=null?b.prio:99999;
+      if(pa!==pb)return pa-pb;
       return (b.planQty||0)-(a.planQty||0);
     });
 
@@ -11144,6 +11149,7 @@ function openOrientareModal(prefix){
     const tbl=el('table');tbl.style.cssText='width:100%;border-collapse:collapse;font-size:12px';
     const thead=el('thead');const hr=el('tr');hr.style.cssText='background:#1e3a5f;color:#fff;position:sticky;top:0;z-index:2';
     [
+      {l:'Prio',a:'center',w:'54px'},
       {l:'Produs Final',a:'left',w:''},
       {l:'Buc planificate',a:'right',w:'110px'},
       {l:'Buc în stoc',a:'right',w:'95px'},
@@ -11168,6 +11174,10 @@ function openOrientareModal(prefix){
       tr.addEventListener('click',()=>{S.asmFP=r.code;ov.remove();render();});
 
       const mkTd=(html,css)=>{const td=el('td');td.style.cssText=(css||'')+';padding:7px 10px;vertical-align:middle';td.innerHTML=html;return td;};
+      {const lbl=r.prioRaw||(r.prio!=null?String(r.prio):'');
+       tr.appendChild(mkTd(lbl
+         ?`<span style="display:inline-block;min-width:24px;padding:2px 7px;border-radius:5px;font-size:12px;font-weight:900;background:${r.prio!=null&&r.prio<=3?'#fee2e2':r.prio!=null&&r.prio<=10?'#fef3c7':'#f1f5f9'};color:${r.prio!=null&&r.prio<=3?'#991b1b':r.prio!=null&&r.prio<=10?'#92400e':'#64748b'};border:1px solid ${r.prio!=null&&r.prio<=3?'#fca5a5':r.prio!=null&&r.prio<=10?'#fcd34d':'#e2e8f0'}">${lbl}</span>`
+         :'<span style="color:#cbd5e1">—</span>','text-align:center'));}
       {const cTd=mkTd(`<div style="font-family:monospace;font-weight:800;font-size:12.5px;color:#1e3a5f">${r.code}</div>
         ${r.name?`<div style="font-size:10px;color:#6b7280">${r.name}</div>`:''}`);
        _attachItemCtx(cTd,r.code);tr.appendChild(cTd);}
@@ -11234,13 +11244,13 @@ function openOrientareModal(prefix){
   function exportOrientare(){
     const rows=_oriRows('all');
     if(!rows.length){showToast('Nimic de exportat','err',2000);return;}
-    const data=[['Produs final','Denumire','Buc planificate','Buc în stoc','Apt asamblare','Componente lipsă','Componente disponibile']];
-    rows.forEach(r=>data.push([r.code,r.name,r.planQty||0,r.onHand||0,
+    const data=[['Prio','Produs final','Denumire','Buc planificate','Buc în stoc','Apt asamblare','Componente lipsă','Componente disponibile']];
+    rows.forEach(r=>data.push([r.prioRaw||(r.prio!=null?r.prio:''),r.code,r.name,r.planQty||0,r.onHand||0,
       r.notInPlan?'Nu e în plan':r.planDone?'PLAN REALIZAT':r.apt?'DA':'NU',
       (r.comps||[]).filter(m=>!m.ok).map(m=>`${m.matNo} (−${m.short})`).join('; '),
       (r.comps||[]).filter(m=>m.ok).map(m=>`${m.matNo} (${m.avail})`).join('; ')]));
     const wb=XLSX.utils.book_new();const ws=XLSX.utils.aoa_to_sheet(data);
-    ws['!cols']=[{wch:22},{wch:32},{wch:14},{wch:12},{wch:15},{wch:60},{wch:60}];
+    ws['!cols']=[{wch:6},{wch:22},{wch:32},{wch:14},{wch:12},{wch:15},{wch:60},{wch:60}];
     XLSX.utils.book_append_sheet(wb,ws,'Orientare');
     XLSX.writeFile(wb,'Orientare_'+(prefix||'toate')+'_'+new Date().toISOString().slice(0,10)+'.xlsx');
   }
@@ -11254,6 +11264,7 @@ function openOrientareModal(prefix){
       const miss=(r.comps||[]).filter(m=>!m.ok);
       const okc=(r.comps||[]).filter(m=>m.ok);
       return `<tr${r.apt?'':' style="background:#fef2f2"'}>
+        <td style="text-align:center;font-weight:900;color:#92400e">${r.prioRaw||(r.prio!=null?fmtN(r.prio):'')}</td>
         <td><b style="font-family:monospace">${r.code}</b>${r.name?`<div style="font-size:7.5pt;color:#555">${r.name}</div>`:''}</td>
         <td style="text-align:right;font-weight:700">${fmtN(r.planQty||0)}</td>
         <td style="text-align:right">${fmtN(r.onHand||0)}</td>
@@ -11271,7 +11282,7 @@ function openOrientareModal(prefix){
     <div style="font-size:14pt;font-weight:800;color:#5b21b6;margin-bottom:2px">🧭 ${mode==='apt'?'Repere APTE de asamblare':'Orientare — toate produsele'}${prefix?' · '+prefix:''}</div>
     <div style="font-size:9pt;color:#555;margin-bottom:8px">${rows.length} produse · ${new Date().toLocaleDateString('ro-RO')}</div>
     <table><thead><tr>
-      <th>Produs final</th><th style="width:70px;text-align:right">Planificat</th>
+      <th style="width:34px;text-align:center">Prio</th><th>Produs final</th><th style="width:70px;text-align:right">Planificat</th>
       <th style="width:60px;text-align:right">În stoc</th><th style="width:50px;text-align:center">Apt</th>
       <th style="width:190px">Componente lipsă</th><th style="width:250px">Componente disponibile</th>
     </tr></thead><tbody>${rowsHtml}</tbody></table>`;
