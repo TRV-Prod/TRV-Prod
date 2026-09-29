@@ -11134,6 +11134,14 @@ function _getFirstBowOp(fpCode, matNo){
   });
   return str(sorted[0]['Ope name']||sorted[0]['Ope descr']||'');
 }
+// Normalized list of final products — S.fps may hold a Set, an object or partial entries
+function _fpList(){
+  const raw=S.fps;
+  const arr=Array.isArray(raw)?raw:(raw instanceof Set?[...raw]:(raw&&typeof raw==='object'?Object.values(raw):[]));
+  return arr.map(f=>typeof f==='string'?{code:f,name:'',drawing:''}
+    :{code:str(f?.code||''),name:str(f?.name||''),drawing:str(f?.drawing||'')})
+    .filter(f=>f.code);
+}
 
 function renderAsamblare(){
   const page=dv('');page.style.cssText='display:flex;flex-direction:column;height:100%;overflow:hidden;background:#f8f9fb';
@@ -11168,13 +11176,6 @@ function renderAsamblare(){
   fpSearch.value=S.asmSearchPrefix!==undefined?S.asmSearchPrefix:'ALS.MF19';
   fpSearch.style.cssText='flex:1;min-width:110px;max-width:160px;height:34px;padding:0 10px;border:1.5px solid var(--border);border-radius:5px;font-size:12px';
   const fpSel=el('select');fpSel.style.cssText='height:34px;padding:0 8px;border:1.5px solid var(--border);border-radius:5px;font-size:12px;font-weight:600;flex:2;min-width:240px;text-overflow:ellipsis';
-  const _fpList=()=>{
-    const raw=S.fps;
-    const arr=Array.isArray(raw)?raw:(raw instanceof Set?[...raw]:(raw&&typeof raw==='object'?Object.values(raw):[]));
-    return arr.map(f=>typeof f==='string'?{code:f,name:'',drawing:''}
-      :{code:str(f?.code||''),name:str(f?.name||''),drawing:str(f?.drawing||'')})
-      .filter(f=>f.code);
-  };
   const fillFpSel=(q)=>{
     fpSel.innerHTML='';
     const ql=(q||'').toLowerCase();
