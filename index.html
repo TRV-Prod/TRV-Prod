@@ -2499,7 +2499,7 @@ function openAsamblareModal(){
   if(!S.bomIdx){alert('BOM nu este încărcat.');return;}
 
   document.getElementById('asm-overlay')?.remove();
-  const fp=S.fps?.find(f=>f.code===S.selFP);
+  const fp=(Array.isArray(S.fps)?S.fps:[]).find(f=>f&&f.code===S.selFP);
   const planQ=planQty(S.selFP);
   const inputQty=S.qtyInput||1;
 
@@ -2678,7 +2678,7 @@ function exportStructuraPDF(){
   const treeEl=document.getElementById('structura-tree-root');
   if(!treeEl){alert('Deschideți tab-ul Structura mai întâi.');return;}
 
-  const fp=S.fps?.find(f=>f.code===S.selFP);
+  const fp=(Array.isArray(S.fps)?S.fps:[]).find(f=>f&&f.code===S.selFP);
   const titleLine=`Structura BOM — ${S.selFP}${fp?.name?' · '+fp.name:''}`;
   const subLine=`${fmtN(S.qtyInput)} buc · Eficiență: ${S.efficienta||100}%${S.structIgnoreStock?' · Stocuri ignorate':''} · ${new Date().toLocaleDateString('ro-RO')}`;
 
@@ -6149,7 +6149,7 @@ function openPlanBomPopup(itemNo, planQtyVal){
   document.getElementById('plan-bom-overlay')?.remove();
 
   const qty=planQtyVal||planQty(itemNo)||1;
-  const fp=S.fps?.find(f=>f.code===itemNo);
+  const fp=(Array.isArray(S.fps)?S.fps:[]).find(f=>f&&f.code===itemNo);
   const tree=buildTree(itemNo,itemNo);
 
   const ov=dv('');ov.id='plan-bom-overlay';
@@ -6409,9 +6409,12 @@ function _buildDwgNameIdx(){
     }
   }
   // FP list as extra source
-  if(S.fps){
-    for(const f of S.fps){
-      if(f.code&&f.name&&!idx.has(f.code))idx.set(f.code,f.name);
+  {
+    const arr=Array.isArray(S.fps)?S.fps:(S.fps?Object.values(S.fps):[]);
+    for(const f of arr){
+      if(!f||typeof f!=='object')continue;
+      const code=str(f.code||''),nm=str(f.name||'');
+      if(code&&nm&&!idx.has(code))idx.set(code,nm);
     }
   }
   _dwgNameIdx=idx;
@@ -10692,10 +10695,13 @@ function openNecesarComponenteModal(prefix){
 
   setTimeout(()=>{
     const pl=(prefix||'').toLowerCase();
-    const fpList=(S.fps||[]).filter(f=>{
-      if(pl&&!f.code.toLowerCase().startsWith(pl))return false;
-      return planQty(f.code)>0;
-    });
+    const _allN=Array.isArray(S.fps)?S.fps:(S.fps?Object.values(S.fps):[]);
+    const fpList=_allN.map(f=>typeof f==='string'?{code:f,name:''}:{code:str(f?.code||''),name:str(f?.name||'')})
+      .filter(f=>{
+        if(!f.code)return false;
+        if(pl&&!f.code.toLowerCase().startsWith(pl))return false;
+        return planQty(f.code)>0;
+      });
 
     // Aggregate: matNo → {name, isMake, unit, total, sources:[{fp,qty}]}
     compMap=new Map();
@@ -10959,7 +10965,9 @@ function openOrientareModal(prefix){
 
   setTimeout(()=>{
     const pl=prefix.toLowerCase();
-    const matchingFPs=(S.fps||[]).filter(f=>f.code.toLowerCase().startsWith(pl));
+    const _all=Array.isArray(S.fps)?S.fps:(S.fps?Object.values(S.fps):[]);
+    const matchingFPs=_all.map(f=>typeof f==='string'?{code:f,name:''}:{code:str(f?.code||''),name:str(f?.name||'')})
+      .filter(f=>f.code&&f.code.toLowerCase().startsWith(pl));
     if(!matchingFPs.length){
       body.innerHTML=`<div style="padding:30px;text-align:center;color:var(--text3)">Niciun produs final nu începe cu "${prefix}".</div>`;
       return;
@@ -11130,7 +11138,7 @@ function _getFirstBowOp(fpCode, matNo){
 function renderAsamblare(){
   const page=dv('');page.style.cssText='display:flex;flex-direction:column;height:100%;overflow:hidden;background:#f8f9fb';
 
-  if(!S.bomIdx||!S.fps?.length){
+  if(!S.bomIdx||!(Array.isArray(S.fps)?S.fps.length:S.fps&&Object.keys(S.fps).length)){
     page.innerHTML='<div style="padding:40px;text-align:center;color:var(--text3);font-size:13px">Încărcați fișierul BOM din tab-ul Fisiere.</div>';
     return page;
   }
@@ -11140,8 +11148,9 @@ function renderAsamblare(){
   // Default FP: first one matching the current search prefix
   if(!S.asmFP){
     const pfx=(S.asmSearchPrefix||'').toLowerCase();
-    const firstMatch=pfx?S.fps.find(f=>f.code.toLowerCase().startsWith(pfx)):null;
-    S.asmFP=firstMatch?.code||S.selFP||S.fps[0]?.code||'';
+    const list0=_fpList();
+    const firstMatch=pfx?list0.find(f=>f.code.toLowerCase().startsWith(pfx)):null;
+    S.asmFP=firstMatch?.code||S.selFP||list0[0]?.code||'';
   }
   if(!S.asmData)S.asmData={obs:{},done:{}};
   loadAsmData();
@@ -11159,10 +11168,17 @@ function renderAsamblare(){
   fpSearch.value=S.asmSearchPrefix!==undefined?S.asmSearchPrefix:'ALS.MF19';
   fpSearch.style.cssText='flex:1;min-width:110px;max-width:160px;height:34px;padding:0 10px;border:1.5px solid var(--border);border-radius:5px;font-size:12px';
   const fpSel=el('select');fpSel.style.cssText='height:34px;padding:0 8px;border:1.5px solid var(--border);border-radius:5px;font-size:12px;font-weight:600;flex:2;min-width:240px;text-overflow:ellipsis';
+  const _fpList=()=>{
+    const raw=S.fps;
+    const arr=Array.isArray(raw)?raw:(raw instanceof Set?[...raw]:(raw&&typeof raw==='object'?Object.values(raw):[]));
+    return arr.map(f=>typeof f==='string'?{code:f,name:'',drawing:''}
+      :{code:str(f?.code||''),name:str(f?.name||''),drawing:str(f?.drawing||'')})
+      .filter(f=>f.code);
+  };
   const fillFpSel=(q)=>{
     fpSel.innerHTML='';
     const ql=(q||'').toLowerCase();
-    const matches=(S.fps||[]).filter(f=>!ql||f.code.toLowerCase().includes(ql)||(f.name||'').toLowerCase().includes(ql));
+    const matches=_fpList().filter(f=>!ql||f.code.toLowerCase().includes(ql)||f.name.toLowerCase().includes(ql));
     matches.slice(0,300).forEach(f=>{
       const o=el('option');o.value=f.code;o.textContent=`${f.code}${f.name?' — '+f.name:''}`;
       fpSel.appendChild(o);
@@ -11170,7 +11186,7 @@ function renderAsamblare(){
     // Ensure current asmFP is in the list and selected; if not in filter, add it at top
     if(S.asmFP){
       if(!matches.find(f=>f.code===S.asmFP)){
-        const cur=S.fps.find(f=>f.code===S.asmFP);
+        const cur=_fpList().find(f=>f.code===S.asmFP);
         if(cur){
           const o=el('option');o.value=cur.code;o.textContent=`${cur.code}${cur.name?' — '+cur.name:''}`;
           fpSel.insertBefore(o,fpSel.firstChild);
@@ -11186,7 +11202,7 @@ function renderAsamblare(){
     // If current FP no longer matches the filter, switch to first match
     const pfx=fpSearch.value.toLowerCase();
     if(pfx&&S.asmFP&&!S.asmFP.toLowerCase().includes(pfx)){
-      const firstMatch=S.fps.find(f=>f.code.toLowerCase().startsWith(pfx)||f.code.toLowerCase().includes(pfx));
+      const firstMatch=_fpList().find(f=>f.code.toLowerCase().startsWith(pfx)||f.code.toLowerCase().includes(pfx));
       if(firstMatch){
         S.asmFP=firstMatch.code;
         fpSel.value=firstMatch.code;
@@ -11283,7 +11299,7 @@ function renderAsamblare(){
 
   function rebuild(){
     content.innerHTML='';
-    const fp=S.fps.find(f=>f.code===S.asmFP);
+    const fp=_fpList().find(f=>f.code===S.asmFP);
     const planQ=planQty(S.asmFP);
     const qty=S.asmQty||1;
     const fpStockCheck=S.stockIdx?.get(S.asmFP)||{onHand:0,totalWIP:0};
@@ -11549,7 +11565,7 @@ function renderAsamblare(){
   function printAsamblare(){
     const tree=buildTree(S.asmFP,S.asmFP);
     const qty=S.asmQty||1;
-    const fp=S.fps.find(f=>f.code===S.asmFP);
+    const fp=_fpList().find(f=>f.code===S.asmFP);
     let rowsHtml='';
     function walk(nodes,depth,mult){
       nodes.forEach(n=>{
