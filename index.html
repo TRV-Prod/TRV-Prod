@@ -11228,6 +11228,67 @@ function openOrientareModal(prefix){
     renderRows();
   },50);
 
+  function _oriRows(mode){
+    return (_oriResults||[]).filter(r=>mode==='apt'?(r.apt===true&&!r.notInPlan):true);
+  }
+  function exportOrientare(){
+    const rows=_oriRows('all');
+    if(!rows.length){showToast('Nimic de exportat','err',2000);return;}
+    const data=[['Produs final','Denumire','Buc planificate','Buc în stoc','Apt asamblare','Componente lipsă','Componente disponibile']];
+    rows.forEach(r=>data.push([r.code,r.name,r.planQty||0,r.onHand||0,
+      r.notInPlan?'Nu e în plan':r.planDone?'PLAN REALIZAT':r.apt?'DA':'NU',
+      (r.comps||[]).filter(m=>!m.ok).map(m=>`${m.matNo} (−${m.short})`).join('; '),
+      (r.comps||[]).filter(m=>m.ok).map(m=>`${m.matNo} (${m.avail})`).join('; ')]));
+    const wb=XLSX.utils.book_new();const ws=XLSX.utils.aoa_to_sheet(data);
+    ws['!cols']=[{wch:22},{wch:32},{wch:14},{wch:12},{wch:15},{wch:60},{wch:60}];
+    XLSX.utils.book_append_sheet(wb,ws,'Orientare');
+    XLSX.writeFile(wb,'Orientare_'+(prefix||'toate')+'_'+new Date().toISOString().slice(0,10)+'.xlsx');
+  }
+  function printOrientare(mode){
+    const rows=_oriRows(mode);
+    if(!rows.length){showToast(mode==='apt'?'Niciun produs apt de asamblare':'Nimic de printat','err',2500);return;}
+    document.getElementById('ori-print-overlay')?.remove();
+    const pov=dv('');pov.id='ori-print-overlay';
+    pov.style.cssText='position:fixed;inset:0;z-index:99999;background:#fff;overflow:auto;padding:10mm;display:block';
+    const rowsHtml=rows.map(r=>{
+      const miss=(r.comps||[]).filter(m=>!m.ok);
+      const okc=(r.comps||[]).filter(m=>m.ok);
+      return `<tr${r.apt?'':' style="background:#fef2f2"'}>
+        <td><b style="font-family:monospace">${r.code}</b>${r.name?`<div style="font-size:7.5pt;color:#555">${r.name}</div>`:''}</td>
+        <td style="text-align:right;font-weight:700">${fmtN(r.planQty||0)}</td>
+        <td style="text-align:right">${fmtN(r.onHand||0)}</td>
+        <td style="text-align:center;font-weight:800;color:${r.apt?'#15803d':'#991b1b'}">${r.notInPlan?'—':r.planDone?'REALIZAT':r.apt?'DA':'NU'}</td>
+        <td style="font-size:7.5pt;line-height:1.35">${miss.length?miss.map(m=>`<span style="color:#991b1b;font-weight:700">${m.matNo}</span> −${fmtN(m.short)}`).join('<br>'):'<span style="color:#15803d">toate disponibile</span>'}</td>
+        <td style="font-size:7pt;line-height:1.3;color:#15803d">${okc.slice(0,18).map(m=>`${m.matNo} ${fmtN(m.avail)}`).join(' · ')}${okc.length>18?` … +${okc.length-18}`:''}</td>
+      </tr>`;}).join('');
+    pov.innerHTML=`<style>
+      #ori-print-overlay table{width:100%;border-collapse:collapse;font-size:9pt}
+      #ori-print-overlay th{background:#5b21b6;color:#fff;padding:5px 6px;font-size:8pt;font-weight:700;text-align:left;border:1px solid #0f172a}
+      #ori-print-overlay td{padding:4px 6px;border:1px solid #e2e8f0;vertical-align:top}
+      @page{size:A3 landscape;margin:8mm}
+      @media print{#ori-print-overlay{padding:0!important}.spo-close{display:none!important}}
+    </style>
+    <div style="font-size:14pt;font-weight:800;color:#5b21b6;margin-bottom:2px">🧭 ${mode==='apt'?'Repere APTE de asamblare':'Orientare — toate produsele'}${prefix?' · '+prefix:''}</div>
+    <div style="font-size:9pt;color:#555;margin-bottom:8px">${rows.length} produse · ${new Date().toLocaleDateString('ro-RO')}</div>
+    <table><thead><tr>
+      <th>Produs final</th><th style="width:70px;text-align:right">Planificat</th>
+      <th style="width:60px;text-align:right">În stoc</th><th style="width:50px;text-align:center">Apt</th>
+      <th style="width:190px">Componente lipsă</th><th style="width:250px">Componente disponibile</th>
+    </tr></thead><tbody>${rowsHtml}</tbody></table>`;
+    const bb=dv('spo-close');bb.style.cssText='position:fixed;top:10px;right:14px;z-index:100001;display:flex;gap:8px';
+    const cbP=el('button');cbP.textContent='✕ Închide';
+    cbP.style.cssText='height:34px;padding:0 16px;border:1px solid #e2e8f0;border-radius:5px;background:#fff;cursor:pointer;font-size:12px;font-weight:700;box-shadow:0 3px 12px rgba(0,0,0,.2)';
+    cbP.onclick=()=>{pov.remove();document.body.classList.remove('has-print-overlay');};
+    const pbP=el('button');pbP.textContent='🖨 Printează';
+    pbP.style.cssText='height:34px;padding:0 16px;border:1.5px solid #0369a1;border-radius:5px;background:#eff6ff;cursor:pointer;font-size:12px;font-weight:800;color:#0369a1;box-shadow:0 3px 12px rgba(0,0,0,.2)';
+    pbP.onclick=()=>window.print();
+    bb.appendChild(cbP);bb.appendChild(pbP);
+    pov.insertBefore(bb,pov.firstChild);
+    document.body.appendChild(pov);document.body.classList.add('has-print-overlay');
+    const esc=e=>{if(e.key==='Escape'){pov.remove();document.body.classList.remove('has-print-overlay');document.removeEventListener('keydown',esc);}};
+    document.addEventListener('keydown',esc);
+  }
+
   ov.appendChild(modal);
   ov.addEventListener('click',e=>{if(e.target===ov)ov.remove();});
   document.body.appendChild(ov);
