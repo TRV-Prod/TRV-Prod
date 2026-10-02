@@ -11138,9 +11138,10 @@ function openOrientareModal(prefix){
     _oriResults.sort((a,b)=>{
       const ra=rank(a),rb=rank(b);
       if(ra!==rb)return ra-rb;
-      const pa=a.prio!=null?a.prio:99999, pb=b.prio!=null?b.prio:99999;
+      const pa=(a.prio!=null&&isFinite(a.prio))?a.prio:Number.MAX_SAFE_INTEGER;
+      const pb=(b.prio!=null&&isFinite(b.prio))?b.prio:Number.MAX_SAFE_INTEGER;
       if(pa!==pb)return pa-pb;
-      return (b.planQty||0)-(a.planQty||0);
+      return String(a.code||'').localeCompare(String(b.code||''));
     });
 
     function renderRows(){
