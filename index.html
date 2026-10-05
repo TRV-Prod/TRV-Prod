@@ -1347,7 +1347,7 @@ const S={
   planPrio:{},  // itemNo → priority string (persisted)
   qualData:null,      // TI-Quality reporting set rows (rejectii)
   qualIdx:null,       // 'YYYYMM' → {powder,wet,total} rej qty (doar vopsitorie)
-  kpi8:{sub:'prod',year:'',wcSel:null},
+  kpi8:{sub:'prod',year:'',wcSel:null,groups:{},groupOrder:[],expanded:new Set()},
   planFilter:{
     colFilters:{},
     realizarePct:'all',
@@ -9020,8 +9020,86 @@ function showScanCtxMenu(ev, colKey, cellText){
 const KPI_MONTHS=['Ian','Feb','Mar','Apr','Mai','Iun','Iul','Aug','Sep','Oct','Noi','Dec'];
 const KPI8_WC_KEY='pps_kpi8_wc';
 
-function kpiLoadWcSel(){try{const v=localStorage.getItem(KPI8_WC_KEY);return v?new Set(JSON.parse(v)):null;}catch{return null;}}
-function kpiSaveWcSel(set){try{localStorage.setItem(KPI8_WC_KEY,JSON.stringify([...set]));}catch{}}
+/* ── Persistenta configuratiei KPI 8 (selectii + grupari) ──
+   localStorage = imediat, Supabase = partajat intre device-uri (admin). */
+function kpiCfgPlain(){
+  const k=S.kpi8||{};
+  return {
+    sub:k.sub||'prod',
+    year:k.year||'',
+    wcSel:k.wcSel?[...k.wcSel]:null,
+    groups:k.groups||{},
+    groupOrder:k.groupOrder||[],
+    expanded:k.expanded?[...k.expanded]:[],
+  };
+}
+function kpiSaveCfg(){
+  const plain=kpiCfgPlain();
+  try{localStorage.setItem(KPI8_WC_KEY,JSON.stringify(plain));}catch{}
+  clearTimeout(S._kpiSaveT);
+  S._kpiSaveT=setTimeout(async()=>{
+    if(!S.sbCfg||S.session?.role!=='admin')return;
+    try{await sbUpload(S.sbCfg,'data-kpi8-layout.json',kpiCfgPlain());}
+    catch(e){console.warn('kpiSaveCfg',e);}
+  },700);
+}
+function kpiApplyCfg(d){
+  if(!d||typeof d!=='object')return;
+  const k=S.kpi8;
+  if(d.sub)k.sub=d.sub;
+  if(d.year)k.year=d.year;
+  if(Array.isArray(d.wcSel))k.wcSel=new Set(d.wcSel);
+  if(d.groups&&typeof d.groups==='object')k.groups=d.groups;
+  if(Array.isArray(d.groupOrder))k.groupOrder=d.groupOrder;
+  k.expanded=new Set(Array.isArray(d.expanded)?d.expanded:[]);
+}
+function kpiLoadCfgLocal(){
+  try{
+    const v=localStorage.getItem(KPI8_WC_KEY);
+    if(!v)return;
+    const d=JSON.parse(v);
+    // migrare din formatul vechi (doar lista de workcentere)
+    if(Array.isArray(d)){S.kpi8.wcSel=new Set(d);return;}
+    kpiApplyCfg(d);
+  }catch{}
+}
+async function kpiLoadCfgRemote(){
+  if(!S.sbCfg)return;
+  try{const d=await sbDownload(S.sbCfg,'data-kpi8-layout.json');kpiApplyCfg(d);}
+  catch(e){console.warn('kpiLoadCfgRemote',e);}
+}
+/* Grup care contine workcenterul (sau null) */
+function kpiGroupOf(wc){
+  const g=S.kpi8?.groups||{};
+  for(const name of Object.keys(g))if((g[name]||[]).includes(wc))return name;
+  return null;
+}
+/* Randuri afisate: [{type:'group',name,members:[]} | {type:'wc',name}] */
+function kpiBuildRows(allWc,sel){
+  const k=S.kpi8;
+  const groups=k.groups||{};
+  const order=(k.groupOrder||[]).filter(n=>groups[n]);
+  Object.keys(groups).forEach(n=>{if(!order.includes(n))order.push(n);});
+  k.groupOrder=order;
+  const used=new Set();
+  const rows=[];
+  order.forEach(name=>{
+    const members=(groups[name]||[]).filter(w=>sel.includes(w));
+    (groups[name]||[]).forEach(w=>used.add(w));
+    if(members.length)rows.push({type:'group',name,members});
+  });
+  sel.forEach(w=>{if(!used.has(w))rows.push({type:'wc',name:w,members:[w]});});
+  return rows;
+}
+/* Insumeaza lunile pentru o lista de workcentere */
+function kpiSumRow(data,members){
+  const out=Array.from({length:12},()=>({teo:0,real:0,n:0}));
+  members.forEach(w=>{
+    const arr=data.get(w);if(!arr)return;
+    arr.forEach((c,i)=>{out[i].teo+=c.teo;out[i].real+=c.real;out[i].n+=c.n;});
+  });
+  return out;
+}
 
 /* ── Rejections file (TI-Quality reporting set) ── */
 function applyQuality(rows,ts){
@@ -9123,9 +9201,14 @@ function renderKpi8(){
   const page=dv('cnt');page.style.cssText='flex:1;display:flex;flex-direction:column;overflow:hidden';
   S.kpi8=S.kpi8||{sub:'prod',year:'',wcSel:null};
   const k=S.kpi8;
+  if(!S._kpi8Loaded){
+    S._kpi8Loaded=true;
+    kpiLoadCfgLocal();                                   // imediat: selectiile salvate local
+    kpiLoadCfgRemote().then(()=>{if(S.tab==='kpi8')render();});  // apoi cele de pe server
+  }
+  k.expanded=k.expanded instanceof Set?k.expanded:new Set();
   const years=kpiYears();
   if(!k.year||(k.year!=='all'&&!years.includes(k.year)))k.year=years[years.length-1]||'all';
-  if(k.wcSel==null)k.wcSel=kpiLoadWcSel();
 
   /* ── Header ── */
   const hdr=dv('');hdr.style.cssText='padding:14px 22px 10px;border-bottom:2px solid var(--border);background:#fff';
@@ -9142,7 +9225,7 @@ function renderKpi8(){
     const b=el('button');b.textContent=lbl;
     const on=k.sub===id;
     b.style.cssText=`padding:8px 16px;border-radius:8px;font-size:12.5px;font-weight:800;cursor:pointer;border:2px solid ${on?'#1d4ed8':'#e2e8f0'};background:${on?'#1d4ed8':'#fff'};color:${on?'#fff':'#475569'}`;
-    b.addEventListener('click',()=>{k.sub=id;render();});
+    b.addEventListener('click',()=>{k.sub=id;kpiSaveCfg();render();});
     tabs.appendChild(b);
   });
   // year selector
@@ -9151,7 +9234,7 @@ function renderKpi8(){
   const ySel=el('select');ySel.style.cssText='padding:6px 10px;border:1.5px solid var(--border);border-radius:7px;font-size:12.5px;font-weight:700;min-width:92px';
   years.forEach(y=>{const o=el('option');o.value=y;o.textContent=y;if(y===k.year)o.selected=true;ySel.appendChild(o);});
   {const o=el('option');o.value='all';o.textContent='Toti anii';if(k.year==='all')o.selected=true;ySel.appendChild(o);}
-  ySel.addEventListener('change',()=>{k.year=ySel.value;render();});
+  ySel.addEventListener('change',()=>{k.year=ySel.value;kpiSaveCfg();render();});
   yWrap.appendChild(ySel);
   tabs.appendChild(yWrap);
   hdr.appendChild(tabs);
@@ -9174,8 +9257,9 @@ function kpiRenderProd(body,k){
   const data=kpiBuildProd(k.year);
   const allWc=[...data.keys()].sort((a,b)=>a.localeCompare(b));
   if(!allWc.length){body.appendChild(mkEmpty('Fara date','Nu exista scanari cu timpi teoretici (BOW) pentru anul selectat.'));return;}
-  if(!k.wcSel){k.wcSel=new Set(allWc);kpiSaveWcSel(k.wcSel);}
+  if(!k.wcSel){k.wcSel=new Set(allWc);kpiSaveCfg();}
   const sel=allWc.filter(w=>k.wcSel.has(w));
+  const rows=kpiBuildRows(allWc,sel);
 
   /* toolbar */
   const tb=dv('');tb.style.cssText='display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:12px';
@@ -9183,9 +9267,14 @@ function kpiRenderProd(body,k){
   btnCols.style.cssText='padding:7px 13px;border:1.5px solid var(--border);border-radius:7px;background:#fff;font-size:12px;font-weight:700;cursor:pointer';
   btnCols.addEventListener('click',()=>kpiWcPicker(allWc,k));
   tb.appendChild(btnCols);
+  const nGrp=(k.groupOrder||[]).length;
+  const btnGrp=el('button');btnGrp.textContent=`🗂 Grupari (${nGrp})`;
+  btnGrp.style.cssText='padding:7px 13px;border:1.5px solid #7c3aed;border-radius:7px;background:#fff;color:#6d28d9;font-size:12px;font-weight:700;cursor:pointer';
+  btnGrp.addEventListener('click',()=>kpiGroupManager(allWc,k));
+  tb.appendChild(btnGrp);
   const bx=el('button');bx.textContent='↓ Export Excel';
   bx.style.cssText='padding:7px 13px;border:1.5px solid #16a34a;border-radius:7px;background:#fff;color:#15803d;font-size:12px;font-weight:700;cursor:pointer';
-  bx.addEventListener('click',()=>kpiExportProd(data,sel,k.year));
+  bx.addEventListener('click',()=>kpiExportProd(data,rows,k.year));
   tb.appendChild(bx);
   const bp=el('button');bp.textContent='🖨 Printeaza';
   bp.style.cssText='padding:7px 13px;border:1.5px solid var(--border);border-radius:7px;background:#fff;font-size:12px;font-weight:700;cursor:pointer';
@@ -9200,8 +9289,8 @@ function kpiRenderProd(body,k){
   const tbl=el('table');tbl.id='kpi8-tbl';
   tbl.style.cssText='width:100%;border-collapse:collapse;font-size:12px;background:#fff;border:1px solid var(--border)';
   const thead=el('thead');const hr=el('tr');hr.style.cssText='background:#1e3a5f;color:#fff';
-  const th0=el('th');th0.textContent='Workcenter';
-  th0.style.cssText='padding:9px 10px;text-align:left;font-size:10px;font-weight:800;text-transform:uppercase;letter-spacing:.05em;position:sticky;left:0;background:#1e3a5f;min-width:190px';
+  const th0=el('th');th0.textContent='Workcenter / Grup';
+  th0.style.cssText='padding:9px 10px;text-align:left;font-size:10px;font-weight:800;text-transform:uppercase;letter-spacing:.05em;position:sticky;left:0;background:#1e3a5f;min-width:210px';
   hr.appendChild(th0);
   KPI_MONTHS.forEach(mn=>{const th=el('th');th.textContent=mn;
     th.style.cssText='padding:9px 8px;text-align:right;font-size:10px;font-weight:800;text-transform:uppercase;width:66px';hr.appendChild(th);});
@@ -9211,25 +9300,64 @@ function kpiRenderProd(body,k){
 
   const tb2=el('tbody');
   const tot=Array.from({length:12},()=>({teo:0,real:0}));
-  sel.forEach((wc,i)=>{
-    const arr=data.get(wc);
-    const tr=el('tr');tr.style.background=i%2?'#f8fafc':'#fff';tr.style.borderBottom='1px solid #f1f5f9';
-    const td0=el('td');td0.textContent=wc;
-    td0.style.cssText=`padding:7px 10px;font-weight:700;color:#1e3a5f;position:sticky;left:0;background:${i%2?'#f8fafc':'#fff'};border-right:1px solid #e2e8f0`;
-    tr.appendChild(td0);
+
+  const mkCells=(tr,arr,strong,bg)=>{
     let yt=0,yr=0;
     arr.forEach((c,ci)=>{
-      const td=el('td');td.style.cssText='padding:7px 8px;text-align:right';
-      if(c.real>0){const v=c.teo/c.real*100;td.innerHTML=kpiPctCell(v);
+      const td=el('td');td.style.cssText=`padding:7px 8px;text-align:right${strong?';font-weight:900':''}`;
+      if(c.real>0){
+        td.innerHTML=kpiPctCell(c.teo/c.real*100);
         td.title=`Teoretic: ${c.teo.toFixed(1)} min\nReal: ${c.real.toFixed(1)} min\nScanari: ${c.n}`;
-        td.style.cursor='help';yt+=c.teo;yr+=c.real;tot[ci].teo+=c.teo;tot[ci].real+=c.real;}
-      else td.innerHTML='<span style="color:#cbd5e1">—</span>';
+        td.style.cursor='help';yt+=c.teo;yr+=c.real;
+      } else td.innerHTML='<span style="color:#cbd5e1">—</span>';
       tr.appendChild(td);
     });
-    const tdy=el('td');tdy.style.cssText='padding:7px 10px;text-align:right;background:#f1f5f9;font-weight:900';
+    const tdy=el('td');tdy.style.cssText=`padding:7px 10px;text-align:right;background:${bg||'#f1f5f9'};font-weight:900`;
     tdy.innerHTML=yr>0?kpiPctCell(yt/yr*100):'<span style="color:#cbd5e1">—</span>';
-    tr.appendChild(tdy);tb2.appendChild(tr);
+    tr.appendChild(tdy);
+  };
+
+  let ri=0;
+  rows.forEach(row=>{
+    if(row.type==='group'){
+      const arr=kpiSumRow(data,row.members);
+      arr.forEach((c,i)=>{tot[i].teo+=c.teo;tot[i].real+=c.real;});
+      const open=k.expanded.has(row.name);
+      const tr=el('tr');tr.style.cssText='background:#f5f3ff;border-bottom:1px solid #ddd6fe;cursor:pointer';
+      const td0=el('td');
+      td0.style.cssText='padding:8px 10px;font-weight:900;color:#5b21b6;position:sticky;left:0;background:#f5f3ff;border-right:1px solid #ddd6fe';
+      td0.innerHTML=`<span style="display:inline-block;width:13px;color:#7c3aed">${open?'▾':'▸'}</span>🗂 ${row.name}
+        <span style="font-weight:700;color:#8b5cf6;font-size:10px"> (${row.members.length} WC)</span>`;
+      tr.appendChild(td0);
+      mkCells(tr,arr,true,'#ede9fe');
+      tr.addEventListener('click',()=>{
+        if(k.expanded.has(row.name))k.expanded.delete(row.name);else k.expanded.add(row.name);
+        kpiSaveCfg();render();
+      });
+      tb2.appendChild(tr);
+      if(open){
+        row.members.forEach(w=>{
+          const mtr=el('tr');mtr.style.cssText='background:#fbfaff;border-bottom:1px solid #f1f5f9';
+          const mtd=el('td');mtd.textContent='   └ '+w;
+          mtd.style.cssText='padding:6px 10px 6px 26px;color:#6b7280;font-size:11.5px;position:sticky;left:0;background:#fbfaff;border-right:1px solid #e2e8f0';
+          mtr.appendChild(mtd);
+          mkCells(mtr,data.get(w)||[],false,'#f8fafc');
+          tb2.appendChild(mtr);
+        });
+      }
+    } else {
+      const arr=data.get(row.name)||[];
+      arr.forEach((c,i)=>{tot[i].teo+=c.teo;tot[i].real+=c.real;});
+      const bg=ri%2?'#f8fafc':'#fff';
+      const tr=el('tr');tr.style.cssText=`background:${bg};border-bottom:1px solid #f1f5f9`;
+      const td0=el('td');td0.textContent=row.name;
+      td0.style.cssText=`padding:7px 10px;font-weight:700;color:#1e3a5f;position:sticky;left:0;background:${bg};border-right:1px solid #e2e8f0`;
+      tr.appendChild(td0);
+      mkCells(tr,arr,false);
+      tb2.appendChild(tr);ri++;
+    }
   });
+
   /* total row */
   {
     const tr=el('tr');tr.style.cssText='background:#eef2ff;border-top:2px solid #1e3a5f';
@@ -9263,14 +9391,17 @@ function kpiWcPicker(allWc,k){
   [['Toate',()=>{allWc.forEach(w=>k.wcSel.add(w));}],['Niciunul',()=>{k.wcSel.clear();}]].forEach(([l,fn])=>{
     const b=el('button');b.textContent=l;
     b.style.cssText='padding:5px 11px;border:1px solid var(--border);border-radius:6px;background:#fff;font-size:11.5px;font-weight:700;cursor:pointer';
-    b.addEventListener('click',()=>{fn();kpiSaveWcSel(k.wcSel);ov.remove();render();});bar.appendChild(b);});
+    b.addEventListener('click',()=>{fn();kpiSaveCfg();ov.remove();render();});bar.appendChild(b);});
   md.appendChild(bar);
   const list=dv('');list.style.cssText='flex:1;overflow:auto;padding:8px 18px 14px';
   allWc.forEach(w=>{
     const row=el('label');row.style.cssText='display:flex;align-items:center;gap:9px;padding:6px 2px;cursor:pointer;border-bottom:1px solid #f8fafc;font-size:12.5px';
     const cb=el('input');cb.type='checkbox';cb.checked=k.wcSel.has(w);cb.style.cssText='width:15px;height:15px;cursor:pointer';
-    cb.addEventListener('change',()=>{if(cb.checked)k.wcSel.add(w);else k.wcSel.delete(w);kpiSaveWcSel(k.wcSel);});
-    row.appendChild(cb);row.appendChild(document.createTextNode(w));list.appendChild(row);
+    cb.addEventListener('change',()=>{if(cb.checked)k.wcSel.add(w);else k.wcSel.delete(w);kpiSaveCfg();});
+    row.appendChild(cb);row.appendChild(document.createTextNode(w));
+    const g=kpiGroupOf(w);
+    if(g){const tag=sp('',g);tag.style.cssText='margin-left:auto;font-size:9.5px;font-weight:800;color:#6d28d9;background:#f5f3ff;border:1px solid #ddd6fe;border-radius:6px;padding:1px 7px';row.appendChild(tag);}
+    list.appendChild(row);
   });
   md.appendChild(list);
   const ft=dv('');ft.style.cssText='padding:11px 18px;border-top:1px solid var(--border);display:flex;justify-content:flex-end';
@@ -9278,6 +9409,121 @@ function kpiWcPicker(allWc,k){
   ap.style.cssText='padding:8px 18px;border:none;border-radius:7px;background:#1d4ed8;color:#fff;font-weight:800;font-size:12.5px;cursor:pointer';
   ap.addEventListener('click',()=>{ov.remove();render();});ft.appendChild(ap);md.appendChild(ft);
   ov.appendChild(md);ov.addEventListener('click',e=>{if(e.target===ov)ov.remove();});
+  document.body.appendChild(ov);
+}
+
+/* ── Manager grupari workcentere ── */
+function kpiGroupManager(allWc,k){
+  document.getElementById('kpi8-grp-ov')?.remove();
+  k.groups=k.groups||{};k.groupOrder=k.groupOrder||[];
+  const ov=dv('');ov.id='kpi8-grp-ov';
+  ov.style.cssText='position:fixed;inset:0;background:rgba(0,0,0,.5);z-index:9500;display:flex;align-items:center;justify-content:center;padding:16px';
+  const md=dv('');md.style.cssText='background:#fff;border-radius:12px;width:min(760px,97vw);max-height:88vh;display:flex;flex-direction:column;overflow:hidden';
+  const h=dv('');h.style.cssText='padding:14px 18px;border-bottom:2px solid var(--border);display:flex;align-items:center;gap:10px';
+  h.innerHTML='<b style="font-size:15px;color:#1e3a5f">🗂 Grupari workcentere</b><span style="font-size:11px;color:#94a3b8">Un workcenter poate apartine unui singur grup</span>';
+  const cl=el('button');cl.textContent='✕';cl.style.cssText='margin-left:auto;border:none;background:#f1f5f9;border-radius:7px;width:30px;height:30px;cursor:pointer;font-size:14px';
+  cl.addEventListener('click',()=>{ov.remove();render();});h.appendChild(cl);md.appendChild(h);
+
+  const bodyEl=dv('');bodyEl.style.cssText='flex:1;overflow:auto;padding:14px 18px 18px';
+  md.appendChild(bodyEl);
+
+  function draw(){
+    bodyEl.innerHTML='';
+    /* add new group */
+    const addBar=dv('');addBar.style.cssText='display:flex;gap:8px;margin-bottom:14px';
+    const inp=el('input');inp.placeholder='Nume grup nou (ex: Bending, Welding)…';
+    inp.style.cssText='flex:1;padding:8px 11px;border:1.5px solid var(--border);border-radius:7px;font-size:12.5px';
+    const add=el('button');add.textContent='+ Adauga grup';
+    add.style.cssText='padding:8px 15px;border:none;border-radius:7px;background:#7c3aed;color:#fff;font-weight:800;font-size:12.5px;cursor:pointer';
+    const doAdd=()=>{
+      const n=inp.value.trim();
+      if(!n)return;
+      if(k.groups[n]){showToast('Grupul exista deja','err',2000);return;}
+      k.groups[n]=[];k.groupOrder.push(n);inp.value='';kpiSaveCfg();draw();
+    };
+    add.addEventListener('click',doAdd);
+    inp.addEventListener('keydown',e=>{if(e.key==='Enter')doAdd();});
+    addBar.appendChild(inp);addBar.appendChild(add);bodyEl.appendChild(addBar);
+
+    if(!k.groupOrder.length){
+      const em=dv('');em.style.cssText='padding:16px;text-align:center;color:#94a3b8;font-size:12px;background:#f8fafc;border-radius:8px;margin-bottom:14px';
+      em.textContent='Niciun grup definit. Creati un grup si bifati workcenterele care intra in el.';
+      bodyEl.appendChild(em);
+    }
+
+    k.groupOrder.forEach((name,gi)=>{
+      const card=dv('');card.style.cssText='border:1.5px solid #ddd6fe;border-radius:9px;margin-bottom:12px;overflow:hidden';
+      const ch=dv('');ch.style.cssText='display:flex;align-items:center;gap:8px;padding:9px 12px;background:#f5f3ff;border-bottom:1px solid #ddd6fe';
+      const nm=el('input');nm.value=name;
+      nm.style.cssText='font-weight:900;color:#5b21b6;font-size:13px;border:1px solid transparent;background:transparent;border-radius:6px;padding:3px 6px;flex:1;min-width:120px';
+      nm.addEventListener('focus',()=>{nm.style.borderColor='#c4b5fd';nm.style.background='#fff';});
+      nm.addEventListener('blur',()=>{
+        nm.style.borderColor='transparent';nm.style.background='transparent';
+        const nn=nm.value.trim();
+        if(!nn||nn===name){nm.value=name;return;}
+        if(k.groups[nn]){showToast('Exista deja un grup cu acest nume','err',2200);nm.value=name;return;}
+        k.groups[nn]=k.groups[name];delete k.groups[name];
+        k.groupOrder[gi]=nn;
+        if(k.expanded.has(name)){k.expanded.delete(name);k.expanded.add(nn);}
+        kpiSaveCfg();draw();
+      });
+      ch.appendChild(nm);
+      const cnt=sp('',`${(k.groups[name]||[]).length} WC`);
+      cnt.style.cssText='font-size:10px;font-weight:800;color:#7c3aed;background:#ede9fe;border-radius:6px;padding:2px 8px';
+      ch.appendChild(cnt);
+      [['▲',()=>{if(gi>0){const t=k.groupOrder[gi-1];k.groupOrder[gi-1]=name;k.groupOrder[gi]=t;}}],
+       ['▼',()=>{if(gi<k.groupOrder.length-1){const t=k.groupOrder[gi+1];k.groupOrder[gi+1]=name;k.groupOrder[gi]=t;}}]]
+      .forEach(([l,fn])=>{
+        const b=el('button');b.textContent=l;
+        b.style.cssText='border:1px solid #ddd6fe;background:#fff;border-radius:6px;width:26px;height:26px;cursor:pointer;font-size:10px;color:#7c3aed';
+        b.addEventListener('click',()=>{fn();kpiSaveCfg();draw();});ch.appendChild(b);
+      });
+      const del=el('button');del.textContent='🗑';
+      del.style.cssText='border:1px solid #fecaca;background:#fff;border-radius:6px;width:26px;height:26px;cursor:pointer;font-size:11px';
+      del.addEventListener('click',()=>{
+        if(!confirm(`Stergeti grupul "${name}"? Workcenterele raman afisate individual.`))return;
+        delete k.groups[name];k.groupOrder.splice(gi,1);k.expanded.delete(name);kpiSaveCfg();draw();
+      });
+      ch.appendChild(del);
+      card.appendChild(ch);
+
+      const grid=dv('');grid.style.cssText='display:grid;grid-template-columns:repeat(auto-fill,minmax(210px,1fr));gap:2px 10px;padding:9px 12px';
+      allWc.forEach(w=>{
+        const owner=kpiGroupOf(w);
+        const mine=owner===name;
+        const taken=owner&&!mine;
+        const row=el('label');
+        row.style.cssText=`display:flex;align-items:center;gap:7px;padding:3px 2px;font-size:11.5px;${taken?'opacity:.42;cursor:not-allowed':'cursor:pointer'}`;
+        const cb=el('input');cb.type='checkbox';cb.checked=mine;cb.disabled=!!taken;
+        cb.style.cssText='width:14px;height:14px;'+(taken?'':'cursor:pointer');
+        cb.addEventListener('change',()=>{
+          const arr=k.groups[name]||(k.groups[name]=[]);
+          if(cb.checked){if(!arr.includes(w))arr.push(w);}
+          else{const i=arr.indexOf(w);if(i>=0)arr.splice(i,1);}
+          kpiSaveCfg();draw();
+        });
+        row.appendChild(cb);row.appendChild(document.createTextNode(w));
+        if(taken){const t=sp('','→ '+owner);t.style.cssText='font-size:9px;color:#94a3b8;margin-left:auto';row.appendChild(t);}
+        grid.appendChild(row);
+      });
+      card.appendChild(grid);
+      bodyEl.appendChild(card);
+    });
+
+    /* ungrouped list */
+    const free=allWc.filter(w=>!kpiGroupOf(w));
+    const fc=dv('');fc.style.cssText='border:1.5px dashed var(--border);border-radius:9px;padding:10px 12px;background:#fafafa';
+    fc.innerHTML=`<div style="font-size:11px;font-weight:800;color:#64748b;text-transform:uppercase;letter-spacing:.05em;margin-bottom:6px">Negrupate (${free.length}) — se afiseaza individual</div>
+      <div style="font-size:11.5px;color:#6b7280;line-height:1.7">${free.length?free.map(w=>`<span style="display:inline-block;background:#fff;border:1px solid var(--border);border-radius:6px;padding:1px 8px;margin:2px 3px 0 0">${w}</span>`).join(''):'<i>Toate workcenterele sunt grupate.</i>'}</div>`;
+    bodyEl.appendChild(fc);
+  }
+  draw();
+
+  const ft=dv('');ft.style.cssText='padding:11px 18px;border-top:1px solid var(--border);display:flex;justify-content:flex-end;gap:8px';
+  const ap=el('button');ap.textContent='Gata';
+  ap.style.cssText='padding:8px 20px;border:none;border-radius:7px;background:#1d4ed8;color:#fff;font-weight:800;font-size:12.5px;cursor:pointer';
+  ap.addEventListener('click',()=>{ov.remove();render();});ft.appendChild(ap);md.appendChild(ft);
+  ov.appendChild(md);ov.addEventListener('click',e=>{if(e.target===ov){ov.remove();render();}});
   document.body.appendChild(ov);
 }
 
@@ -9358,25 +9604,30 @@ function kpiRenderPaint(body,k){
 }
 
 /* ══════════ Export / print ══════════ */
-function kpiExportProd(data,sel,year){
-  const head=['Workcenter',...KPI_MONTHS,'Medie an'];
+function kpiExportProd(data,rows,year){
+  const head=['Tip','Workcenter / Grup',...KPI_MONTHS,'Medie an'];
   const aoa=[head];
   const tot=Array.from({length:12},()=>({teo:0,real:0}));
-  sel.forEach(wc=>{
-    const arr=data.get(wc);let yt=0,yr=0;
-    const row=[wc];
+  const pct=(t,r)=>r>0?Math.round(t/r*1000)/10:'';
+  const push=(tip,label,arr,addTotal)=>{
+    let yt=0,yr=0;const row=[tip,label];
     arr.forEach((c,i)=>{
-      if(c.real>0){row.push(Math.round(c.teo/c.real*1000)/10);yt+=c.teo;yr+=c.real;tot[i].teo+=c.teo;tot[i].real+=c.real;}
-      else row.push('');
+      row.push(pct(c.teo,c.real));
+      if(c.real>0){yt+=c.teo;yr+=c.real;if(addTotal){tot[i].teo+=c.teo;tot[i].real+=c.real;}}
     });
-    row.push(yr>0?Math.round(yt/yr*1000)/10:'');
-    aoa.push(row);
+    row.push(pct(yt,yr));aoa.push(row);
+  };
+  (rows||[]).forEach(r=>{
+    if(r.type==='group'){
+      push('GRUP',r.name,kpiSumRow(data,r.members),true);
+      r.members.forEach(w=>push('  membru','   '+w,data.get(w)||[],false));
+    } else push('WC',r.name,data.get(r.name)||[],true);
   });
-  {let yt=0,yr=0;const row=['TOTAL / MEDIE'];
-   tot.forEach(c=>{if(c.real>0){row.push(Math.round(c.teo/c.real*1000)/10);yt+=c.teo;yr+=c.real;}else row.push('');});
-   row.push(yr>0?Math.round(yt/yr*1000)/10:'');aoa.push(row);}
+  {let yt=0,yr=0;const row=['TOTAL','TOTAL / MEDIE'];
+   tot.forEach(c=>{row.push(pct(c.teo,c.real));if(c.real>0){yt+=c.teo;yr+=c.real;}});
+   row.push(pct(yt,yr));aoa.push(row);}
   const wb=XLSX.utils.book_new();const ws=XLSX.utils.aoa_to_sheet(aoa);
-  ws['!cols']=[{wch:26},...KPI_MONTHS.map(()=>({wch:9})),{wch:11}];
+  ws['!cols']=[{wch:9},{wch:28},...KPI_MONTHS.map(()=>({wch:9})),{wch:11}];
   XLSX.utils.book_append_sheet(wb,ws,'IP Productie');
   XLSX.writeFile(wb,`KPI8_IP_Productie_${year}.xlsx`);
 }
