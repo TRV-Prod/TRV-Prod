@@ -1347,7 +1347,7 @@ const S={
   planPrio:{},  // itemNo → priority string (persisted)
   qualData:null,      // TI-Quality reporting set rows (rejectii)
   qualIdx:null,       // 'YYYYMM' → {powder,wet,total} rej qty (doar vopsitorie)
-  kpi8:{sub:'prod',year:'',wcSel:null,groups:{},groupOrder:[],expanded:new Set()},
+  kpi8:{sub:'prod',year:'',wcSel:null,groups:{},groupOrder:[],expanded:new Set(),colW:{}},
   planFilter:{
     colFilters:{},
     realizarePct:'all',
@@ -9031,6 +9031,7 @@ function kpiCfgPlain(){
     groups:k.groups||{},
     groupOrder:k.groupOrder||[],
     expanded:k.expanded?[...k.expanded]:[],
+    colW:k.colW||{},
   };
 }
 function kpiSaveCfg(){
@@ -9051,6 +9052,7 @@ function kpiApplyCfg(d){
   if(Array.isArray(d.wcSel))k.wcSel=new Set(d.wcSel);
   if(d.groups&&typeof d.groups==='object')k.groups=d.groups;
   if(Array.isArray(d.groupOrder))k.groupOrder=d.groupOrder;
+  if(d.colW&&typeof d.colW==='object')k.colW=d.colW;
   k.expanded=new Set(Array.isArray(d.expanded)?d.expanded:[]);
 }
 function kpiLoadCfgLocal(){
@@ -9191,6 +9193,80 @@ function kpiBuildPaint(year){
   return out;
 }
 
+/* ── Latimi de coloana redimensionabile (persistate per sub-tab) ── */
+const KPI_DEF_W={label:210,mon:66,tot:84};
+function kpiColW(key,def){
+  const w=S.kpi8?.colW?.[`${S.kpi8.sub}:${key}`];
+  return (typeof w==='number'&&w>=0)?w:def;
+}
+function kpiSetColW(key,px){
+  S.kpi8.colW=S.kpi8.colW||{};
+  S.kpi8.colW[`${S.kpi8.sub}:${key}`]=Math.max(0,Math.round(px));
+}
+/* Creeaza un <th> cu maner de redimensionare */
+function kpiMakeTh(label,key,def,opts){
+  opts=opts||{};
+  const th=el('th');
+  const w=kpiColW(key,def);
+  th.style.cssText=`padding:9px ${w<40?'2px':'10px'};text-align:${opts.align||'right'};font-size:10px;font-weight:${opts.bold||800};`+
+    `text-transform:uppercase;letter-spacing:.05em;position:relative;overflow:hidden;white-space:nowrap;`+
+    `width:${w}px;min-width:${w}px;max-width:${w}px;`+
+    (opts.bg?`background:${opts.bg};`:'')+(opts.sticky?'position:sticky;left:0;z-index:3;':'');
+  th.appendChild(document.createTextNode(label));
+  th.title=label+' — trageti marginea pentru redimensionare';
+  // grip
+  const grip=dv('');
+  grip.style.cssText='position:absolute;top:0;right:0;width:7px;height:100%;cursor:col-resize;user-select:none;z-index:5';
+  grip.addEventListener('mousedown',ev=>{
+    ev.preventDefault();ev.stopPropagation();
+    const x0=ev.clientX,w0=th.getBoundingClientRect().width;
+    const move=e=>{kpiSetColW(key,Math.max(0,w0+(e.clientX-x0)));kpiApplyColW();};
+    const up=()=>{document.removeEventListener('mousemove',move);document.removeEventListener('mouseup',up);
+      document.body.style.cursor='';kpiSaveCfg();render();};
+    document.body.style.cursor='col-resize';
+    document.addEventListener('mousemove',move);document.addEventListener('mouseup',up);
+  });
+  grip.addEventListener('touchstart',ev=>{
+    const t0=ev.touches[0];if(!t0)return;
+    const x0=t0.clientX,w0=th.getBoundingClientRect().width;
+    const move=e=>{const t=e.touches[0];if(!t)return;e.preventDefault();kpiSetColW(key,Math.max(0,w0+(t.clientX-x0)));kpiApplyColW();};
+    const end=()=>{document.removeEventListener('touchmove',move);document.removeEventListener('touchend',end);kpiSaveCfg();render();};
+    document.addEventListener('touchmove',move,{passive:false});document.addEventListener('touchend',end);
+  },{passive:true});
+  grip.addEventListener('dblclick',ev=>{ev.stopPropagation();kpiSetColW(key,def);kpiSaveCfg();render();});
+  th.appendChild(grip);
+  th.dataset.kpiCol=key;
+  return th;
+}
+/* Aplica latimile live, in timpul drag-ului (fara re-render) */
+function kpiApplyColW(){
+  const tbl=document.getElementById('kpi8-tbl');
+  if(!tbl)return;
+  tbl.querySelectorAll('th[data-kpi-col]').forEach(th=>{
+    const key=th.dataset.kpiCol;
+    const def=key==='label'?KPI_DEF_W.label:key==='tot'?KPI_DEF_W.tot:KPI_DEF_W.mon;
+    const w=kpiColW(key,def);
+    th.style.width=th.style.minWidth=th.style.maxWidth=w+'px';
+    th.style.paddingLeft=th.style.paddingRight=(w<40?'2px':'10px');
+  });
+  const idx=[...tbl.querySelectorAll('th[data-kpi-col]')].map(t=>t.dataset.kpiCol);
+  tbl.querySelectorAll('tbody tr').forEach(tr=>{
+    [...tr.children].forEach((td,i)=>{
+      const key=idx[i];if(!key)return;
+      const def=key==='label'?KPI_DEF_W.label:key==='tot'?KPI_DEF_W.tot:KPI_DEF_W.mon;
+      const w=kpiColW(key,def);
+      td.style.width=td.style.minWidth=td.style.maxWidth=w+'px';
+      td.style.paddingLeft=td.style.paddingRight=(w<40?'2px':'10px');
+      td.style.overflow='hidden';td.style.textOverflow='ellipsis';td.style.whiteSpace='nowrap';
+    });
+  });
+}
+/* Buton: reseteaza latimile pentru sub-tabul curent */
+function kpiResetColW(){
+  const cw=S.kpi8.colW||{};
+  Object.keys(cw).forEach(kk=>{if(kk.startsWith(S.kpi8.sub+':'))delete cw[kk];});
+  kpiSaveCfg();render();
+}
 function kpiPctCell(v){
   if(v==null)return '<span style="color:#cbd5e1">—</span>';
   const c=v>=90?'#15803d':v>=70?'#b45309':'#dc2626';
@@ -9207,6 +9283,7 @@ function renderKpi8(){
     kpiLoadCfgRemote().then(()=>{if(S.tab==='kpi8')render();});  // apoi cele de pe server
   }
   k.expanded=k.expanded instanceof Set?k.expanded:new Set();
+  k.colW=k.colW||{};
   const years=kpiYears();
   if(!k.year||(k.year!=='all'&&!years.includes(k.year)))k.year=years[years.length-1]||'all';
 
@@ -9280,6 +9357,9 @@ function kpiRenderProd(body,k){
   bp.style.cssText='padding:7px 13px;border:1.5px solid var(--border);border-radius:7px;background:#fff;font-size:12px;font-weight:700;cursor:pointer';
   bp.addEventListener('click',()=>kpiPrint('IP Productie (Sheet Metal) — '+(k.year==='all'?'toti anii':k.year),document.getElementById('kpi8-tbl')));
   tb.appendChild(bp);
+  const brw=el('button');brw.textContent='↔ Reset latimi';brw.title='Reseteaza latimile coloanelor la valorile implicite';
+  brw.style.cssText='padding:7px 13px;border:1.5px solid var(--border);border-radius:7px;background:#fff;font-size:12px;font-weight:700;cursor:pointer';
+  brw.addEventListener('click',kpiResetColW);tb.appendChild(brw);
   const note=sp('','Eficienta = Σ timp teoretic (BOW) / Σ timp real (scanari) × 100');
   note.style.cssText='margin-left:auto;font-size:10.5px;color:#94a3b8';
   tb.appendChild(note);
@@ -9287,15 +9367,11 @@ function kpiRenderProd(body,k){
 
   /* table */
   const tbl=el('table');tbl.id='kpi8-tbl';
-  tbl.style.cssText='width:100%;border-collapse:collapse;font-size:12px;background:#fff;border:1px solid var(--border)';
+  tbl.style.cssText='border-collapse:collapse;font-size:12px;background:#fff;border:1px solid var(--border);table-layout:fixed';
   const thead=el('thead');const hr=el('tr');hr.style.cssText='background:#1e3a5f;color:#fff';
-  const th0=el('th');th0.textContent='Workcenter / Grup';
-  th0.style.cssText='padding:9px 10px;text-align:left;font-size:10px;font-weight:800;text-transform:uppercase;letter-spacing:.05em;position:sticky;left:0;background:#1e3a5f;min-width:210px';
-  hr.appendChild(th0);
-  KPI_MONTHS.forEach(mn=>{const th=el('th');th.textContent=mn;
-    th.style.cssText='padding:9px 8px;text-align:right;font-size:10px;font-weight:800;text-transform:uppercase;width:66px';hr.appendChild(th);});
-  {const th=el('th');th.textContent='Medie an';
-   th.style.cssText='padding:9px 10px;text-align:right;font-size:10px;font-weight:900;text-transform:uppercase;background:#15306b;width:84px';hr.appendChild(th);}
+  hr.appendChild(kpiMakeTh('Workcenter / Grup','label',KPI_DEF_W.label,{align:'left',sticky:true,bg:'#1e3a5f'}));
+  KPI_MONTHS.forEach((mn,i)=>hr.appendChild(kpiMakeTh(mn,'m'+i,KPI_DEF_W.mon,{})));
+  hr.appendChild(kpiMakeTh('Medie an','tot',KPI_DEF_W.tot,{bold:900,bg:'#15306b'}));
   thead.appendChild(hr);tbl.appendChild(thead);
 
   const tb2=el('tbody');
@@ -9376,6 +9452,7 @@ function kpiRenderProd(body,k){
   tbl.appendChild(tb2);
   const wrap=dv('');wrap.style.cssText='overflow:auto;border-radius:8px';
   wrap.appendChild(tbl);body.appendChild(wrap);
+  setTimeout(kpiApplyColW,0);
 }
 
 function kpiWcPicker(allWc,k){
@@ -9540,6 +9617,9 @@ function kpiRenderPaint(body,k){
   bp.style.cssText='padding:7px 13px;border:1.5px solid var(--border);border-radius:7px;background:#fff;font-size:12px;font-weight:700;cursor:pointer';
   bp.addEventListener('click',()=>kpiPrint('IP Vopsire (Painting Shop) — '+(k.year==='all'?'toti anii':k.year),document.getElementById('kpi8-tbl')));
   tb.appendChild(bp);
+  const brw=el('button');brw.textContent='↔ Reset latimi';brw.title='Reseteaza latimile coloanelor la valorile implicite';
+  brw.style.cssText='padding:7px 13px;border:1.5px solid var(--border);border-radius:7px;background:#fff;font-size:12px;font-weight:700;cursor:pointer';
+  brw.addEventListener('click',kpiResetColW);tb.appendChild(brw);
   const note=sp('','Piese vopsite: Powder Paint + Wet Paint (fara Wet Paint Preparation) · NOK: rejectii DEPT NAME = POWDERPAINT / WET PAINT');
   note.style.cssText='margin-left:auto;font-size:10.5px;color:#94a3b8';tb.appendChild(note);
   body.appendChild(tb);
@@ -9551,15 +9631,11 @@ function kpiRenderPaint(body,k){
   }
 
   const tbl=el('table');tbl.id='kpi8-tbl';
-  tbl.style.cssText='width:100%;border-collapse:collapse;font-size:12px;background:#fff;border:1px solid var(--border)';
+  tbl.style.cssText='border-collapse:collapse;font-size:12px;background:#fff;border:1px solid var(--border);table-layout:fixed';
   const thead=el('thead');const hr=el('tr');hr.style.cssText='background:#1e3a5f;color:#fff';
-  const th0=el('th');th0.textContent='Indicator';
-  th0.style.cssText='padding:9px 12px;text-align:left;font-size:10px;font-weight:800;text-transform:uppercase;letter-spacing:.05em;position:sticky;left:0;background:#1e3a5f;min-width:240px';
-  hr.appendChild(th0);
-  KPI_MONTHS.forEach(mn=>{const th=el('th');th.textContent=mn;
-    th.style.cssText='padding:9px 8px;text-align:right;font-size:10px;font-weight:800;text-transform:uppercase;width:72px';hr.appendChild(th);});
-  {const th=el('th');th.textContent='Total an';
-   th.style.cssText='padding:9px 10px;text-align:right;font-size:10px;font-weight:900;text-transform:uppercase;background:#15306b;width:92px';hr.appendChild(th);}
+  hr.appendChild(kpiMakeTh('Indicator','label',260,{align:'left',sticky:true,bg:'#1e3a5f'}));
+  KPI_MONTHS.forEach((mn,i)=>hr.appendChild(kpiMakeTh(mn,'m'+i,72,{})));
+  hr.appendChild(kpiMakeTh('Total an','tot',92,{bold:900,bg:'#15306b'}));
   thead.appendChild(hr);tbl.appendChild(thead);
 
   const tbody=el('tbody');
@@ -9587,6 +9663,7 @@ function kpiRenderPaint(body,k){
   tbl.appendChild(tbody);
   const wrap=dv('');wrap.style.cssText='overflow:auto;border-radius:8px';
   wrap.appendChild(tbl);body.appendChild(wrap);
+  setTimeout(kpiApplyColW,0);
 
   /* KPI tiles */
   const tiles=dv('');tiles.style.cssText='display:flex;gap:12px;margin-top:16px;flex-wrap:wrap';
