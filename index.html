@@ -1345,6 +1345,9 @@ const S={
   planExpanded:new Set(),
   planCompObs:{},  // shared notes per component: key = 'FP|matNo'
   planPrio:{},  // itemNo → priority string (persisted)
+  qualData:null,      // TI-Quality reporting set rows (rejectii)
+  qualIdx:null,       // 'YYYYMM' → {powder,wet,total} rej qty (doar vopsitorie)
+  kpi8:{sub:'prod',year:'',wcSel:null},
   planFilter:{
     colFilters:{},
     realizarePct:'all',
@@ -1554,6 +1557,7 @@ async function sbLoadAllData(){
     {k:'stocklist',label:'TRV-Stocklist',apply:(r,t)=>applyStocklist(r,t)},
     {k:'livrari',label:'Livrari',apply:(r,t)=>applyLivrariFile(r,t)},
     {k:'intransit',label:'In Transit',apply:(r,t)=>applyInTransit(r,t)},
+    {k:'quality',label:'TI-Quality reporting set',apply:(r,t)=>applyQuality(r,t)},
   ]){
     S.loadMsg=`Se incarca ${label}...`;setLoadMsg(S.loadMsg);await yieldFrame();
     const data=await sbDownload(cfg,`data-${k}.json`);
@@ -2145,6 +2149,8 @@ async function loadFromIndexedDB(){
   if(vsData?.inputs)S.stocVerifInputs=vsData.inputs;
   const ite=await dbLoad('intransit');
   if(ite){S.loadMsg='Se incarca In Transit...';setLoadMsg(S.loadMsg);await yieldFrame();applyInTransit(ite.rows,ite.ts);await yieldFrame();}
+  const qle=await dbLoad('quality');
+  if(qle){S.loadMsg='Se incarca TI-Quality reporting set...';setLoadMsg(S.loadMsg);await yieldFrame();applyQuality(qle.rows,qle.ts);await yieldFrame();}
 
   // scanari: load from month-split IDB keys (or legacy single key)
   S.loadMsg='Se incarca Raport Scanari...';setLoadMsg(S.loadMsg);await yieldFrame();
@@ -3546,6 +3552,7 @@ function render(){
   ];
   if(isAdm)navItems.push({group:'Diverse',icon:'🗂',children:[
     {id:'dctr',label:'Disciplina CTR'},
+    {id:'kpi8',label:'📈 KPI 8: Operational Efficiency'},
     {id:'performanta',label:'Performanță'},
     {id:'utilizatori',label:'Utilizatori'},
   ]});
@@ -3704,6 +3711,7 @@ function render(){
   else if(S.tab==='normare')body.appendChild(renderNormare());
   else if(S.tab==='dctr')body.appendChild(renderDctrTab());
   else if(S.tab==='performanta')body.appendChild(renderPerformanta());
+  else if(S.tab==='kpi8')body.appendChild(renderKpi8());
   else if(S.tab==='scanari')body.appendChild(renderScanariTab());
   else if(S.tab==='scanner')body.appendChild(renderScanner());
   else if(S.tab==='utilizatori'&&S.session.role==='admin')body.appendChild(renderUsersTab());
@@ -3740,6 +3748,7 @@ function _fileCardDefs(){
     {key:'stocklist', label:'TRV-Stocklist',        must:['ITEM NR','STANDARD QTY']},
     {key:'intransit', label:'In Transit',           must:['Item','Qty']},
     {key:'molist',    label:'MO List',              must:['Product','MO']},
+    {key:'quality',   label:'TI-Quality reporting set',must:['DEPT NAME','REJ QTY']},
   ];
 }
 
@@ -3773,6 +3782,7 @@ async function _applyAndSyncFile(key,rows){
   else if(key==='intransit'){applyInTransit(rows,ts);rows._ts=ts;}
   else if(key==='scanari'){applyScanari(rows,ts);await saveScanariToIDB(rows,ts);}
   else if(key==='molist')applyMoList(rows,ts);
+  else if(key==='quality'){applyQuality(rows,ts);rows._ts=ts;}
   else throw new Error('Tip necunoscut: '+key);
 
   // Local cache
@@ -3971,11 +3981,12 @@ function renderFisiereTab(){
    {key:'livrari',icon:'🚛',title:'TRV-Ongoing deliveries',desc:'Livrari pe perioade (Period, Item, Quantity) — sursa pentru raportul Performanta. Vizibil doar administratorilor.',adminOnly:true},
    {key:'stocklist',icon:'📦',title:'TRV-Stocklist',desc:'Stocuri fizice pe locatii: ITEM NR, ITEM NAME, ITEM DESCRIPTION, LOCATION, STANDARD QTY, STANDARD U/M. Inlocuieste On Hand din Planning Overview.'},
    {key:'intransit',icon:'🚚',title:'In Transit',desc:'Produse finite expediate, neinca receptionate de client. Se scad din stocul On Hand al produselor finale.'},
-   {key:'molist',icon:'🏭',title:'MO List (PMO/MO)',desc:'Lista Manufacturing Orders cu operatii: MO, produs, workcenter, cantitati raportate'}]
+   {key:'molist',icon:'🏭',title:'MO List (PMO/MO)',desc:'Lista Manufacturing Orders cu operatii: MO, produs, workcenter, cantitati raportate'},
+   {key:'quality',icon:'🧪',title:'TI-Quality reporting set',desc:'Rejectii de calitate (DEPT NAME, REJ QTY, RETURN DATE) — sursa NOK pentru KPI 8 / IP Vopsire.'}]
   .filter(fc=>!fc.adminOnly||S.session?.role==='admin')
   .forEach(fc=>{
-    const loaded=fc.key==='bom'?!!S.bomData:fc.key==='bow'?!!S.bowData:fc.key==='po'?!!S.poData:fc.key==='wcs'?!!S.wcSetupData:fc.key==='intransit'?!!S.inTransitData:fc.key==='scanari'?!!S.scanData:fc.key==='molist'?!!S.moListData:fc.key==='stocklist'?!!S.stocklistData:fc.key==='livrari'?!!(S.perfLivrari&&S.perfLivrari.length):!!S.obData;
-    const meta=fc.key==='wcs'?{rows:S.wcSetupData?.length||0,ts:S.wcSetupData?._ts}:fc.key==='intransit'?{rows:S.inTransitData?.length||0,ts:S.inTransitData?._ts}:fc.key==='scanari'?{rows:S.scanData?._rows||0,ts:S.scanData?._ts}:fc.key==='molist'?{rows:S.moListData?.length||0,ts:S.moListData?._ts}:fc.key==='livrari'?{rows:S.perfLivrari?.length||0,ts:S.meta.livrari?.ts}:fc.key==='stocklist'?{rows:S.stocklistData?.length||0,ts:S.meta.stocklist?.ts}:(S.meta[fc.key]||{rows:0,ts:null});
+    const loaded=fc.key==='bom'?!!S.bomData:fc.key==='bow'?!!S.bowData:fc.key==='po'?!!S.poData:fc.key==='wcs'?!!S.wcSetupData:fc.key==='intransit'?!!S.inTransitData:fc.key==='scanari'?!!S.scanData:fc.key==='molist'?!!S.moListData:fc.key==='stocklist'?!!S.stocklistData:fc.key==='quality'?!!S.qualData:fc.key==='livrari'?!!(S.perfLivrari&&S.perfLivrari.length):!!S.obData;
+    const meta=fc.key==='wcs'?{rows:S.wcSetupData?.length||0,ts:S.wcSetupData?._ts}:fc.key==='intransit'?{rows:S.inTransitData?.length||0,ts:S.inTransitData?._ts}:fc.key==='scanari'?{rows:S.scanData?._rows||0,ts:S.scanData?._ts}:fc.key==='molist'?{rows:S.moListData?.length||0,ts:S.moListData?._ts}:fc.key==='livrari'?{rows:S.perfLivrari?.length||0,ts:S.meta.livrari?.ts}:fc.key==='quality'?{rows:S.qualData?.length||0,ts:S.meta.quality?.ts}:fc.key==='stocklist'?{rows:S.stocklistData?.length||0,ts:S.meta.stocklist?.ts}:(S.meta[fc.key]||{rows:0,ts:null});
     const card=dv(`file-card${loaded?' loaded':''}`);
     const fch=dv('fc-header');
     fch.appendChild(sp('fc-icon',fc.icon));
@@ -4010,7 +4021,7 @@ function renderFisiereTab(){
         const fileCrTs=file.lastModified||ts;  // file creation/modification date
         S.meta._fileCrTs=S.meta._fileCrTs||{};
         S.meta._fileCrTs[fc.key]=fileCrTs;
-        if(fc.key==='bom')applyBom(rows,ts);else if(fc.key==='bow')applyBow(rows,ts);else if(fc.key==='po')applyPo(rows,ts);else if(fc.key==='wcs'){applyWcSetup(rows,ts);rows._ts=ts;}else if(fc.key==='livrari'){applyLivrariFile(rows,ts);rows._ts=ts;}else if(fc.key==='stocklist'){applyStocklist(rows,ts);rows._ts=ts;}else if(fc.key==='intransit'){applyInTransit(rows,ts);rows._ts=ts;}else if(fc.key==='molist'){applyMoList(rows,ts);await dbSave(fc.key,{rows,ts});if(S.sbCfg&&S.session?.role==='admin'){lbl.innerHTML='';lbl.appendChild(el('span','spin-sm'));lbl.appendChild(document.createTextNode(' Upload Supabase (.xlsx)...'));try{const xlsxBlob=new Blob([buf],{type:'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'});const moUrl=`${S.sbCfg.url}/storage/v1/object/${S.sbCfg.bucket}/data-molist.xlsx`;const moR=await fetch(moUrl,{method:'POST',headers:{'Authorization':'Bearer '+S.sbCfg.key,'apikey':S.sbCfg.key,'x-upsert':'true','Content-Type':'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'},body:xlsxBlob});if(!moR.ok)throw new Error(await moR.text());await sbUpload(S.sbCfg,'data-molist-meta.json',{ts,rowCount:rows.length});}catch(e){console.warn('Supabase molist upload:',e);showToast('⚠ Supabase molist upload esuat: '+e.message,'err',4000);}}}else if(fc.key==='scanari'){applyScanari(rows,ts);}else applyOb(rows,ts);
+        if(fc.key==='bom')applyBom(rows,ts);else if(fc.key==='bow')applyBow(rows,ts);else if(fc.key==='po')applyPo(rows,ts);else if(fc.key==='wcs'){applyWcSetup(rows,ts);rows._ts=ts;}else if(fc.key==='livrari'){applyLivrariFile(rows,ts);rows._ts=ts;}else if(fc.key==='stocklist'){applyStocklist(rows,ts);rows._ts=ts;}else if(fc.key==='quality'){applyQuality(rows,ts);rows._ts=ts;}else if(fc.key==='intransit'){applyInTransit(rows,ts);rows._ts=ts;}else if(fc.key==='molist'){applyMoList(rows,ts);await dbSave(fc.key,{rows,ts});if(S.sbCfg&&S.session?.role==='admin'){lbl.innerHTML='';lbl.appendChild(el('span','spin-sm'));lbl.appendChild(document.createTextNode(' Upload Supabase (.xlsx)...'));try{const xlsxBlob=new Blob([buf],{type:'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'});const moUrl=`${S.sbCfg.url}/storage/v1/object/${S.sbCfg.bucket}/data-molist.xlsx`;const moR=await fetch(moUrl,{method:'POST',headers:{'Authorization':'Bearer '+S.sbCfg.key,'apikey':S.sbCfg.key,'x-upsert':'true','Content-Type':'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'},body:xlsxBlob});if(!moR.ok)throw new Error(await moR.text());await sbUpload(S.sbCfg,'data-molist-meta.json',{ts,rowCount:rows.length});}catch(e){console.warn('Supabase molist upload:',e);showToast('⚠ Supabase molist upload esuat: '+e.message,'err',4000);}}}else if(fc.key==='scanari'){applyScanari(rows,ts);}else applyOb(rows,ts);
         if(fc.key==='scanari'){
           // Large file: split by month in IDB, binary in Supabase
           lbl.innerHTML='';lbl.appendChild(el('span','spin-sm'));lbl.appendChild(document.createTextNode(' Se salveaza local...'));
@@ -8997,6 +9008,413 @@ function showScanCtxMenu(ev, colKey, cellText){
   const close=ev2=>{if(!menu.contains(ev2.target)){menu.remove();document.removeEventListener('mousedown',close);}};
   setTimeout(()=>document.addEventListener('mousedown',close),10);
 }
+
+/* ═══════════════════════════════════════════════════════════════
+   KPI 8 — OPERATIONAL EFFICIENCY
+     • IP Productie (Sheet Metal): eficienta medie / workcenter / luna
+       = Σ timp teoretic (BOW) / Σ timp real (scanari) × 100
+     • IP Vopsire (Painting Shop): piese vopsite (Powder/Wet Paint,
+       fara Wet Paint Preparation) vs NOK (rejectii POWDERPAINT /
+       WET PAINT din TI-Quality reporting set)
+═══════════════════════════════════════════════════════════════ */
+const KPI_MONTHS=['Ian','Feb','Mar','Apr','Mai','Iun','Iul','Aug','Sep','Oct','Noi','Dec'];
+const KPI8_WC_KEY='pps_kpi8_wc';
+
+function kpiLoadWcSel(){try{const v=localStorage.getItem(KPI8_WC_KEY);return v?new Set(JSON.parse(v)):null;}catch{return null;}}
+function kpiSaveWcSel(set){try{localStorage.setItem(KPI8_WC_KEY,JSON.stringify([...set]));}catch{}}
+
+/* ── Rejections file (TI-Quality reporting set) ── */
+function applyQuality(rows,ts){
+  const arr=Array.isArray(rows)?rows:[];
+  S.qualData=arr;S.qualData._ts=ts;
+  S.meta.quality={rows:arr.length,ts};
+  // Index: 'YYYYMM' → { powder, wet, total }
+  const idx=new Map();
+  let kept=0;
+  for(const r of arr){
+    const dept=String(r['DEPT NAME']??r['Dept name']??'').trim().toUpperCase().replace(/\s+/g,' ');
+    const isPowder=dept.replace(/\s/g,'')==='POWDERPAINT';
+    const isWet=dept.replace(/\s/g,'')==='WETPAINT';
+    if(!isPowder&&!isWet)continue;
+    const d=String(r['RETURN DATE']??r['Return date']??'').replace(/[^0-9]/g,'');
+    if(d.length<6)continue;
+    const ym=d.slice(0,6);
+    const q=parseFloat(String(r['REJ QTY']??r['Rej qty']??'0').replace(',','.'))||0;
+    const e=idx.get(ym)||{powder:0,wet:0,total:0};
+    if(isPowder)e.powder+=q;else e.wet+=q;
+    e.total+=q;idx.set(ym,e);kept++;
+  }
+  S.qualIdx=idx;
+  console.log('[Quality] randuri:',arr.length,'· rejectii vopsitorie:',kept,'· luni:',idx.size);
+}
+
+function kpiQualYears(){
+  const ys=new Set();
+  for(const ym of (S.qualIdx||new Map()).keys())ys.add(ym.slice(0,4));
+  return [...ys];
+}
+/* Years available across both sources */
+function kpiYears(){
+  const ys=new Set([...getScanYears(),...kpiQualYears()]);
+  return [...ys].sort();
+}
+
+/* Workcenter name → true if it is a painting operation that counts as "piese vopsite" */
+function kpiIsPaintWc(name){
+  const n=String(name||'').toLowerCase();
+  if(n.includes('preparation'))return false;      // Wet paint preparation excluded
+  return n.includes('powder paint')||n.includes('wet paint');
+}
+
+/* ── IP Productie: Map wc → [12 x {teo,real}] for a given year ── */
+function kpiBuildProd(year){
+  const bowFlat=buildBowFlatIdx();
+  const m=new Map();
+  const rows=Array.isArray(S.scanData)?S.scanData:[];
+  for(const r of rows){
+    const tdt=String(r['Transaction dt']||'').replace(/[^0-9]/g,'');
+    if(tdt.length<6)continue;
+    if(year!=='all'&&tdt.slice(0,4)!==year)continue;
+    const mi=parseInt(tdt.slice(4,6),10)-1;
+    if(mi<0||mi>11)continue;
+    const wc=str(r['Workcenter name']||'');
+    if(!wc)continue;
+    const qty=parseFloat(r['Manufact qty'])||0;
+    const be=bowFlat.get(`${str(r['Product']||'')}__${str(r['Op no']||'')}`);
+    const teo=(be!=null&&qty>0)?(be.runTime*qty+be.setupTime):null;
+    const used=scanTimeToMin(r['Used_tm_MS']);
+    if(teo==null||!(used>0))continue;
+    let arr=m.get(wc);
+    if(!arr){arr=Array.from({length:12},()=>({teo:0,real:0,n:0}));m.set(wc,arr);}
+    arr[mi].teo+=teo;arr[mi].real+=used;arr[mi].n++;
+  }
+  return m;
+}
+
+/* ── IP Vopsire: 12 x {painted, nok} for a given year ── */
+function kpiBuildPaint(year){
+  const out=Array.from({length:12},()=>({painted:0,nok:0,scans:0}));
+  const rows=Array.isArray(S.scanData)?S.scanData:[];
+  for(const r of rows){
+    const tdt=String(r['Transaction dt']||'').replace(/[^0-9]/g,'');
+    if(tdt.length<6)continue;
+    if(year!=='all'&&tdt.slice(0,4)!==year)continue;
+    const mi=parseInt(tdt.slice(4,6),10)-1;
+    if(mi<0||mi>11)continue;
+    if(!kpiIsPaintWc(r['Workcenter name']))continue;
+    out[mi].painted+=parseFloat(r['Manufact qty'])||0;
+    out[mi].scans++;
+  }
+  for(const[ym,e] of (S.qualIdx||new Map())){
+    if(year!=='all'&&ym.slice(0,4)!==year)continue;
+    const mi=parseInt(ym.slice(4,6),10)-1;
+    if(mi>=0&&mi<=11)out[mi].nok+=e.total;
+  }
+  return out;
+}
+
+function kpiPctCell(v){
+  if(v==null)return '<span style="color:#cbd5e1">—</span>';
+  const c=v>=90?'#15803d':v>=70?'#b45309':'#dc2626';
+  return `<b style="color:${c}">${v.toFixed(1)}%</b>`;
+}
+
+function renderKpi8(){
+  const page=dv('cnt');page.style.cssText='flex:1;display:flex;flex-direction:column;overflow:hidden';
+  S.kpi8=S.kpi8||{sub:'prod',year:'',wcSel:null};
+  const k=S.kpi8;
+  const years=kpiYears();
+  if(!k.year||(k.year!=='all'&&!years.includes(k.year)))k.year=years[years.length-1]||'all';
+  if(k.wcSel==null)k.wcSel=kpiLoadWcSel();
+
+  /* ── Header ── */
+  const hdr=dv('');hdr.style.cssText='padding:14px 22px 10px;border-bottom:2px solid var(--border);background:#fff';
+  const h1=dv('');h1.style.cssText='font-size:19px;font-weight:900;color:#1e3a5f;letter-spacing:-.01em';
+  h1.textContent='📈 KPI 8: Operational Efficiency';
+  hdr.appendChild(h1);
+  const sub=dv('');sub.style.cssText='font-size:11.5px;color:#64748b;margin-top:2px';
+  sub.textContent='Indicatori de performanta operationala — productie si vopsitorie';
+  hdr.appendChild(sub);
+
+  /* sub-tabs */
+  const tabs=dv('');tabs.style.cssText='display:flex;gap:8px;margin-top:12px;flex-wrap:wrap;align-items:center';
+  [['prod','🏭 IP Productie (Sheet Metal)'],['paint','🎨 IP Vopsire (Painting Shop)']].forEach(([id,lbl])=>{
+    const b=el('button');b.textContent=lbl;
+    const on=k.sub===id;
+    b.style.cssText=`padding:8px 16px;border-radius:8px;font-size:12.5px;font-weight:800;cursor:pointer;border:2px solid ${on?'#1d4ed8':'#e2e8f0'};background:${on?'#1d4ed8':'#fff'};color:${on?'#fff':'#475569'}`;
+    b.addEventListener('click',()=>{k.sub=id;render();});
+    tabs.appendChild(b);
+  });
+  // year selector
+  const yWrap=dv('');yWrap.style.cssText='margin-left:auto;display:flex;align-items:center;gap:7px';
+  yWrap.appendChild(sp('','An:')).style.cssText='font-size:11px;font-weight:800;color:#64748b;text-transform:uppercase';
+  const ySel=el('select');ySel.style.cssText='padding:6px 10px;border:1.5px solid var(--border);border-radius:7px;font-size:12.5px;font-weight:700;min-width:92px';
+  years.forEach(y=>{const o=el('option');o.value=y;o.textContent=y;if(y===k.year)o.selected=true;ySel.appendChild(o);});
+  {const o=el('option');o.value='all';o.textContent='Toti anii';if(k.year==='all')o.selected=true;ySel.appendChild(o);}
+  ySel.addEventListener('change',()=>{k.year=ySel.value;render();});
+  yWrap.appendChild(ySel);
+  tabs.appendChild(yWrap);
+  hdr.appendChild(tabs);
+  page.appendChild(hdr);
+
+  const body=dv('');body.style.cssText='flex:1;overflow:auto;padding:16px 22px 40px';
+  page.appendChild(body);
+
+  if(!S.scanData||!Array.isArray(S.scanData)||!S.scanData.length){
+    body.appendChild(mkEmpty('Lipsesc datele de scanare','Incarcati fisierul QV Start-Stop History din tabul Fisiere.'));
+    return page;
+  }
+  if(k.sub==='prod')kpiRenderProd(body,k);
+  else kpiRenderPaint(body,k);
+  return page;
+}
+
+/* ══════════ IP PRODUCTIE ══════════ */
+function kpiRenderProd(body,k){
+  const data=kpiBuildProd(k.year);
+  const allWc=[...data.keys()].sort((a,b)=>a.localeCompare(b));
+  if(!allWc.length){body.appendChild(mkEmpty('Fara date','Nu exista scanari cu timpi teoretici (BOW) pentru anul selectat.'));return;}
+  if(!k.wcSel){k.wcSel=new Set(allWc);kpiSaveWcSel(k.wcSel);}
+  const sel=allWc.filter(w=>k.wcSel.has(w));
+
+  /* toolbar */
+  const tb=dv('');tb.style.cssText='display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:12px';
+  const btnCols=el('button');btnCols.textContent=`⚙ Workcentere (${sel.length}/${allWc.length})`;
+  btnCols.style.cssText='padding:7px 13px;border:1.5px solid var(--border);border-radius:7px;background:#fff;font-size:12px;font-weight:700;cursor:pointer';
+  btnCols.addEventListener('click',()=>kpiWcPicker(allWc,k));
+  tb.appendChild(btnCols);
+  const bx=el('button');bx.textContent='↓ Export Excel';
+  bx.style.cssText='padding:7px 13px;border:1.5px solid #16a34a;border-radius:7px;background:#fff;color:#15803d;font-size:12px;font-weight:700;cursor:pointer';
+  bx.addEventListener('click',()=>kpiExportProd(data,sel,k.year));
+  tb.appendChild(bx);
+  const bp=el('button');bp.textContent='🖨 Printeaza';
+  bp.style.cssText='padding:7px 13px;border:1.5px solid var(--border);border-radius:7px;background:#fff;font-size:12px;font-weight:700;cursor:pointer';
+  bp.addEventListener('click',()=>kpiPrint('IP Productie (Sheet Metal) — '+(k.year==='all'?'toti anii':k.year),document.getElementById('kpi8-tbl')));
+  tb.appendChild(bp);
+  const note=sp('','Eficienta = Σ timp teoretic (BOW) / Σ timp real (scanari) × 100');
+  note.style.cssText='margin-left:auto;font-size:10.5px;color:#94a3b8';
+  tb.appendChild(note);
+  body.appendChild(tb);
+
+  /* table */
+  const tbl=el('table');tbl.id='kpi8-tbl';
+  tbl.style.cssText='width:100%;border-collapse:collapse;font-size:12px;background:#fff;border:1px solid var(--border)';
+  const thead=el('thead');const hr=el('tr');hr.style.cssText='background:#1e3a5f;color:#fff';
+  const th0=el('th');th0.textContent='Workcenter';
+  th0.style.cssText='padding:9px 10px;text-align:left;font-size:10px;font-weight:800;text-transform:uppercase;letter-spacing:.05em;position:sticky;left:0;background:#1e3a5f;min-width:190px';
+  hr.appendChild(th0);
+  KPI_MONTHS.forEach(mn=>{const th=el('th');th.textContent=mn;
+    th.style.cssText='padding:9px 8px;text-align:right;font-size:10px;font-weight:800;text-transform:uppercase;width:66px';hr.appendChild(th);});
+  {const th=el('th');th.textContent='Medie an';
+   th.style.cssText='padding:9px 10px;text-align:right;font-size:10px;font-weight:900;text-transform:uppercase;background:#15306b;width:84px';hr.appendChild(th);}
+  thead.appendChild(hr);tbl.appendChild(thead);
+
+  const tb2=el('tbody');
+  const tot=Array.from({length:12},()=>({teo:0,real:0}));
+  sel.forEach((wc,i)=>{
+    const arr=data.get(wc);
+    const tr=el('tr');tr.style.background=i%2?'#f8fafc':'#fff';tr.style.borderBottom='1px solid #f1f5f9';
+    const td0=el('td');td0.textContent=wc;
+    td0.style.cssText=`padding:7px 10px;font-weight:700;color:#1e3a5f;position:sticky;left:0;background:${i%2?'#f8fafc':'#fff'};border-right:1px solid #e2e8f0`;
+    tr.appendChild(td0);
+    let yt=0,yr=0;
+    arr.forEach((c,ci)=>{
+      const td=el('td');td.style.cssText='padding:7px 8px;text-align:right';
+      if(c.real>0){const v=c.teo/c.real*100;td.innerHTML=kpiPctCell(v);
+        td.title=`Teoretic: ${c.teo.toFixed(1)} min\nReal: ${c.real.toFixed(1)} min\nScanari: ${c.n}`;
+        td.style.cursor='help';yt+=c.teo;yr+=c.real;tot[ci].teo+=c.teo;tot[ci].real+=c.real;}
+      else td.innerHTML='<span style="color:#cbd5e1">—</span>';
+      tr.appendChild(td);
+    });
+    const tdy=el('td');tdy.style.cssText='padding:7px 10px;text-align:right;background:#f1f5f9;font-weight:900';
+    tdy.innerHTML=yr>0?kpiPctCell(yt/yr*100):'<span style="color:#cbd5e1">—</span>';
+    tr.appendChild(tdy);tb2.appendChild(tr);
+  });
+  /* total row */
+  {
+    const tr=el('tr');tr.style.cssText='background:#eef2ff;border-top:2px solid #1e3a5f';
+    const td0=el('td');td0.textContent='TOTAL / MEDIE';
+    td0.style.cssText='padding:9px 10px;font-weight:900;color:#1e3a5f;position:sticky;left:0;background:#eef2ff';
+    tr.appendChild(td0);
+    let yt=0,yr=0;
+    tot.forEach(c=>{const td=el('td');td.style.cssText='padding:9px 8px;text-align:right;font-weight:900';
+      if(c.real>0){td.innerHTML=kpiPctCell(c.teo/c.real*100);yt+=c.teo;yr+=c.real;}
+      else td.innerHTML='<span style="color:#cbd5e1">—</span>';
+      tr.appendChild(td);});
+    const tdy=el('td');tdy.style.cssText='padding:9px 10px;text-align:right;background:#dbeafe;font-weight:900';
+    tdy.innerHTML=yr>0?kpiPctCell(yt/yr*100):'<span style="color:#cbd5e1">—</span>';
+    tr.appendChild(tdy);tb2.appendChild(tr);
+  }
+  tbl.appendChild(tb2);
+  const wrap=dv('');wrap.style.cssText='overflow:auto;border-radius:8px';
+  wrap.appendChild(tbl);body.appendChild(wrap);
+}
+
+function kpiWcPicker(allWc,k){
+  document.getElementById('kpi8-wc-ov')?.remove();
+  const ov=dv('');ov.id='kpi8-wc-ov';
+  ov.style.cssText='position:fixed;inset:0;background:rgba(0,0,0,.45);z-index:9500;display:flex;align-items:center;justify-content:center;padding:16px';
+  const md=dv('');md.style.cssText='background:#fff;border-radius:12px;width:min(520px,96vw);max-height:84vh;display:flex;flex-direction:column;overflow:hidden';
+  const h=dv('');h.style.cssText='padding:14px 18px;border-bottom:2px solid var(--border);display:flex;align-items:center;gap:10px';
+  h.innerHTML='<b style="font-size:15px;color:#1e3a5f">Workcentere afisate</b>';
+  const cl=el('button');cl.textContent='✕';cl.style.cssText='margin-left:auto;border:none;background:#f1f5f9;border-radius:7px;width:30px;height:30px;cursor:pointer;font-size:14px';
+  cl.addEventListener('click',()=>ov.remove());h.appendChild(cl);md.appendChild(h);
+  const bar=dv('');bar.style.cssText='padding:9px 18px;display:flex;gap:8px;border-bottom:1px solid var(--border)';
+  [['Toate',()=>{allWc.forEach(w=>k.wcSel.add(w));}],['Niciunul',()=>{k.wcSel.clear();}]].forEach(([l,fn])=>{
+    const b=el('button');b.textContent=l;
+    b.style.cssText='padding:5px 11px;border:1px solid var(--border);border-radius:6px;background:#fff;font-size:11.5px;font-weight:700;cursor:pointer';
+    b.addEventListener('click',()=>{fn();kpiSaveWcSel(k.wcSel);ov.remove();render();});bar.appendChild(b);});
+  md.appendChild(bar);
+  const list=dv('');list.style.cssText='flex:1;overflow:auto;padding:8px 18px 14px';
+  allWc.forEach(w=>{
+    const row=el('label');row.style.cssText='display:flex;align-items:center;gap:9px;padding:6px 2px;cursor:pointer;border-bottom:1px solid #f8fafc;font-size:12.5px';
+    const cb=el('input');cb.type='checkbox';cb.checked=k.wcSel.has(w);cb.style.cssText='width:15px;height:15px;cursor:pointer';
+    cb.addEventListener('change',()=>{if(cb.checked)k.wcSel.add(w);else k.wcSel.delete(w);kpiSaveWcSel(k.wcSel);});
+    row.appendChild(cb);row.appendChild(document.createTextNode(w));list.appendChild(row);
+  });
+  md.appendChild(list);
+  const ft=dv('');ft.style.cssText='padding:11px 18px;border-top:1px solid var(--border);display:flex;justify-content:flex-end';
+  const ap=el('button');ap.textContent='Aplica';
+  ap.style.cssText='padding:8px 18px;border:none;border-radius:7px;background:#1d4ed8;color:#fff;font-weight:800;font-size:12.5px;cursor:pointer';
+  ap.addEventListener('click',()=>{ov.remove();render();});ft.appendChild(ap);md.appendChild(ft);
+  ov.appendChild(md);ov.addEventListener('click',e=>{if(e.target===ov)ov.remove();});
+  document.body.appendChild(ov);
+}
+
+/* ══════════ IP VOPSIRE ══════════ */
+function kpiRenderPaint(body,k){
+  const d=kpiBuildPaint(k.year);
+  const hasQual=!!(S.qualIdx&&S.qualIdx.size);
+
+  const tb=dv('');tb.style.cssText='display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:12px';
+  const bx=el('button');bx.textContent='↓ Export Excel';
+  bx.style.cssText='padding:7px 13px;border:1.5px solid #16a34a;border-radius:7px;background:#fff;color:#15803d;font-size:12px;font-weight:700;cursor:pointer';
+  bx.addEventListener('click',()=>kpiExportPaint(d,k.year));tb.appendChild(bx);
+  const bp=el('button');bp.textContent='🖨 Printeaza';
+  bp.style.cssText='padding:7px 13px;border:1.5px solid var(--border);border-radius:7px;background:#fff;font-size:12px;font-weight:700;cursor:pointer';
+  bp.addEventListener('click',()=>kpiPrint('IP Vopsire (Painting Shop) — '+(k.year==='all'?'toti anii':k.year),document.getElementById('kpi8-tbl')));
+  tb.appendChild(bp);
+  const note=sp('','Piese vopsite: Powder Paint + Wet Paint (fara Wet Paint Preparation) · NOK: rejectii DEPT NAME = POWDERPAINT / WET PAINT');
+  note.style.cssText='margin-left:auto;font-size:10.5px;color:#94a3b8';tb.appendChild(note);
+  body.appendChild(tb);
+
+  if(!hasQual){
+    const w=dv('');w.style.cssText='padding:10px 14px;background:#fffbeb;border:1.5px solid #fcd34d;border-radius:8px;font-size:12px;color:#92400e;margin-bottom:12px';
+    w.innerHTML='⚠ Fisierul <b>TI-Quality reporting set</b> nu este incarcat — coloana NOK va fi 0. Incarcati-l din tabul <b>Fisiere</b>.';
+    body.appendChild(w);
+  }
+
+  const tbl=el('table');tbl.id='kpi8-tbl';
+  tbl.style.cssText='width:100%;border-collapse:collapse;font-size:12px;background:#fff;border:1px solid var(--border)';
+  const thead=el('thead');const hr=el('tr');hr.style.cssText='background:#1e3a5f;color:#fff';
+  const th0=el('th');th0.textContent='Indicator';
+  th0.style.cssText='padding:9px 12px;text-align:left;font-size:10px;font-weight:800;text-transform:uppercase;letter-spacing:.05em;position:sticky;left:0;background:#1e3a5f;min-width:240px';
+  hr.appendChild(th0);
+  KPI_MONTHS.forEach(mn=>{const th=el('th');th.textContent=mn;
+    th.style.cssText='padding:9px 8px;text-align:right;font-size:10px;font-weight:800;text-transform:uppercase;width:72px';hr.appendChild(th);});
+  {const th=el('th');th.textContent='Total an';
+   th.style.cssText='padding:9px 10px;text-align:right;font-size:10px;font-weight:900;text-transform:uppercase;background:#15306b;width:92px';hr.appendChild(th);}
+  thead.appendChild(hr);tbl.appendChild(thead);
+
+  const tbody=el('tbody');
+  const sumP=d.reduce((a,c)=>a+c.painted,0),sumN=d.reduce((a,c)=>a+c.nok,0);
+  const mkRow=(label,vals,total,css,fmt)=>{
+    const tr=el('tr');tr.style.cssText=css||'';
+    const td0=el('td');td0.textContent=label;
+    td0.style.cssText='padding:8px 12px;font-weight:800;color:#1e3a5f;position:sticky;left:0;background:inherit;border-right:1px solid #e2e8f0';
+    tr.appendChild(td0);
+    vals.forEach(v=>{const td=el('td');td.style.cssText='padding:8px 8px;text-align:right';td.innerHTML=fmt(v);tr.appendChild(td);});
+    const tt=el('td');tt.style.cssText='padding:8px 10px;text-align:right;background:#f1f5f9;font-weight:900';
+    tt.innerHTML=fmt(total);tr.appendChild(tt);
+    tbody.appendChild(tr);
+  };
+  const numF=v=>v>0?`<b>${fmtN(Math.round(v*100)/100)}</b>`:'<span style="color:#cbd5e1">—</span>';
+  mkRow('Cantitate piese vopsite (buc)',d.map(c=>c.painted),sumP,'background:#fff;border-bottom:1px solid #f1f5f9',numF);
+  mkRow('NOK (Paint related Claims) (buc)',d.map(c=>c.nok),sumN,'background:#fef2f2;border-bottom:1px solid #f1f5f9',
+    v=>v>0?`<b style="color:#dc2626">${fmtN(Math.round(v*100)/100)}</b>`:'<span style="color:#cbd5e1">—</span>');
+  mkRow('OK Products (buc)',d.map(c=>Math.max(0,c.painted-c.nok)),Math.max(0,sumP-sumN),'background:#f0fdf4;border-bottom:2px solid #1e3a5f',
+    v=>v>0?`<b style="color:#15803d">${fmtN(Math.round(v*100)/100)}</b>`:'<span style="color:#cbd5e1">—</span>');
+  mkRow('IP Vopsire (%)',d.map(c=>c.painted>0?Math.max(0,c.painted-c.nok)/c.painted*100:null),
+    sumP>0?Math.max(0,sumP-sumN)/sumP*100:null,'background:#eef2ff',
+    v=>kpiPctCell(v));
+
+  tbl.appendChild(tbody);
+  const wrap=dv('');wrap.style.cssText='overflow:auto;border-radius:8px';
+  wrap.appendChild(tbl);body.appendChild(wrap);
+
+  /* KPI tiles */
+  const tiles=dv('');tiles.style.cssText='display:flex;gap:12px;margin-top:16px;flex-wrap:wrap';
+  const ip=sumP>0?Math.max(0,sumP-sumN)/sumP*100:null;
+  [['Piese vopsite',fmtN(Math.round(sumP)),'#1d4ed8'],
+   ['NOK (claims)',fmtN(Math.round(sumN*100)/100),'#dc2626'],
+   ['OK Products',fmtN(Math.round(Math.max(0,sumP-sumN))),'#15803d'],
+   ['IP Vopsire',ip!=null?ip.toFixed(2)+'%':'—','#7c3aed']].forEach(([l,v,c])=>{
+    const t=dv('');t.style.cssText=`flex:1;min-width:150px;padding:13px 16px;background:#fff;border:1.5px solid var(--border);border-left:4px solid ${c};border-radius:9px`;
+    t.innerHTML=`<div style="font-size:10px;font-weight:800;color:#94a3b8;text-transform:uppercase;letter-spacing:.06em">${l}</div>
+      <div style="font-size:23px;font-weight:900;color:${c};margin-top:3px">${v}</div>`;
+    tiles.appendChild(t);
+  });
+  body.appendChild(tiles);
+}
+
+/* ══════════ Export / print ══════════ */
+function kpiExportProd(data,sel,year){
+  const head=['Workcenter',...KPI_MONTHS,'Medie an'];
+  const aoa=[head];
+  const tot=Array.from({length:12},()=>({teo:0,real:0}));
+  sel.forEach(wc=>{
+    const arr=data.get(wc);let yt=0,yr=0;
+    const row=[wc];
+    arr.forEach((c,i)=>{
+      if(c.real>0){row.push(Math.round(c.teo/c.real*1000)/10);yt+=c.teo;yr+=c.real;tot[i].teo+=c.teo;tot[i].real+=c.real;}
+      else row.push('');
+    });
+    row.push(yr>0?Math.round(yt/yr*1000)/10:'');
+    aoa.push(row);
+  });
+  {let yt=0,yr=0;const row=['TOTAL / MEDIE'];
+   tot.forEach(c=>{if(c.real>0){row.push(Math.round(c.teo/c.real*1000)/10);yt+=c.teo;yr+=c.real;}else row.push('');});
+   row.push(yr>0?Math.round(yt/yr*1000)/10:'');aoa.push(row);}
+  const wb=XLSX.utils.book_new();const ws=XLSX.utils.aoa_to_sheet(aoa);
+  ws['!cols']=[{wch:26},...KPI_MONTHS.map(()=>({wch:9})),{wch:11}];
+  XLSX.utils.book_append_sheet(wb,ws,'IP Productie');
+  XLSX.writeFile(wb,`KPI8_IP_Productie_${year}.xlsx`);
+}
+function kpiExportPaint(d,year){
+  const head=['Indicator',...KPI_MONTHS,'Total an'];
+  const sumP=d.reduce((a,c)=>a+c.painted,0),sumN=d.reduce((a,c)=>a+c.nok,0);
+  const r1=['Cantitate piese vopsite (buc)',...d.map(c=>Math.round(c.painted*100)/100),Math.round(sumP*100)/100];
+  const r2=['NOK (Paint related Claims) (buc)',...d.map(c=>Math.round(c.nok*100)/100),Math.round(sumN*100)/100];
+  const r3=['OK Products (buc)',...d.map(c=>Math.round(Math.max(0,c.painted-c.nok)*100)/100),Math.round(Math.max(0,sumP-sumN)*100)/100];
+  const r4=['IP Vopsire (%)',...d.map(c=>c.painted>0?Math.round(Math.max(0,c.painted-c.nok)/c.painted*1000)/10:''),
+            sumP>0?Math.round(Math.max(0,sumP-sumN)/sumP*1000)/10:''];
+  const wb=XLSX.utils.book_new();const ws=XLSX.utils.aoa_to_sheet([head,r1,r2,r3,r4]);
+  ws['!cols']=[{wch:34},...KPI_MONTHS.map(()=>({wch:11})),{wch:13}];
+  XLSX.utils.book_append_sheet(wb,ws,'IP Vopsire');
+  XLSX.writeFile(wb,`KPI8_IP_Vopsire_${year}.xlsx`);
+}
+function kpiPrint(title,tblEl){
+  if(!tblEl){showToast('Nimic de printat','err',2000);return;}
+  const w=window.open('','_blank');
+  if(!w){showToast('Permiteti pop-up-urile pentru printare','err',3000);return;}
+  w.document.write(`<!doctype html><html><head><meta charset="utf-8"><title>${title}</title>
+  <style>@page{size:A4 landscape;margin:10mm}
+  body{font-family:system-ui,Segoe UI,Arial,sans-serif;margin:0;padding:10px}
+  h1{font-size:15px;margin:0 0 3px;color:#1e3a5f}
+  .sub{font-size:10px;color:#64748b;margin-bottom:10px}
+  table{width:100%;border-collapse:collapse;font-size:9.5px}
+  th{background:#1e3a5f;color:#fff;padding:5px 6px;text-align:right;font-size:8.5px;text-transform:uppercase}
+  th:first-child{text-align:left}
+  td{padding:4px 6px;text-align:right;border-bottom:1px solid #e5e7eb}
+  td:first-child{text-align:left;font-weight:700}
+  tr{page-break-inside:avoid}
+  </style></head><body>
+  <h1>${title}</h1><div class="sub">KPI 8: Operational Efficiency · generat ${new Date().toLocaleString('ro-RO')}</div>
+  ${tblEl.outerHTML}</body></html>`);
+  w.document.close();
+  setTimeout(()=>{try{w.focus();w.print();}catch(e){console.warn(e);}},350);
+}
+
 function renderScanariTab(){
   const page=dv('scan-page');
   if(!S.scanData){
