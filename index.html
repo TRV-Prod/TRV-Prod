@@ -1294,6 +1294,7 @@ const S={
   perfData:null,
   perfWcGroups:[],
   perfSections:{},   // wcName -> section name
+  perfPontaj:{},     // sectieKey -> { 'YYYYMM': ore pontate }
   perfWcEff:{},      // wcName -> efficiency % (overrides the global value)
   perfWcOrder:[],    // custom WC display order
   perfLivrari:[],  // raw rows saved to Supabase
@@ -10858,7 +10859,7 @@ function _livKey(r){
 // ── Performanță: sections + WC order (shared via Supabase) ──
 async function savePerfLayout(){
   if(!S.sbCfg)return;
-  try{await sbUpload(S.sbCfg,'data-perf-layout.json',{sections:S.perfSections||{},order:S.perfWcOrder||[]});}
+  try{await sbUpload(S.sbCfg,'data-perf-layout.json',{sections:S.perfSections||{},order:S.perfWcOrder||[],wcEff:S.perfWcEff||{},pontaj:S.perfPontaj||{}});}
   catch(e){console.warn('savePerfLayout',e);}
 }
 async function loadPerfLayout(){
@@ -10869,6 +10870,7 @@ async function loadPerfLayout(){
       S.perfSections=d.sections||{};
       S.perfWcOrder=Array.isArray(d.order)?d.order:[];
       S.perfWcEff=d.wcEff||{};
+      S.perfPontaj=d.pontaj||{};
     }
   }catch(e){console.warn('loadPerfLayout',e);}
 }
@@ -10929,7 +10931,7 @@ function renderPerformanta(){
   resetBtn.title='Revine la ordinea alfabetică și șterge secțiile';
   resetBtn.addEventListener('click',()=>{
     if(!confirm('Resetezi ordinea, secțiile și eficiențele individuale?'))return;
-    S.perfWcOrder=[];S.perfSections={};S.perfWcEff={};savePerfLayout();rebuild();
+    S.perfWcOrder=[];S.perfSections={};S.perfWcEff={};S.perfPontaj={};savePerfLayout();rebuild();
   });
   tb.appendChild(resetBtn);
 
@@ -11069,6 +11071,60 @@ function buildPerfTable(wrap, matrix, months, unitHours){
       const wcMap=matrix.get(wc);
       const tr=el('tr');tr.style.background=(rowIdx++)%2?'#f8fafc':'#fff';
 
+      // ── Drag & drop (pointer events: merge si cu mouse-ul, si pe tableta) ──
+      tr.dataset.wc=wc;
+      tr.style.touchAction='pan-x';
+      const _reorder=(from,to,after)=>{
+        if(!from||!to||from===to)return;
+        const cur=ordered.slice();
+        const fi=cur.indexOf(from);
+        if(fi<0)return;
+        cur.splice(fi,1);
+        let ti=cur.indexOf(to);
+        if(ti<0)return;
+        cur.splice(after?ti+1:ti,0,from);
+        S.perfWcOrder=cur;savePerfLayout();
+        wrap.innerHTML='';buildPerfTable(wrap,matrix,months,unitHours);
+      };
+      const _startDrag=ev=>{
+        if(ev.target&&ev.target.tagName==='INPUT')return;
+        if(ev.button!=null&&ev.button!==0)return;
+        ev.preventDefault();
+        const tbodyEl=tr.parentNode;
+        let lastRow=null,lastAfter=false,moved=false;
+        const clear=()=>{
+          if(lastRow){lastRow.style.borderTop='';lastRow.style.borderBottom='';}
+        };
+        const onMove=e=>{
+          const y=e.clientY!=null?e.clientY:(e.touches&&e.touches[0]?e.touches[0].clientY:0);
+          const x=e.clientX!=null?e.clientX:(e.touches&&e.touches[0]?e.touches[0].clientX:0);
+          if(!moved){moved=true;tr.style.opacity='.45';document.body.style.cursor='grabbing';}
+          const elAt=document.elementFromPoint(x,y);
+          const row=elAt&&elAt.closest?elAt.closest('tr[data-wc]'):null;
+          if(!row||row===tr||row.parentNode!==tbodyEl){clear();lastRow=null;return;}
+          const r=row.getBoundingClientRect();
+          const after=(y-r.top)>r.height/2;
+          if(row!==lastRow||after!==lastAfter){
+            clear();
+            row.style[after?'borderBottom':'borderTop']='3px solid #1d4ed8';
+            lastRow=row;lastAfter=after;
+          }
+        };
+        const onUp=()=>{
+          document.removeEventListener('pointermove',onMove);
+          document.removeEventListener('pointerup',onUp);
+          document.removeEventListener('pointercancel',onUp);
+          document.body.style.cursor='';tr.style.opacity='';
+          const target=lastRow;const after=lastAfter;
+          clear();
+          if(moved&&target)_reorder(wc,target.dataset.wc,after);
+        };
+        document.addEventListener('pointermove',onMove);
+        document.addEventListener('pointerup',onUp);
+        document.addEventListener('pointercancel',onUp);
+      };
+      tr._startDrag=_startDrag;
+
       // ── Section cell: one input per WC row, visually merged when consecutive ──
       const tdSec=el('td');
       const isFirstOfBlock=(i===0);
@@ -11146,11 +11202,18 @@ function buildPerfTable(wrap, matrix, months, unitHours){
         });
         return b;
       };
+      const grip=sp('','⠿');
+      grip.title='Trageți pentru a reordona workcenterul (merge și prin tragerea numelui)';
+      grip.style.cssText='cursor:grab;color:#94a3b8;font-size:14px;line-height:1;user-select:none;flex-shrink:0;letter-spacing:-1px;padding:0 2px';
+      grip.addEventListener('pointerdown',ev=>tr._startDrag(ev));
+      wcWrap.appendChild(grip);
       const arrows=dv('');arrows.style.cssText='display:flex;flex-direction:column;gap:1px';
       arrows.appendChild(mkArrow('▲',-1,'Mută în sus'));
       arrows.appendChild(mkArrow('▼',1,'Mută în jos'));
       wcWrap.appendChild(arrows);
-      const nm=sp('');nm.textContent=wc;wcWrap.appendChild(nm);
+      const nm=sp('');nm.textContent=wc;nm.style.cursor='grab';
+      nm.addEventListener('pointerdown',ev=>tr._startDrag(ev));
+      wcWrap.appendChild(nm);
       tdWC.appendChild(wcWrap);tr.appendChild(tdWC);
 
       // ── Per-workcenter efficiency ──
@@ -11210,6 +11273,86 @@ function buildPerfTable(wrap, matrix, months, unitHours){
     months.forEach(m=>trSub.appendChild(numTd(secTotals.get(m)||0,'color:#1e3a5f;font-weight:800;border-left:1px solid #bfdbfe')));
     trSub.appendChild(numTd(secGrand,'font-weight:900;border-left:2px solid #60a5fa;background:#bfdbfe;color:#1e3a5f'));
     tbody.appendChild(trSub);
+
+    /* ── ORE PONTATE (introduse manual, per secție și lună) ── */
+    const secKey=block.section?('SEC:'+block.section):('WC:'+block.wcs[0]);
+    if(!S.perfPontaj)S.perfPontaj={};
+    const pj=S.perfPontaj[secKey]||(S.perfPontaj[secKey]={});
+
+    const trP=el('tr');trP.style.cssText='background:#fffbeb;border-bottom:1px solid #fde68a';
+    const tdP0=el('td');
+    tdP0.style.cssText='position:sticky;left:0;z-index:2;background:#fffbeb;border-right:2px solid #fcd34d;padding:0';
+    trP.appendChild(tdP0);
+    const tdPL=el('td');
+    tdPL.style.cssText='position:sticky;left:130px;z-index:1;background:#fffbeb;padding:5px 10px;font-size:10.5px;font-weight:800;color:#92400e;text-transform:uppercase;letter-spacing:.04em;white-space:nowrap';
+    tdPL.textContent='Ore pontate';
+    tdPL.title='Orele pontate pe secția '+(block.section||'fără secție')+' — se introduc manual';
+    trP.appendChild(tdPL);
+    const tdPE=el('td');
+    tdPE.style.cssText='position:sticky;left:320px;z-index:1;background:#fffbeb;border-right:2px solid #fcd34d;padding:0';
+    trP.appendChild(tdPE);
+
+    let pontTotal=0;
+    months.forEach(m=>{
+      const td=el('td');
+      td.style.cssText='padding:3px 5px;text-align:right;border-left:1px solid #fde68a;white-space:nowrap';
+      const inp=el('input');inp.type='text';inp.inputMode='decimal';
+      const cur=pj[m];
+      if(cur!=null&&cur!=='')pontTotal+=parseFloat(cur)||0;
+      inp.value=(cur!=null&&cur!=='')?String(cur):'';
+      inp.placeholder='—';
+      inp.style.cssText='width:100%;min-width:56px;height:23px;padding:0 5px;border:1.5px solid #fcd34d;border-radius:4px;'+
+        'font-size:11px;font-weight:800;text-align:right;font-family:monospace;color:#92400e;background:#fff';
+      ['keydown','click','input','focus','mousedown','dragstart'].forEach(ev=>inp.addEventListener(ev,e=>e.stopPropagation()));
+      const savePj=()=>{
+        const raw=inp.value.trim().replace(',','.');
+        if(!raw){delete pj[m];}
+        else{const v=Math.max(0,parseFloat(raw)||0);pj[m]=Math.round(v*100)/100;}
+        savePerfLayout();
+        wrap.innerHTML='';buildPerfTable(wrap,matrix,months,unitHours);
+      };
+      inp.addEventListener('change',savePj);
+      inp.addEventListener('blur',savePj);
+      inp.addEventListener('keydown',e=>{if(e.key==='Enter'){e.preventDefault();inp.blur();}});
+      td.appendChild(inp);trP.appendChild(td);
+    });
+    {const td=el('td');
+     td.style.cssText='padding:5px 10px;text-align:right;border-left:2px solid #fcd34d;background:#fef3c7;font-family:monospace;font-weight:900;color:#92400e;white-space:nowrap';
+     td.textContent=pontTotal>0?pontTotal.toFixed(1):'—';trP.appendChild(td);}
+    tbody.appendChild(trP);
+
+    /* ── REALIZAT / PONTAT % ── */
+    const trR=el('tr');trR.style.cssText='background:#f5f3ff;border-bottom:2px solid #c4b5fd';
+    const tdR0=el('td');
+    tdR0.style.cssText='position:sticky;left:0;z-index:2;background:#f5f3ff;border-right:2px solid #c4b5fd;padding:0';
+    trR.appendChild(tdR0);
+    const tdRL=el('td');
+    tdRL.style.cssText='position:sticky;left:130px;z-index:1;background:#f5f3ff;padding:5px 10px;font-size:10.5px;font-weight:800;color:#5b21b6;text-transform:uppercase;letter-spacing:.04em;white-space:nowrap';
+    tdRL.textContent='Realizat / Pontat %';
+    tdRL.title='Ore realizate (subtotal secție) / ore pontate × 100';
+    trR.appendChild(tdRL);
+    const tdRE=el('td');
+    tdRE.style.cssText='position:sticky;left:320px;z-index:1;background:#f5f3ff;border-right:2px solid #c4b5fd;padding:0';
+    trR.appendChild(tdRE);
+
+    const pctTd=(real,pont,extra)=>{
+      const td=el('td');
+      const base='padding:5px 10px;text-align:right;white-space:nowrap;font-family:monospace;font-weight:800;';
+      if(!(pont>0)){td.style.cssText=base+(extra||'border-left:1px solid #ddd6fe')+';color:#cbd5e1';td.textContent='—';return td;}
+      const v=real/pont*100;
+      const col=v>=90?'#15803d':v>=70?'#b45309':'#dc2626';
+      td.style.cssText=base+(extra||'border-left:1px solid #ddd6fe')+';color:'+col;
+      td.textContent=v.toFixed(1)+'%';
+      td.title=`Realizat: ${real.toFixed(1)} h · Pontat: ${pont.toFixed(1)} h`;
+      return td;
+    };
+    months.forEach(m=>{
+      const realH=(secTotals.get(m)||0)/60;           // subtotalul e in minute
+      const pontH=parseFloat(pj[m])||0;
+      trR.appendChild(pctTd(realH,pontH));
+    });
+    trR.appendChild(pctTd(secGrand/60,pontTotal,'border-left:2px solid #a78bfa;background:#ede9fe'));
+    tbody.appendChild(trR);
   });
 
   // ── Grand total ──
