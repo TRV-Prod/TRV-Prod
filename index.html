@@ -1295,6 +1295,7 @@ const S={
   perfWcGroups:[],
   perfSections:{},   // wcName -> section name
   perfPontaj:{},     // sectieKey -> { 'YYYYMM': ore pontate }
+  perfSource:'calc', // 'calc' | 'scanTeo' | 'scanReal'  — sursa timpilor din Performanta
   perfWcEff:{},      // wcName -> efficiency % (overrides the global value)
   perfWcOrder:[],    // custom WC display order
   perfLivrari:[],  // raw rows saved to Supabase
@@ -2401,9 +2402,17 @@ function _calcNodeNeeds(fpCtx, compNo, parentNeed, needs, ignoreStock){
     const onHand = ignoreStock ? 0 : Math.max(0, stock.onHand);
     const totalWIP = ignoreStock ? 0 : Math.max(0, stock.totalWIP);
     const avail = ignoreStock ? 0 : (onHand + totalWIP);
-    const net = Math.max(0, needed - avail);
-    needs.set(matNo, {needed, onHand:ignoreStock?0:stock.onHand, totalWIP:ignoreStock?0:stock.totalWIP, net, avail});
-    const childParentNeed = net;
+    // ── CUMULARE: acelasi reper poate fi folosit de mai multe subansamble
+    //    ale aceluiasi produs final → necesarele se ADUNA, nu se suprascriu.
+    //    Stocul ramane un singur "bazin", aplicat o singura data pe totalul
+    //    cumulat; in copii coboara doar CRESTEREA de necesar net (delta),
+    //    ca sa nu dublam cantitatile deja propagate.
+    const prev = needs.get(matNo);
+    const totalNeeded = (prev ? prev.needed : 0) + needed;
+    const prevNet = prev ? prev.net : 0;
+    const net = Math.max(0, totalNeeded - avail);
+    needs.set(matNo, {needed: totalNeeded, onHand:ignoreStock?0:stock.onHand, totalWIP:ignoreStock?0:stock.totalWIP, net, avail});
+    const childParentNeed = net - prevNet;
     if(childParentNeed > 0 && (S.bomIdx?.get(`${fpCtx}__${matNo}`) || []).length > 0){
       _calcNodeNeeds(fpCtx, matNo, childParentNeed, needs, ignoreStock);
     }
@@ -10813,6 +10822,51 @@ function computePerfMatrix(effPct){
   return result;
 }
 
+/* -- Matrice din RAPORT SCANARI: minute per workcenter per luna --
+   mode='teo'  -> timp teoretic = Run time (BOW) x cant. executata + Setup
+   mode='real' -> timp efectiv cronometrat (Used_tm_MS)
+   Structura returnata e identica cu cea din computePerfMatrix, deci
+   foloseste aceleasi grupari, subtotaluri si ore pontate.           */
+function computeScanMatrix(mode){
+  const rows=Array.isArray(S.scanData)?S.scanData:[];
+  if(!rows.length){
+    showToast('Raportul de scanari nu este incarcat. Mergeti la Fisiere - QV Start-Stop History.','err',5000);
+    return {matrix:null,months:[]};
+  }
+  const bowFlat=buildBowFlatIdx();
+  if(mode==='teo'&&!bowFlat.size){
+    showToast('Fisierul BOW nu este incarcat - timpii teoretici nu pot fi calculati.','err',5000);
+    return {matrix:null,months:[]};
+  }
+  const matrix=new Map();
+  const monthSet=new Set();
+  let used=0,skipped=0;
+  for(const r of rows){
+    const tdt=String(r['Transaction dt']||'').replace(/[^0-9]/g,'');
+    if(tdt.length<6){skipped++;continue;}
+    const ym=tdt.slice(0,6);
+    const wc=str(r['Workcenter name']||'');
+    if(!wc){skipped++;continue;}
+    let min=0;
+    if(mode==='real'){
+      min=scanTimeToMin(r['Used_tm_MS']);
+    } else {
+      const qty=parseFloat(r['Manufact qty'])||0;
+      const be=bowFlat.get(`${str(r['Product']||'')}__${str(r['Op no']||'')}`);
+      if(be==null||qty<=0){skipped++;continue;}
+      min=be.runTime*qty+be.setupTime;
+    }
+    if(!(min>0)){skipped++;continue;}
+    monthSet.add(ym);
+    if(!matrix.has(wc))matrix.set(wc,new Map());
+    const m=matrix.get(wc);
+    m.set(ym,(m.get(ym)||0)+min);
+    used++;
+  }
+  console.log(`[Perf] computeScanMatrix(${mode}): folosite=${used} ignorate=${skipped} WC=${matrix.size}`);
+  return {matrix,months:[...monthSet].sort()};
+}
+
 // ── Apply WC groups: collapse WCs into sections ──
 function applyPerfGroups(matrix, groups){
   if(!groups||!groups.length) return matrix;
@@ -10859,7 +10913,7 @@ function _livKey(r){
 // ── Performanță: sections + WC order (shared via Supabase) ──
 async function savePerfLayout(){
   if(!S.sbCfg)return;
-  try{await sbUpload(S.sbCfg,'data-perf-layout.json',{sections:S.perfSections||{},order:S.perfWcOrder||[],wcEff:S.perfWcEff||{},pontaj:S.perfPontaj||{}});}
+  try{await sbUpload(S.sbCfg,'data-perf-layout.json',{sections:S.perfSections||{},order:S.perfWcOrder||[],wcEff:S.perfWcEff||{},pontaj:S.perfPontaj||{},source:S.perfSource||'calc'});}
   catch(e){console.warn('savePerfLayout',e);}
 }
 async function loadPerfLayout(){
@@ -10871,6 +10925,7 @@ async function loadPerfLayout(){
       S.perfWcOrder=Array.isArray(d.order)?d.order:[];
       S.perfWcEff=d.wcEff||{};
       S.perfPontaj=d.pontaj||{};
+      if(d.source)S.perfSource=d.source;
     }
   }catch(e){console.warn('loadPerfLayout',e);}
 }
@@ -10939,6 +10994,23 @@ function renderPerformanta(){
   grpBtn.addEventListener('click',()=>openPerfGroupEditor(()=>rebuild()));
   tb.appendChild(grpBtn);
 
+  // Sursa timpilor
+  const srcWrap=dv('');srcWrap.style.cssText='display:flex;align-items:center;gap:6px;margin-right:4px';
+  const srcLbl=sp('','Sursă:');srcLbl.style.cssText='font-size:10px;font-weight:800;color:#64748b;text-transform:uppercase;letter-spacing:.05em';
+  srcWrap.appendChild(srcLbl);
+  const srcSel=el('select');
+  srcSel.style.cssText='padding:5px 9px;border:1.5px solid var(--border);border-radius:6px;font-size:11.5px;font-weight:700;background:#fff;cursor:pointer';
+  [['calc','⚙ Calculat din vânzări (de la 0)'],
+   ['scanTeo','📡 Scanări — timp teoretic'],
+   ['scanReal','📡 Scanări — timp real']].forEach(([v,l])=>{
+    const o=el('option');o.value=v;o.textContent=l;
+    if((S.perfSource||'calc')===v)o.selected=true;srcSel.appendChild(o);
+  });
+  srcSel.title='Calculat: timpii normați necesari pentru produsele vândute, ignorând stocurile.\nScanări: timpii raportați efectiv de operatori (teoretici sau reali).';
+  srcSel.addEventListener('change',()=>{S.perfSource=srcSel.value;savePerfLayout();rebuild();});
+  srcWrap.appendChild(srcSel);
+  tb.appendChild(srcWrap);
+
   // Unit toggle: hours vs minutes
   let unitHours=true;
   const unitBtn=el('button','tbtn');unitBtn.innerHTML='Ore';
@@ -10985,6 +11057,26 @@ function renderPerformanta(){
        ib.innerHTML='⚠ Linii invalide'+(n?' <b>'+n+'</b>':'')+(f?' <span style="color:#15803d">(+'+f+')</span>':'');
        ib.style.display=n?'':'none';
      }}
+    const _src=S.perfSource||'calc';
+    if(_src!=='calc'){
+      content.innerHTML='<div style="padding:20px;text-align:center;color:var(--text3)">⏳ Se calculează din scanări...</div>';
+      setTimeout(()=>{
+        content.innerHTML='';
+        const sc=computeScanMatrix(_src==='scanTeo'?'teo':'real');
+        if(!sc.matrix||!sc.matrix.size){
+          content.innerHTML='<div style="padding:32px;text-align:center;color:var(--text3)">Nu există scanări pentru sursa selectată.</div>';
+          return;
+        }
+        const info=dv('');
+        info.style.cssText='margin-bottom:10px;padding:7px 12px;background:#eff6ff;border:1px solid #bfdbfe;border-radius:7px;font-size:11px;color:#1e40af';
+        info.innerHTML=(_src==='scanTeo')
+          ? '📡 <b>Timp teoretic din scanări</b> — Run time (BOW) × cantitatea executată + Setup, pentru operațiile raportate efectiv de operatori.'
+          : '📡 <b>Timp real din scanări</b> — durata cronometrată efectiv între Start și Finish.';
+        content.appendChild(info);
+        buildPerfTable(content,applyPerfGroups(sc.matrix,S.perfWcGroups),sc.months,unitHours);
+      },50);
+      return;
+    }
     if(!S.perfData){
       content.innerHTML='<div style="padding:40px;text-align:center;color:var(--text3);font-size:13px">📂 Importați un fișier Livrări pentru a genera raportul.<br><span style="font-size:11px;color:#94a3b8;margin-top:6px;display:block">Datele anterioare se încarcă din baza de date...</span></div>';
       return;
