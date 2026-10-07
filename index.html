@@ -1964,6 +1964,60 @@ function applyInTransitToStock(){
   }
 }
 
+/* ═══════════════════════════════════════════════════════════════
+   INDEX INVERS COMPONENTA → PRODUSE FINALE
+   Permite cautarea in Structura dupa o subcomponenta: returnam
+   toate produsele finale in care apare acel reper (la orice nivel).
+═══════════════════════════════════════════════════════════════ */
+function _compFpIdx(){
+  if(S._compFpIdxCache)return S._compFpIdxCache;
+  const m=new Map();   // COD(UPPER) → {code,name,fps:Set}
+  const add=(code,name,fp)=>{
+    if(!code||!fp||code===fp)return;
+    const k=code.toUpperCase();
+    let e=m.get(k);
+    if(!e){e={code,name:name||'',fps:new Set()};m.set(k,e);}
+    else if(!e.name&&name)e.name=name;
+    e.fps.add(fp);
+  };
+  for(const r of (S.bomData||[])){
+    const fp=str(r['Final product']);if(!fp)continue;
+    add(str(r['Material no']),str(r['Mat. name']||''),fp);
+    add(str(r['Comp no.']),'',fp);
+  }
+  S._compFpIdxCache=m;
+  console.log('[Structura] index componenta→PF:',m.size,'repere');
+  return m;
+}
+
+/* Rezultatele cautarii din bara laterala:
+   [{code,name,drawing,via:null|[coduri subcomponente care au dat match]}] */
+function structSearchFps(q){
+  const ql=String(q||'').trim().toLowerCase();
+  const all=S.fps||[];
+  if(!ql)return all.map(f=>({...f,via:null}));
+  const direct=all.filter(f=>f.code.toLowerCase().includes(ql)||String(f.name||'').toLowerCase().includes(ql));
+  const have=new Set(direct.map(f=>f.code));
+  const out=direct.map(f=>({...f,via:null}));
+  // cautare dupa subcomponenta
+  const meta=new Map(all.map(f=>[f.code,f]));
+  const viaMap=new Map();   // fp → Set(coduri componente)
+  for(const[k,e] of _compFpIdx()){
+    if(!k.toLowerCase().includes(ql)&&!String(e.name||'').toLowerCase().includes(ql))continue;
+    for(const fp of e.fps){
+      if(have.has(fp))continue;
+      let sset=viaMap.get(fp);
+      if(!sset){sset=new Set();viaMap.set(fp,sset);}
+      if(sset.size<5)sset.add(e.code);
+    }
+  }
+  [...viaMap.keys()].sort((a,b)=>a.localeCompare(b)).forEach(fp=>{
+    const mf=meta.get(fp)||{code:fp,name:'',drawing:''};
+    out.push({...mf,via:[...viaMap.get(fp)]});
+  });
+  return out;
+}
+
 function buildBomIdx(rows){
   const m=new Map();
   for(const r of rows){
@@ -2013,6 +2067,7 @@ function extractFPs(rows){
 
 function applyBom(rows,ts){
   S.bomData=rows;S.bomIdx=buildBomIdx(rows);S.fps=extractFPs(rows);S.meta.bom={rows:rows.length,ts};
+  S._compFpIdxCache=null;   // se reconstruieste la prima cautare
   // Build paint material index: key = Comp no. → [{no, desc}]
   // Rows where Mat product group = 'Paint powder' or 'Paint wet'
   S.paintIdx=new Map();
@@ -4062,15 +4117,18 @@ function renderSidebar(){
 
   // Search always visible
   const sw=dv('s-wrap');
-  const si=el('input','s-inp');si.placeholder='Cauta produs...';si.value=S.q||'';
+  const si=el('input','s-inp');si.placeholder='Cauta produs final sau subcomponenta...';si.value=S.q||'';
+  si.title='Puteti cauta dupa codul/denumirea produsului final SAU dupa o subcomponenta — se afiseaza toate produsele finale care o contin.';
   si.addEventListener('input',e2=>{S.q=e2.target.value;S.selFP=null;renderPList(pl);renderPList(plMobile);});
   sw.appendChild(si);sw.appendChild(sp('s-ico','⌕'));
   sbar.appendChild(sw);
 
-  const q=(S.q||'').toLowerCase();
-  const filtered=S.fps.filter(f=>!q||f.code.toLowerCase().includes(q)||f.name.toLowerCase().includes(q));
+  const _res=structSearchFps(S.q||'');
+  const _nVia=_res.filter(r=>r.via).length;
   const countEl=dv('s-count');countEl.id='sbar-count';
-  countEl.textContent=`${filtered.length.toLocaleString()} produse`;
+  countEl.textContent=_nVia
+    ? `${_res.length.toLocaleString()} produse · ${_nVia.toLocaleString()} prin subcomponenta`
+    : `${_res.length.toLocaleString()} produse`;
   sbar.appendChild(countEl);
 
   // Mobile: collapsible list toggle
@@ -4123,12 +4181,28 @@ function renderSidebar(){
 
 function renderPList(container){
   container.innerHTML='';
-  const q=(S.q||'').toLowerCase();
-  const filtered=S.fps.filter(f=>!q||f.code.toLowerCase().includes(q)||f.name.toLowerCase().includes(q)).slice(0,300);
+  const filtered=structSearchFps(S.q||'').slice(0,300);
+  let _viaHdrDone=false;
   for(const fp of filtered){
+    // separator inaintea produselor gasite prin subcomponenta
+    if(fp.via&&!_viaHdrDone){
+      _viaHdrDone=true;
+      const hd=dv('');
+      hd.style.cssText='padding:6px 13px;background:#fffbeb;border-top:1px solid #fde68a;border-bottom:1px solid #fde68a;font-size:9.5px;font-weight:800;color:#92400e;text-transform:uppercase;letter-spacing:.05em';
+      hd.textContent='↳ Produse finale care contin componenta';
+      container.appendChild(hd);
+    }
     const item=dv(`pitem${S.selFP===fp.code?' on':''}`);
+    if(fp.via)item.style.background=S.selFP===fp.code?'':'#fffdf5';
     item.appendChild(dv('pitem-code',fp.code));
     if(fp.name||fp.drawing)item.appendChild(dv('pitem-name',fp.name||fp.drawing));
+    if(fp.via&&fp.via.length){
+      const vb=dv('');
+      vb.style.cssText='margin-top:3px;font-size:9.5px;color:#b45309;font-weight:700;line-height:1.35;word-break:break-all';
+      vb.textContent='⊂ '+fp.via.join(', ');
+      vb.title='Contine: '+fp.via.join(', ');
+      item.appendChild(vb);
+    }
     item.addEventListener('click',()=>{
       S.selFP=fp.code;S.exp=new Set();S.expOps=new Set();
       // Close sidebar on mobile
@@ -4142,7 +4216,7 @@ function renderPList(container){
     container.appendChild(item);
   }
   if(!filtered.length){const e=dv('');e.style.cssText='padding:14px;font-size:12px;color:var(--text3);text-align:center';e.textContent='Niciun produs gasit';container.appendChild(e);}
-  const total=S.fps.filter(f=>!q||f.code.toLowerCase().includes(q)||f.name.toLowerCase().includes(q)).length;
+  const total=structSearchFps(S.q||'').length;
   if(total>300){const m=dv('');m.style.cssText='padding:5px 13px;font-size:10px;color:var(--text4);font-family:var(--mono)';m.textContent=`Primele 300 din ${total} — rafinati cautarea`;container.appendChild(m);}
 }
 
