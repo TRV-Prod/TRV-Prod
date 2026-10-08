@@ -7839,6 +7839,212 @@ function renderPlanVsLivrat(){
   return page;
 }
 
+/* ===============================================================
+   RAPORT INCARCARE WORKCENTERE — estimare printabila pentru
+   planul saptamanii curente. Grafice desenate in HTML (fara
+   librarii externe) ca sa se printeze identic peste tot.
+   =============================================================== */
+function _wcLoadStatus(pct){
+  if(pct==null)       return {k:'nd',  lbl:'Fara capacitate', ico:'?',  col:'#64748b', bg:'#f1f5f9', bd:'#cbd5e1'};
+  if(pct<=80)         return {k:'ok',  lbl:'OK',              ico:'✓', col:'#15803d', bg:'#f0fdf4', bd:'#86efac'};
+  if(pct<=100)        return {k:'warn',lbl:'La limita',       ico:'▲', col:'#b45309', bg:'#fffbeb', bd:'#fcd34d'};
+  return                     {k:'over',lbl:'Supraincarcat',   ico:'✕', col:'#dc2626', bg:'#fef2f2', bd:'#fca5a5'};
+}
+
+function openWcLoadReport(){
+  if(!S.planData.size){showToast('Planul este gol - adaugati produse in Planificare.','err',3500);return;}
+  if(!S.bowIdx||!S.bomIdx){showToast('Incarcati fisierele BOM si BOW.','err',3500);return;}
+
+  const wcData=calcWcLoading();
+  if(!wcData.size){showToast('Nu s-au gasit operatii (BOW) pentru produsele din plan.','err',4000);return;}
+
+  const week=S.planCurrentWeek||getCurrentWeekLabel();
+  const eff=S.eficientaPlan||100;
+
+  /* ---- agregare ---- */
+  const rowsD=[];
+  let totNeed=0,totFull=0,totCap=0,nOver=0,nWarn=0;
+  for(const [wc,d] of wcData){
+    const needH=d.totalMin/60, fullH=d.totalMinFull/60;
+    const runH=d.runMin/60, setupH=d.setupMin/60;
+    const meta=S.wcSetupIdx?.[wc]||null;
+    const prodTeam=meta?.prodTeam||0;
+    const autoCap=prodTeam>0?8*5*prodTeam:0;
+    const capH=parseFloat(S.wcAvailHours?.[wc])||autoCap;
+    const pct=capH>0?(needH/capH*100):null;
+    const st=_wcLoadStatus(pct);
+    if(st.k==='over')nOver++;else if(st.k==='warn')nWarn++;
+    totNeed+=needH;totFull+=fullH;totCap+=capH;
+    const prods=[...(d.products||[])].sort((a,b)=>b.min-a.min).slice(0,5)
+      .map(x=>({itemNo:x.itemNo,qty:x.qty,h:x.min/60}));
+    rowsD.push({wc,needH,fullH,runH,setupH,capH,pct,st,prodTeam,
+      wcType:String(meta?.wcType||'').replace(/^\d+ /,''),prods});
+  }
+  rowsD.sort((a,b)=>{
+    const pa=a.pct==null?-1:a.pct, pb=b.pct==null?-1:b.pct;
+    if(pb!==pa)return pb-pa;
+    return b.needH-a.needH;
+  });
+  const gradMediu=totCap>0?(totNeed/totCap*100):null;
+  const maxScale=Math.max(...rowsD.map(r=>Math.max(r.needH,r.capH)),1);
+
+  const esc=t=>String(t==null?'':t).replace(/[&<>]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]));
+  const n1=v=>v.toLocaleString('ro-RO',{minimumFractionDigits:1,maximumFractionDigits:1});
+
+  /* ---- grafic: bare orizontale Run + Setup, cu reper de capacitate ---- */
+  const bars=rowsD.map(r=>{
+    const wRun=Math.max(0,r.runH/maxScale*100);
+    const wSet=Math.max(0,r.setupH/maxScale*100);
+    const capPos=r.capH>0?Math.min(100,r.capH/maxScale*100):null;
+    return `<div class="bar-row">
+      <div class="bar-lbl" title="${esc(r.wc)}">${esc(r.wc)}</div>
+      <div class="bar-track">
+        ${capPos!=null?`<div class="cap-zone" style="width:${capPos}%"></div>`:''}
+        <div class="seg seg-run"   style="width:${wRun}%"></div>
+        <div class="seg seg-setup" style="width:${wSet}%"></div>
+      </div>
+      <div class="bar-val">${n1(r.needH)} h</div>
+      <div class="bar-cap">${r.capH>0?'/ '+n1(r.capH)+' h':'&mdash;'}</div>
+      <div class="bar-pct" style="color:${r.st.col};background:${r.st.bg};border-color:${r.st.bd}">
+        ${r.st.ico} ${r.pct!=null?Math.round(r.pct)+'%':'&mdash;'}
+      </div>
+    </div>`;
+  }).join('');
+
+  /* ---- tabel ---- */
+  const trs=rowsD.map(r=>`<tr>
+    <td class="l"><b>${esc(r.wc)}</b>${r.wcType?`<div class="sub">${esc(r.wcType)}</div>`:''}</td>
+    <td>${r.prodTeam||'&mdash;'}</td>
+    <td class="num">${n1(r.runH)}</td>
+    <td class="num">${n1(r.setupH)}</td>
+    <td class="num"><b>${n1(r.needH)}</b></td>
+    <td class="num dim">${n1(r.fullH)}</td>
+    <td class="num">${r.capH>0?n1(r.capH):'&mdash;'}</td>
+    <td class="num" style="color:${r.st.col};font-weight:800">${r.pct!=null?Math.round(r.pct)+'%':'&mdash;'}</td>
+    <td><span class="pill" style="color:${r.st.col};background:${r.st.bg};border-color:${r.st.bd}">${r.st.ico} ${r.st.lbl}</span></td>
+    <td class="l sub">${r.prods.map(x=>`${esc(x.itemNo)} <i>(${n1(x.h)}h)</i>`).join('<br>')||'&mdash;'}</td>
+  </tr>`).join('');
+
+  /* ---- produse din plan ---- */
+  const planRows=[...S.planData.entries()]
+    .map(([itemNo,pl])=>({itemNo,qty:pl.totalQty||0,prio:S.planPrio?.[itemNo]||''}))
+    .sort((a,b)=>{
+      const pa=parseFloat(String(a.prio).replace(',','.')), pb=parseFloat(String(b.prio).replace(',','.'));
+      const na=isNaN(pa)?99999:pa, nb=isNaN(pb)?99999:pb;
+      if(na!==nb)return na-nb;
+      return b.qty-a.qty;
+    });
+  const planTrs=planRows.map(r=>`<tr><td class="num">${esc(r.prio)||'&mdash;'}</td><td class="l"><b>${esc(r.itemNo)}</b></td><td class="num">${r.qty.toLocaleString('ro-RO')}</td></tr>`).join('');
+
+  const kpi=(lbl,val,col,note)=>`<div class="kpi"><div class="kpi-l">${lbl}</div>
+    <div class="kpi-v" style="color:${col}">${val}</div>${note?`<div class="kpi-n">${note}</div>`:''}</div>`;
+
+  const w=window.open('','_blank');
+  if(!w){showToast('Permiteti pop-up-urile pentru a genera raportul','err',3500);return;}
+  w.document.write(`<!doctype html><html lang="ro"><head><meta charset="utf-8">
+<title>Incarcare workcentere - ${esc(week)}</title>
+<style>
+  @page{size:A4 landscape;margin:9mm}
+  *{box-sizing:border-box}
+  body{font-family:system-ui,'Segoe UI',Arial,sans-serif;margin:0;padding:14px 16px;color:#0f172a;background:#fff}
+  h1{font-size:18px;margin:0 0 2px;color:#1e3a5f;letter-spacing:-.01em}
+  .sub-h{font-size:11px;color:#64748b;margin-bottom:12px}
+  h2{font-size:12.5px;margin:16px 0 7px;color:#1e3a5f;text-transform:uppercase;letter-spacing:.05em;
+     border-bottom:2px solid #e2e8f0;padding-bottom:4px}
+  .kpis{display:flex;gap:9px;flex-wrap:wrap;margin-bottom:4px}
+  .kpi{flex:1;min-width:120px;border:1px solid #e2e8f0;border-left:4px solid #1e3a5f;border-radius:7px;padding:8px 11px;background:#fff}
+  .kpi-l{font-size:8.5px;font-weight:800;color:#94a3b8;text-transform:uppercase;letter-spacing:.06em}
+  .kpi-v{font-size:19px;font-weight:900;line-height:1.15;margin-top:2px}
+  .kpi-n{font-size:8.5px;color:#94a3b8;margin-top:1px}
+  /* grafic */
+  .legend{display:flex;gap:14px;align-items:center;font-size:9.5px;color:#475569;margin:2px 0 8px}
+  .legend i{display:inline-block;width:11px;height:9px;border-radius:2px;margin-right:4px;vertical-align:-1px}
+  .bar-row{display:flex;align-items:center;gap:8px;margin-bottom:3px;page-break-inside:avoid}
+  .bar-lbl{width:150px;flex-shrink:0;font-size:9.5px;font-weight:700;text-align:right;
+           white-space:nowrap;overflow:hidden;text-overflow:ellipsis;color:#334155}
+  .bar-track{position:relative;flex:1;height:17px;background:#f8fafc;border:1px solid #eef2f7;border-radius:3px;display:flex;align-items:stretch;overflow:hidden}
+  .seg{height:100%;position:relative;z-index:2}
+  .seg-run{background:#1e3a5f;border-radius:3px 0 0 3px}
+  .seg-setup{background:#93b4d8;margin-left:2px;border-radius:0 3px 3px 0}
+  .cap-zone{position:absolute;left:0;top:0;bottom:0;background:#eef5fb;border-right:2px dashed #dc2626;z-index:1}
+  .bar-val{width:54px;flex-shrink:0;text-align:right;font-size:9px;font-weight:800;color:#0f172a;font-family:monospace}
+  .bar-cap{width:52px;flex-shrink:0;text-align:right;font-size:8.5px;color:#94a3b8;font-family:monospace}
+  .bar-pct{width:66px;flex-shrink:0;text-align:center;font-size:9.5px;font-weight:900;
+           border:1px solid;border-radius:9px;padding:1px 0}
+  /* tabele */
+  table{width:100%;border-collapse:collapse;font-size:9.5px}
+  th{background:#1e3a5f;color:#fff;padding:5px 6px;text-align:right;font-size:8.5px;
+     text-transform:uppercase;letter-spacing:.04em;font-weight:800}
+  th.l,td.l{text-align:left}
+  td{padding:4px 6px;border-bottom:1px solid #eef2f7;text-align:right;vertical-align:top}
+  td.num{font-family:monospace;font-weight:700}
+  td.dim{color:#94a3b8;font-weight:400}
+  .sub{font-size:8px;color:#94a3b8;font-weight:400;line-height:1.4}
+  .pill{display:inline-block;border:1px solid;border-radius:9px;padding:1px 7px;font-size:8.5px;font-weight:800;white-space:nowrap}
+  tr{page-break-inside:avoid}
+  thead{display:table-header-group}
+  .two{display:flex;gap:16px;align-items:flex-start}
+  .two>div:first-child{flex:2}
+  .two>div:last-child{flex:1}
+  .foot{margin-top:14px;font-size:8px;color:#94a3b8;border-top:1px solid #e2e8f0;padding-top:5px}
+  .noprint{margin-bottom:10px}
+  button{padding:7px 16px;border:none;border-radius:6px;background:#1d4ed8;color:#fff;
+         font-weight:800;font-size:12px;cursor:pointer;margin-right:7px}
+  button.sec{background:#f1f5f9;color:#334155}
+  @media print{.noprint{display:none!important}}
+</style></head><body>
+<div class="noprint"><button onclick="window.print()">\u{1F5A8} Printeaza / PDF</button><button class="sec" onclick="window.close()">Inchide</button></div>
+
+<h1>Estimare incarcare workcentere</h1>
+<div class="sub-h">Plan saptamana <b>${esc(week)}</b> &middot; ${planRows.length} produse planificate &middot;
+  eficienta ${eff}% &middot; generat ${new Date().toLocaleString('ro-RO')}</div>
+
+<div class="kpis">
+  ${kpi('Ore necesare',n1(totNeed)+' h','#1d4ed8','dupa scaderea stocului si WIP')}
+  ${kpi('Capacitate',totCap>0?n1(totCap)+' h':'&mdash;','#0f172a','disponibil / saptamana')}
+  ${kpi('Grad mediu',gradMediu!=null?Math.round(gradMediu)+'%':'&mdash;',
+        gradMediu==null?'#64748b':gradMediu<=80?'#15803d':gradMediu<=100?'#b45309':'#dc2626','necesar / capacitate')}
+  ${kpi('Supraincarcate',String(nOver),nOver?'#dc2626':'#15803d','peste 100%')}
+  ${kpi('La limita',String(nWarn),nWarn?'#b45309':'#15803d','intre 80 si 100%')}
+  ${kpi('Total fara stoc',n1(totFull)+' h','#64748b','daca s-ar produce de la 0')}
+</div>
+
+<h2>Incarcare pe workcenter</h2>
+<div class="legend">
+  <span><i style="background:#1e3a5f"></i>Run</span>
+  <span><i style="background:#93b4d8"></i>Setup</span>
+  <span><i style="background:#eef5fb;border-right:2px dashed #dc2626;width:16px"></i>Capacitate disponibila</span>
+  <span style="color:#94a3b8">necesar / capacitate (h)</span>
+  <span style="margin-left:auto;color:#94a3b8">Ordonat descrescator dupa gradul de incarcare</span>
+</div>
+${bars}
+
+<h2>Detaliu pe workcentere</h2>
+<table>
+  <thead><tr>
+    <th class="l">Workcenter</th><th>Echipe</th><th>Run (h)</th><th>Setup (h)</th>
+    <th>Necesar (h)</th><th>Fara stoc (h)</th><th>Capacitate (h)</th><th>Grad</th>
+    <th class="l">Status</th><th class="l">Top produse</th>
+  </tr></thead>
+  <tbody>${trs}</tbody>
+</table>
+
+<h2>Produse in plan</h2>
+<table>
+  <thead><tr><th>Prio</th><th class="l">Produs final</th><th>Cantitate</th></tr></thead>
+  <tbody>${planTrs}</tbody>
+</table>
+
+<div class="foot">
+  Necesarul este calculat din structurile BOM/BOW pentru cantitatile planificate, scazand stocul disponibil
+  si piesele aflate in WIP; coloana &bdquo;Fara stoc&rdquo; arata timpul daca totul s-ar produce de la zero.
+  Capacitatea provine din Prod Team (8h x 5 zile x echipe) sau din valorile introduse manual in Rapoarte &rarr; Incarcare Workcentere.
+  Setup-ul este numarat o singura data per operatie.
+</div>
+</body></html>`);
+  w.document.close();
+}
+
 function renderPlanificare(){
   const page=dv('plan-page');
 
@@ -7855,6 +8061,12 @@ function renderPlanificare(){
   const expBtn=el('button','tbtn');expBtn.innerHTML='⬇ Export Excel';
   expBtn.addEventListener('click',exportPlan);
   tb.appendChild(expBtn);
+
+  const loadRepBtn=el('button','tbtn');loadRepBtn.innerHTML='📊 Raport incarcare WC';
+  loadRepBtn.title='Estimare printabila a incarcarii pe workcentere pentru planul saptamanii curente';
+  loadRepBtn.style.cssText='border-color:#1d4ed8;color:#1d4ed8;background:#eff6ff;font-weight:700';
+  loadRepBtn.addEventListener('click',openWcLoadReport);
+  tb.appendChild(loadRepBtn);
 
   const clearBtn=el('button','tbtn');clearBtn.innerHTML='✕ Goleste planul';clearBtn.style.color='#dc2626';
   clearBtn.addEventListener('click',()=>{if(confirm('Golesti tot planul de productie?')){S.planData=new Map();savePlan();renderPlanPage(planWrap);updatePlanStatsBar();}});
