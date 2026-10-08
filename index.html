@@ -1363,7 +1363,7 @@ const S={
     colWidths:{prio:55,matNo:140,matName:220,matType:50,fps:160,unQty:75,totalNec:90,onHand:90,wip:130,dePrelucrat:100,timp:110},
     visibleCols:new Set(['prio','matNo','matName','matType','fps','unQty','totalNec','onHand','wip','dePrelucrat','timp']),
   },
-  pwcState:{eff:100,selectedGroup:null,scheduledByGroup:{},notes:{},onlyWipCovered:false,colFilters:{}},  // Programare WC state
+  pwcState:{eff:100,selectedGroup:null,scheduledByGroup:{},notes:{},onlyWipCovered:false,colFilters:{},ignoreStock:false},  // Programare WC state
   stocVerifInputs:{},  // matNo → {cantFizica:'', wipInv:'', obs:''}
   stocVerifFilter:{
     fpFilter:'all', tipFilter:'all', colFilters:{},
@@ -18711,6 +18711,9 @@ table{border:2px solid #0f172a}
 function buildPwcData(eff){
   const byKey=new Map();
   if(!S.planData.size||!S.bomIdx||!S.bowIdx) return[];
+  // "Planifica fara stocuri": stocurile (produse finite + componente MAKE) si
+  // WIP-ul sunt tratate ca 0, deci lista arata TOT ce trebuie executat de la zero.
+  const IGN=!!S.pwcState?.ignoreStock;
   const sortedPlan=[...S.planData.entries()].sort((a,b)=>{
     const pa=S.planPrio[a[0]]||'',pb=S.planPrio[b[0]]||'';
     if(!pa&&!pb)return a[0].localeCompare(b[0]);
@@ -18731,8 +18734,8 @@ function buildPwcData(eff){
       setupT:parseFloat(String(op['Setup time']||'0').replace(',','.'))||0,
     })).sort((a,b)=>b.productSeq!==a.productSeq?(b.productSeq-a.productSeq):(a.seq-b.seq));
     const stock=S.stockIdx?.get(matNo)||{onHand:0,wipByWC:{}};
-    const onHand=Math.max(0,stock.onHand);
-    const wipByWC=stock.wipByWC||{};
+    const onHand=IGN?0:Math.max(0,stock.onHand);
+    const wipByWC=IGN?{}:(stock.wipByWC||{});
     const wipAtIdx=new Map();
     for(const [poCol,wipQty] of Object.entries(wipByWC)){
       if(!wipQty||wipQty<=0)continue;
@@ -18773,11 +18776,17 @@ function buildPwcData(eff){
     const prio=S.planPrio[itemNo]||'';
     const planQ=plan.totalQty;
     const stockFP=S.stockIdx?.get(itemNo)||{onHand:0};
-    const effectiveQty=Math.max(0,planQ-Math.max(0,stockFP.onHand));
+    // Fara stocuri: produsul finit se considera 0 pe stoc, deci se produce integral
+    const effectiveQty=IGN?planQ:Math.max(0,planQ-Math.max(0,stockFP.onHand));
     if(effectiveQty<=0)continue;
     processComp(itemNo,prio,itemNo,planQ);
-    // Use calcNeeds to get stock-aware needed quantities for all components
+    // Necesarele componentelor; in modul "fara stocuri" calcNeeds ruleaza cu
+    // structIgnoreStock=true, deci intoarce cantitatile BRUTE, cumulate corect
+    // atunci cand acelasi reper apare la mai multe subansamble.
+    const _prevIgn=S.structIgnoreStock;
+    if(IGN)S.structIgnoreStock=true;
     const needs=S.stockIdx?calcNeeds(itemNo,effectiveQty):null;
+    if(IGN)S.structIgnoreStock=_prevIgn;
     const walkBOM=(compNo,parentQty,vis)=>{
       const key=`${itemNo}__${compNo}`;
       const bomRows=S.bomIdx?.get(key)||[];
@@ -18831,6 +18840,10 @@ function renderPwcTab(){
   if(!S.planData.size){page.appendChild(mkEmpty('Programare Workcenter','Adaugati produse in Planificare.'));return page;}
   if(!S.bomIdx||!S.bowIdx){page.appendChild(mkEmpty('Programare Workcenter','Incarcati fisierele BOM si BOW.'));return page;}
 
+  if(ps._igLoaded!==true){
+    try{const v=localStorage.getItem('pps_pwc_ignorestock');if(v!=null)ps.ignoreStock=(v==='1');}catch{}
+    ps._igLoaded=true;
+  }
   const groups=getWcGroups();
   if(!ps.selectedGroup&&groups.length>0)ps.selectedGroup=groups[0].wcGroup;
   if(!ps.scheduledByGroup)ps.scheduledByGroup={};
@@ -18847,6 +18860,25 @@ function renderPwcTab(){
   const effInp=el('input','plan-eff-inp');effInp.type='number';effInp.min='1';effInp.max='100';effInp.step='1';effInp.value=String(ps.eff||100);effInp.style.width='60px';
   effInp.addEventListener('input',e=>{ps.eff=Math.min(100,Math.max(1,parseInt(e.target.value)||100));rebuild();});
   tb.appendChild(effInp);tb.appendChild(sp('','%'));
+  // Planifica fara stocuri
+  {
+    const lab=el('label');
+    lab.style.cssText='display:inline-flex;align-items:center;gap:6px;height:25px;padding:0 10px;border-radius:3px;cursor:pointer;'+
+      'font-size:11px;font-weight:700;white-space:nowrap;border:1px solid '+(ps.ignoreStock?'#b45309':'var(--border)')+';'+
+      'background:'+(ps.ignoreStock?'#fffbeb':'#fff')+';color:'+(ps.ignoreStock?'#92400e':'var(--text2)');
+    lab.title='Ignora stocurile existente si WIP-ul: afiseaza TOT ce trebuie sa treaca prin workcenter pentru a realiza planul, pornind de la zero (inclusiv produsele finite).';
+    const cb=el('input');cb.type='checkbox';cb.checked=!!ps.ignoreStock;
+    cb.style.cssText='width:14px;height:14px;cursor:pointer;margin:0';
+    cb.addEventListener('change',()=>{
+      ps.ignoreStock=cb.checked;
+      try{localStorage.setItem('pps_pwc_ignorestock',ps.ignoreStock?'1':'0');}catch{}
+      render();
+    });
+    lab.appendChild(cb);
+    lab.appendChild(document.createTextNode('📦 Planifica fara stocuri'));
+    tb.appendChild(lab);
+  }
+
   const printBtn=el('button','tbtn');printBtn.textContent='🖨 Printeaza';
   printBtn.addEventListener('click',()=>window.print());
   tb.appendChild(printBtn);
@@ -18859,6 +18891,14 @@ function renderPwcTab(){
   tb.appendChild(mkZoomCtrl('pwc'));
   page.appendChild(tb);
 
+  if(ps.ignoreStock){
+    const warn=dv('');
+    warn.style.cssText='margin:8px 14px 0;padding:7px 12px;background:#fffbeb;border:1.5px solid #fcd34d;border-radius:7px;'+
+      'font-size:11.5px;color:#92400e;font-weight:600';
+    warn.innerHTML='\u{1F4E6} <b>Planificare f\u0103r\u0103 stocuri</b> \u2014 stocurile existente \u0219i WIP-ul sunt considerate 0. '+
+      'Lista arat\u0103 <b>tot</b> ce trebuie executat pentru plan, pornind de la zero (inclusiv produsele finite).';
+    page.appendChild(warn);
+  }
   const body=dv('pwc-body');
   page.appendChild(body);
 
