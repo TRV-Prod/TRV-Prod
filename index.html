@@ -18834,6 +18834,66 @@ function getWcGroups(){
   return [...groups.values()].sort((a,b)=>a.wcGroup.localeCompare(b.wcGroup));
 }
 
+function openPwcColPicker(ALL,LABELS,LOCKED,ps,onChange){
+  document.getElementById('pwc-col-ov')?.remove();
+  const ov=dv('');ov.id='pwc-col-ov';
+  ov.style.cssText='position:fixed;inset:0;background:rgba(0,0,0,.45);z-index:9500;display:flex;align-items:center;justify-content:center;padding:16px';
+  const md=dv('');md.style.cssText='background:#fff;border-radius:11px;width:min(430px,95vw);max-height:84vh;display:flex;flex-direction:column;overflow:hidden';
+  const h=dv('');h.style.cssText='padding:13px 17px;border-bottom:2px solid var(--border);display:flex;align-items:center;gap:10px';
+  h.innerHTML='<b style="font-size:14.5px;color:#1e3a5f">⚙ Coloane</b><span style="font-size:10.5px;color:#94a3b8">bifate = vizibile</span>';
+  const cl=el('button');cl.textContent='✕';
+  cl.style.cssText='margin-left:auto;border:none;background:#f1f5f9;border-radius:6px;width:28px;height:28px;cursor:pointer';
+  cl.addEventListener('click',()=>ov.remove());h.appendChild(cl);md.appendChild(h);
+
+  const list=dv('');list.style.cssText='flex:1;overflow:auto;padding:9px 17px 13px';
+  function draw(){
+    list.innerHTML='';
+    ps.colOrder.forEach(c=>{
+      if(LOCKED.has(c))return;
+      const row=dv('');
+      row.style.cssText='display:flex;align-items:center;gap:9px;padding:6px 2px;border-bottom:1px solid #f8fafc;font-size:12.5px';
+      const cb=el('input');cb.type='checkbox';cb.checked=!ps.hiddenCols.includes(c);
+      cb.style.cssText='width:15px;height:15px;cursor:pointer';
+      cb.addEventListener('change',()=>{
+        if(cb.checked)ps.hiddenCols=ps.hiddenCols.filter(x=>x!==c);
+        else if(!ps.hiddenCols.includes(c))ps.hiddenCols.push(c);
+        onChange();
+      });
+      row.appendChild(cb);
+      const nm=sp('',LABELS[c]||c);nm.style.cssText='flex:1;font-weight:600;color:#334155';row.appendChild(nm);
+      [['▲',-1],['▼',1]].forEach(([t,d])=>{
+        const b=el('button');b.textContent=t;
+        b.style.cssText='width:24px;height:24px;border:1px solid var(--border);background:#fff;border-radius:5px;cursor:pointer;font-size:9px;color:#475569';
+        b.addEventListener('click',()=>{
+          const cur=ps.colOrder.slice();
+          const pos=cur.indexOf(c),np=pos+d;
+          if(np<0||np>=cur.length)return;
+          if(LOCKED.has(cur[np]))return;
+          cur.splice(pos,1);cur.splice(np,0,c);
+          ps.colOrder=cur;onChange();draw();
+        });
+        row.appendChild(b);
+      });
+      list.appendChild(row);
+    });
+  }
+  draw();
+  md.appendChild(list);
+  const ft=dv('');ft.style.cssText='padding:10px 17px;border-top:1px solid var(--border);display:flex;gap:8px;justify-content:space-between';
+  const rst=el('button');rst.textContent='↺ Reseteaza';
+  rst.style.cssText='padding:7px 14px;border:1px solid var(--border);border-radius:6px;background:#fff;font-weight:700;font-size:12px;cursor:pointer';
+  rst.addEventListener('click',()=>{
+    ps.colOrder=[...ALL];ps.hiddenCols=[];ps.sortCol=null;ps.sortDir='asc';
+    onChange();draw();
+  });
+  const ok=el('button');ok.textContent='Gata';
+  ok.style.cssText='padding:7px 20px;border:none;border-radius:6px;background:#1d4ed8;color:#fff;font-weight:800;font-size:12px;cursor:pointer';
+  ok.addEventListener('click',()=>ov.remove());
+  ft.appendChild(rst);ft.appendChild(ok);md.appendChild(ft);
+  ov.appendChild(md);ov.addEventListener('click',e=>{if(e.target===ov)ov.remove();});
+  document.body.appendChild(ov);
+}
+
 function renderPwcTab(){
   const page=dv('pwc-page');
   const ps=S.pwcState;
@@ -18842,6 +18902,12 @@ function renderPwcTab(){
 
   if(ps._igLoaded!==true){
     try{const v=localStorage.getItem('pps_pwc_ignorestock');if(v!=null)ps.ignoreStock=(v==='1');}catch{}
+    try{const c=JSON.parse(localStorage.getItem('pps_pwc_cols')||'null');
+      if(c){if(Array.isArray(c.order))ps.colOrder=c.order;
+            if(Array.isArray(c.hidden))ps.hiddenCols=c.hidden;
+            if(c.sortCol!==undefined)ps.sortCol=c.sortCol;
+            if(c.sortDir)ps.sortDir=c.sortDir;}
+    }catch{}
     ps._igLoaded=true;
   }
   const groups=getWcGroups();
@@ -18878,6 +18944,10 @@ function renderPwcTab(){
     lab.appendChild(document.createTextNode('📦 Planifica fara stocuri'));
     tb.appendChild(lab);
   }
+
+  const colsBtn=el('button','tbtn');colsBtn.textContent='⚙ Coloane';
+  colsBtn.title='Alege ce coloane se afiseaza si in ce ordine';
+  tb.appendChild(colsBtn);
 
   const printBtn=el('button','tbtn');printBtn.textContent='🖨 Printeaza';
   printBtn.addEventListener('click',()=>window.print());
@@ -19063,114 +19133,225 @@ function renderPwcTab(){
       tableWrap.style.zoom=(S.zoom.pwc/100).toString();
 
       const cf=ps.colFilters||{};
-      const COLS=['del','prio','matNo','matName','fps','totalNec','onHand','wipGrp','dePrelucrat','execTime','obs'];
-      const COL_LABELS={del:'',prio:'Prio',matNo:'Componenta',matName:'Denumire',fps:'Prod. Finale',totalNec:'Cant. nec.',onHand:'On Hand',wipGrp:'WIP Grup',dePrelucrat:'De executat',execTime:'Timp exec.',obs:'Observatii'};
+
+      /* ── Definitia coloanelor: ordine, vizibilitate, sortare ── */
+      const PWC_ALL=['del','prio','matNo','matName','fps','totalNec','onHand','wipGrp','dePrelucrat','execTime','obs'];
+      const COL_LABELS={del:'',prio:'Prio',matNo:'Componenta',matName:'Denumire',fps:'Prod. Finale',
+        totalNec:'Cant. nec.',onHand:'On Hand',wipGrp:'WIP Grup',dePrelucrat:'De executat',
+        execTime:'Timp exec.',obs:'Observatii'};
       const FILTERABLE=new Set(['prio','matNo','matName','fps']);
+      const NOSORT=new Set(['del','obs']);
+      const LOCKED=new Set(['del']);   // coloana de stergere nu se ascunde / nu se muta
+
+      // ordinea si coloanele ascunse (persistate local)
+      if(!Array.isArray(ps.colOrder)||!ps.colOrder.length)ps.colOrder=[...PWC_ALL];
+      ps.colOrder=ps.colOrder.filter(c=>PWC_ALL.includes(c));
+      PWC_ALL.forEach(c=>{if(!ps.colOrder.includes(c))ps.colOrder.push(c);});
+      if(!Array.isArray(ps.hiddenCols))ps.hiddenCols=[];
+      const isHidden=c=>!LOCKED.has(c)&&ps.hiddenCols.includes(c);
+      const VIS=()=>ps.colOrder.filter(c=>!isHidden(c));
+      const savePwcCols=()=>{try{localStorage.setItem('pps_pwc_cols',
+        JSON.stringify({order:ps.colOrder,hidden:ps.hiddenCols,sortCol:ps.sortCol,sortDir:ps.sortDir}));}catch{}};
+
+      // valoarea dupa care se sorteaza fiecare coloana
+      const sortVal=(r,col)=>{
+        switch(col){
+          case 'prio':{const n=parseFloat(String(r.prio).replace(',','.'));return isNaN(n)?Number.MAX_SAFE_INTEGER:n;}
+          case 'matNo':return String(r.matNo||'').toLowerCase();
+          case 'matName':return String(r.matName||'').toLowerCase();
+          case 'fps':return String((r.fps||[]).join(' ')).toLowerCase();
+          case 'totalNec':return r.totalNec||0;
+          case 'onHand':return r.onHand||0;
+          case 'wipGrp':return getWipForGroup(r.matNo)||0;
+          case 'dePrelucrat':return r.dePrelucrat||0;
+          case 'execTime':return r.execTimeMin||0;
+          default:return 0;
+        }
+      };
 
       // Filter function
       const matches=(r)=>{
         for(const col of FILTERABLE){
           const fv=(cf[col]||'').toLowerCase();if(!fv)continue;
-          const key2=`${r.matNo}||${r.wcName}`;
           const val=col==='prio'?r.prio:col==='matNo'?r.matNo:col==='matName'?r.matName:col==='fps'?r.fps.join(' '):'';
-          if(!val.toLowerCase().includes(fv))return false;
+          if(!String(val).toLowerCase().includes(fv))return false;
         }
         return true;
       };
 
       const tbl=el('table','pwc-plan-table');tbl.style.width='100%';
       const thead=el('thead');
-      const hr=el('tr');
-      ['','Prio','Componenta','Denumire','Prod. Finale','Cant. nec.','On Hand','WIP Grup','De executat','Timp exec.','Observatii'].forEach(h=>{
-        const th=el('th');th.textContent=h;hr.appendChild(th);
-      });
-      thead.appendChild(hr);
-
-      // Filter row
-      const fr=el('tr');fr.style.cssText='background:#fff';
-      COLS.forEach(col=>{
-        const th=el('th');th.style.cssText='padding:2px 4px;background:#fff;border-bottom:1px solid var(--border)';
-        if(FILTERABLE.has(col)){
-          const inp=el('input');inp.type='text';inp.placeholder='...';inp.value=cf[col]||'';
-          inp.style.cssText='width:100%;height:22px;border:1px solid var(--border);border-radius:2px;padding:0 4px;font-size:10px;outline:none';
-          inp.setAttribute('data-pwc-filter',col);
-          inp.addEventListener('input',e=>{
-            cf[e.target.getAttribute('data-pwc-filter')]=e.target.value;
-            ps.colFilters=cf;
-            const ss=e.target.selectionStart,se2=e.target.selectionEnd;
-            buildPlanTable();
-            const r2=tableWrap.querySelector(`input[data-pwc-filter="${col}"]`);
-            if(r2){r2.focus();try{r2.setSelectionRange(ss,se2);}catch(_){}}
-          });
-          th.appendChild(inp);
-        }
-        fr.appendChild(th);
-      });
-      thead.appendChild(fr);
       tbl.appendChild(thead);
       const tbody=el('tbody');tbl.appendChild(tbody);tableWrap.appendChild(tbl);
       dropZone.appendChild(tableWrap);
 
+      /* ── Antet: sortare la click, reordonare prin tragere, ascundere ── */
+      function buildPwcHead(){
+        thead.innerHTML='';
+        const hr=el('tr');
+        VIS().forEach(col=>{
+          const th=el('th');
+          th.dataset.pwcCol=col;
+          th.style.position='relative';
+          if(col==='del'){hr.appendChild(th);return;}
+          const wrapH=dv('');wrapH.style.cssText='display:flex;align-items:center;gap:4px;cursor:pointer;user-select:none';
+          const grip=sp('','⠿');
+          grip.style.cssText='color:#94a3b8;font-size:11px;cursor:grab;letter-spacing:-1px;flex-shrink:0';
+          grip.title='Trageți pentru a muta coloana';
+          wrapH.appendChild(grip);
+          const lbl=sp('',COL_LABELS[col]||col);wrapH.appendChild(lbl);
+          if(!NOSORT.has(col)){
+            const ar=sp('',ps.sortCol===col?(ps.sortDir==='desc'?'▼':'▲'):'');
+            ar.style.cssText='font-size:9px;color:#1d4ed8;font-weight:900';
+            wrapH.appendChild(ar);
+            wrapH.title='Click pentru sortare';
+            wrapH.addEventListener('click',e=>{
+              if(e.target===grip)return;
+              if(ps.sortCol===col)ps.sortDir=(ps.sortDir==='asc')?'desc':'asc';
+              else{ps.sortCol=col;ps.sortDir='asc';}
+              savePwcCols();buildPwcHead();buildPlanTable();
+            });
+          }
+          // reordonare prin tragere (pointer events — merge si pe tableta)
+          grip.addEventListener('pointerdown',ev=>{
+            ev.preventDefault();ev.stopPropagation();
+            let lastTh=null,lastAfter=false,moved=false;
+            const clearMk=()=>{if(lastTh){lastTh.style.borderLeft='';lastTh.style.borderRight='';}};
+            const onMove=e=>{
+              if(!moved){moved=true;th.style.opacity='.45';document.body.style.cursor='grabbing';}
+              const at=document.elementFromPoint(e.clientX,e.clientY);
+              const tgt=at&&at.closest?at.closest('th[data-pwc-col]'):null;
+              if(!tgt||tgt===th||tgt.dataset.pwcCol==='del'){clearMk();lastTh=null;return;}
+              const rc=tgt.getBoundingClientRect();
+              const after=(e.clientX-rc.left)>rc.width/2;
+              if(tgt!==lastTh||after!==lastAfter){
+                clearMk();
+                tgt.style[after?'borderRight':'borderLeft']='3px solid #1d4ed8';
+                lastTh=tgt;lastAfter=after;
+              }
+            };
+            const onUp=()=>{
+              document.removeEventListener('pointermove',onMove);
+              document.removeEventListener('pointerup',onUp);
+              document.body.style.cursor='';th.style.opacity='';
+              const tgt=lastTh,after=lastAfter;clearMk();
+              if(moved&&tgt){
+                const to=tgt.dataset.pwcCol;
+                const cur=ps.colOrder.slice();
+                const fi=cur.indexOf(col);
+                if(fi>=0){
+                  cur.splice(fi,1);
+                  let ti=cur.indexOf(to);
+                  if(ti>=0){cur.splice(after?ti+1:ti,0,col);ps.colOrder=cur;savePwcCols();}
+                }
+                buildPwcHead();buildPlanTable();
+              }
+            };
+            document.addEventListener('pointermove',onMove);
+            document.addEventListener('pointerup',onUp);
+          });
+          th.appendChild(wrapH);
+          hr.appendChild(th);
+        });
+        thead.appendChild(hr);
+
+        // Filter row
+        const fr=el('tr');fr.style.cssText='background:#fff';
+        VIS().forEach(col=>{
+          const th=el('th');th.style.cssText='padding:2px 4px;background:#fff;border-bottom:1px solid var(--border)';
+          if(FILTERABLE.has(col)){
+            const inp=el('input');inp.type='text';inp.placeholder='...';inp.value=cf[col]||'';
+            inp.style.cssText='width:100%;height:22px;border:1px solid var(--border);border-radius:2px;padding:0 4px;font-size:10px;outline:none';
+            inp.setAttribute('data-pwc-filter',col);
+            inp.addEventListener('input',e=>{
+              cf[e.target.getAttribute('data-pwc-filter')]=e.target.value;
+              ps.colFilters=cf;
+              const ss=e.target.selectionStart,se2=e.target.selectionEnd;
+              buildPlanTable();
+              const r2=tableWrap.querySelector(`input[data-pwc-filter="${col}"]`);
+              if(r2){r2.focus();try{r2.setSelectionRange(ss,se2);}catch(_){}}
+            });
+            th.appendChild(inp);
+          }
+          fr.appendChild(th);
+        });
+        thead.appendChild(fr);
+      }
+
+      /* ── Fabrica de celule, per coloana ── */
+      const CELL={
+        del:(r,key)=>{const td=el('td');td.style.width='28px';
+          const b=el('button','pwc-remove-row');b.title='Scoate din plan';b.textContent='🗑';
+          b.style.cssText='font-size:13px;background:none;border:none;cursor:pointer;color:#dc2626;padding:0 2px';
+          b.addEventListener('click',()=>{ps.scheduledByGroup[grp]=ps.scheduledByGroup[grp].filter(k=>k!==key);delete ps.notes[key];savePlan();rebuild();});
+          td.appendChild(b);return td;},
+        prio:(r)=>{const td=el('td');const s=sp('');
+          s.style.cssText='font-weight:800;font-family:Arial,monospace;color:#92400e';s.textContent=r.prio;
+          td.appendChild(s);return td;},
+        matNo:(r)=>{const td=el('td');td.appendChild(sp('stk-code',r.matNo));return td;},
+        matName:(r)=>{const td=el('td');td.style.cssText='max-width:200px;overflow:hidden;text-overflow:ellipsis';
+          td.textContent=r.matName;return td;},
+        fps:(r)=>{const td=el('td');const w=dv('');w.style.cssText='display:flex;flex-wrap:wrap;gap:2px';
+          r.fps.slice(0,3).forEach(fp=>{const pill=sp('stk-fp-pill',fp);
+            pill.title='Dublu click pentru structura produsului';pill.style.cursor='zoom-in';
+            pill.addEventListener('dblclick',()=>showFpStructurePopup(fp));w.appendChild(pill);});
+          if(r.fps.length>3)w.appendChild(sp('stk-fp-more',`+${r.fps.length-3}`));
+          td.appendChild(w);return td;},
+        totalNec:(r)=>_pwcNum(r.totalNec),
+        onHand:(r)=>_pwcNum(r.onHand,r.onHand<0?'#dc2626':r.onHand>0?'#15803d':'var(--text3)'),
+        wipGrp:(r)=>{const v=getWipForGroup(r.matNo);return _pwcNum(v,v>0?'#d97706':'var(--text3)');},
+        dePrelucrat:(r)=>_pwcNum(r.dePrelucrat,r.dePrelucrat>0?'#dc2626':'#15803d'),
+        execTime:(r)=>{const td=el('td');const s=sp('pdm-num',fmtMin(r.execTimeMin));
+          s.style.cssText='font-weight:700;color:#7c3aed;display:block;text-align:right';td.appendChild(s);return td;},
+        obs:(r,key)=>{const td=el('td');td.style.cssText='min-width:150px;padding:2px 4px';
+          const inp=el('input');inp.type='text';inp.placeholder='Observatii...';inp.value=ps.notes[key]||'';
+          inp.style.cssText='width:100%;height:26px;border:1px solid var(--border);border-radius:3px;padding:0 6px;font-size:11px;outline:none;background:#fffbeb';
+          let t=null;
+          inp.addEventListener('input',e=>{ps.notes[key]=e.target.value;clearTimeout(t);t=setTimeout(()=>savePlan(),600);});
+          td.appendChild(inp);return td;},
+      };
+      function _pwcNum(v,col){
+        const td=el('td');const s=sp('pdm-num',fmtN(v));
+        if(col)s.style.color=col;
+        s.style.cssText=(s.style.cssText||'')+'display:block;text-align:right';
+        td.appendChild(s);return td;
+      }
+
       function buildPlanTable(){
         tbody.innerHTML='';
-      // Sort scheduled by prio
-      const schedSorted=[...schedKeys].sort((a,b)=>{
-        const ra=grpData.find(r=>`${r.matNo}||${r.wcName}`===a);
-        const rb=grpData.find(r=>`${r.matNo}||${r.wcName}`===b);
-        const pa=ra?.prio||'',pb=rb?.prio||'';
-        if(!pa&&!pb)return 0;if(!pa)return 1;if(!pb)return -1;
-        const na=parseFloat(pa),nb=parseFloat(pb);
-        if(!isNaN(na)&&!isNaN(nb))return na-nb;
-        return pa.localeCompare(pb);
-      });
-      schedSorted.forEach((key,idx2)=>{
-        const r=grpData.find(r=>`${r.matNo}||${r.wcName}`===key);if(!r||!matches(r))return;
-        // Single aggregated row per component (quantities already summed across all FPs)
-        const tr=el('tr');
-        const tdR=el('td');tdR.style.width='28px';
-        const removeBtn=el('button','pwc-remove-row');removeBtn.title='Scoate din plan';
-        removeBtn.textContent='🗑';removeBtn.style.cssText='font-size:13px;background:none;border:none;cursor:pointer;color:#dc2626;padding:0 2px';
-        removeBtn.addEventListener('click',()=>{ps.scheduledByGroup[grp]=ps.scheduledByGroup[grp].filter(k=>k!==key);delete ps.notes[key];savePlan();rebuild();});
-        tdR.appendChild(removeBtn);tr.appendChild(tdR);
-        const tdPrio=el('td');const pS=sp('');pS.style.cssText='font-weight:800;font-family:Arial,monospace;color:#92400e';pS.textContent=r.prio;tdPrio.appendChild(pS);tr.appendChild(tdPrio);
-        const tdMat=el('td');tdMat.appendChild(sp('stk-code',r.matNo));tr.appendChild(tdMat);
-        const tdNm=el('td');tdNm.style.cssText='max-width:200px;overflow:hidden;text-overflow:ellipsis';tdNm.textContent=r.matName;tr.appendChild(tdNm);
-        // FPs as pills with dblclick for structure popup
-        const tdFP=el('td');const fpW=dv('');fpW.style.cssText='display:flex;flex-wrap:wrap;gap:2px';
-        r.fps.slice(0,3).forEach(fp=>{
-          const pill=sp('stk-fp-pill',fp);
-          pill.title='Dublu click pentru structura produsului';
-          pill.style.cursor='zoom-in';
-          pill.addEventListener('dblclick',()=>showFpStructurePopup(fp));
-          fpW.appendChild(pill);
+        const cols=VIS();
+        // sortare: coloana aleasa de utilizator, altfel dupa prioritate
+        const rowsArr=schedKeys
+          .map(key=>({key,r:grpData.find(x=>`${x.matNo}||${x.wcName}`===key)}))
+          .filter(o=>o.r&&matches(o.r));
+        if(ps.sortCol&&!NOSORT.has(ps.sortCol)){
+          const dir=ps.sortDir==='desc'?-1:1;
+          rowsArr.sort((a,b)=>{
+            const va=sortVal(a.r,ps.sortCol),vb=sortVal(b.r,ps.sortCol);
+            if(typeof va==='string'||typeof vb==='string')
+              return String(va).localeCompare(String(vb),'ro')*dir;
+            return (va-vb)*dir;
+          });
+        } else {
+          rowsArr.sort((a,b)=>{
+            const pa=a.r.prio||'',pb=b.r.prio||'';
+            if(!pa&&!pb)return 0;if(!pa)return 1;if(!pb)return -1;
+            const na=parseFloat(pa),nb=parseFloat(pb);
+            if(!isNaN(na)&&!isNaN(nb))return na-nb;
+            return pa.localeCompare(pb);
+          });
+        }
+        rowsArr.forEach(({key,r})=>{
+          const tr=el('tr');
+          cols.forEach(c=>{const f=CELL[c];if(f)tr.appendChild(f(r,key));});
+          tbody.appendChild(tr);
         });
-        if(r.fps.length>3)fpW.appendChild(sp('stk-fp-more',`+${r.fps.length-3}`));
-        tdFP.appendChild(fpW);tr.appendChild(tdFP);
-        const num=(v,col)=>{const td2=el('td');const s=sp('pdm-num',fmtN(v));if(col)s.style.color=col;s.style.cssText=(s.style.cssText||'')+'display:block;text-align:right';td2.appendChild(s);return td2;};
-        tr.appendChild(num(r.totalNec));
-        tr.appendChild(num(r.onHand,r.onHand<0?'#dc2626':r.onHand>0?'#15803d':'var(--text3)'));
-        const wipGrp=getWipForGroup(r.matNo);
-        tr.appendChild(num(wipGrp,wipGrp>0?'#d97706':'var(--text3)'));
-        tr.appendChild(num(r.dePrelucrat,r.dePrelucrat>0?'#dc2626':'#15803d'));
-        const tdT=el('td');const tS=sp('pdm-num',fmtMin(r.execTimeMin));tS.style.cssText='font-weight:700;color:#7c3aed;display:block;text-align:right';tdT.appendChild(tS);tr.appendChild(tdT);
-        // Notes column
-        const tdObs=el('td');tdObs.style.cssText='min-width:150px;padding:2px 4px';
-        const obsInp=el('input');obsInp.type='text';
-        obsInp.placeholder='Observatii...';
-        obsInp.value=ps.notes[key]||'';
-        obsInp.style.cssText='width:100%;height:26px;border:1px solid var(--border);border-radius:3px;padding:0 6px;font-size:11px;outline:none;background:#fffbeb';
-        let obsT=null;
-        obsInp.addEventListener('input',e=>{
-          ps.notes[key]=e.target.value;
-          clearTimeout(obsT);obsT=setTimeout(()=>savePlan(),600);
-        });
-        tdObs.appendChild(obsInp);tr.appendChild(tdObs);
-        tbody.appendChild(tr);
-      });
       } // end buildPlanTable
+
+      // buton pentru alegerea coloanelor
+      colsBtn.onclick=()=>openPwcColPicker(PWC_ALL,COL_LABELS,LOCKED,ps,()=>{savePwcCols();buildPwcHead();buildPlanTable();});
+      buildPwcHead();
       buildPlanTable();
-      tbl.appendChild(tbody);tableWrap.appendChild(tbl);
-      dropZone.appendChild(tableWrap);
     }
     planPanel.appendChild(dropZone);
     body.appendChild(planPanel);
