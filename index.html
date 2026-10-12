@@ -1353,6 +1353,7 @@ const S={
   planFilter:{
     colFilters:{},
     realizarePct:'all',
+    sortCol:null, sortDir:'asc',
     colOrder:['prio','itemNo','_dwg','itemName','customer','qty','valoare','realizare','_subco','obs','_del'],
     colWidths:{prio:60,itemNo:140,_dwg:120,itemName:200,customer:200,qty:110,valoare:120,realizare:140,_subco:150,obs:200,_del:80},
     visibleCols:new Set(['prio','itemNo','_dwg','itemName','customer','qty','valoare','realizare','_subco','obs','_del']),
@@ -8225,11 +8226,77 @@ function calcPlanPct(itemNo, planQ){
   return Math.round(pct*100)/100;  // 2 decimal precision
 }
 
+/* ── Sortare Planificare: numeric unde valorile sunt numere,
+      alfabetic (cu diacritice ro) in rest; celulele goale raman mereu la final. ── */
+function _planNumOrNull(v){
+  if(v==null)return null;
+  if(typeof v==='number')return isFinite(v)?v:null;
+  const t=String(v).trim().replace(',','.');
+  if(!t)return null;
+  return /^-?\d+(\.\d+)?$/.test(t)?parseFloat(t):null;
+}
+function _planSmartCmp(a,b){
+  const ea=(a==null||a==='' ), eb=(b==null||b==='');
+  if(ea&&eb)return 0;
+  if(ea)return 1;      // gol = mereu ultimul
+  if(eb)return -1;
+  const na=_planNumOrNull(a), nb=_planNumOrNull(b);
+  if(na!=null&&nb!=null)return na-nb;      // ambele numerice
+  if(na!=null)return -1;                   // numerele inaintea textului
+  if(nb!=null)return 1;
+  return String(a).localeCompare(String(b),'ro',{numeric:true,sensitivity:'base'});
+}
+/* Textul subcontractorilor unui produs final (folosit la sortare si filtrare) */
+function _planSubcoText(itemNo){
+  const subs=new Set();
+  if(S.bowIdx){
+    for(const [k,rowsB] of S.bowIdx){
+      if(!k.startsWith(itemNo+'__'))continue;
+      for(const bo of rowsB){
+        const on=str(bo['Ope name']||bo['Ope descr']||'').toLowerCase();
+        if(on==='subcontracting'||on.includes('subco')){
+          const sup=str(bo['Supplier']||'').trim();
+          const t1=str(bo['Text_line1']||'').trim();
+          if(sup)subs.add(sup);else if(t1)subs.add(t1);
+        }
+      }
+    }
+  }
+  return [...subs].sort().join(', ');
+}
+/* Valoarea dupa care se sorteaza fiecare coloana */
+function _planSortVal(colId,itemNo,plan){
+  const first=plan.entries[0]||{};
+  switch(colId){
+    case 'prio':     return S.planPrio[itemNo]||'';
+    case 'itemNo':   return itemNo;
+    case '_dwg':     return (typeof getDrawingNoFor==='function'?(getDrawingNoFor(itemNo)||''):'');
+    case 'itemName': return first.itemName||'';
+    case 'customer': return [...new Set(plan.entries.map(e=>e.customer).filter(Boolean))].join(', ');
+    case 'qty':      return plan.totalQty||0;
+    case 'valoare':  return getSalesPrice(itemNo,first)*(plan.totalQty||0);
+    case 'realizare':return calcPlanPct(itemNo,plan.totalQty);
+    case '_subco':   return _planSubcoText(itemNo);
+    case 'obs':      return S.planObs[itemNo]||'';
+    default:         return '';
+  }
+}
+
 function getPlanRows(){
   const pf=S.planFilter.colFilters;
   const rpf=S.planFilter.realizarePct||'all';
-  return [...S.planData.entries()]
-    .sort((a,b)=>a[0].localeCompare(b[0]))
+  const _sc=S.planFilter.sortCol, _sd=(S.planFilter.sortDir==='desc')?-1:1;
+  const _applySort=(arr)=>{
+    if(!_sc)return arr.sort((a,b)=>a[0].localeCompare(b[0]));
+    return arr.sort((a,b)=>{
+      const va=_planSortVal(_sc,a[0],a[1]), vb=_planSortVal(_sc,b[0],b[1]);
+      const ea=(va==null||va===''), eb=(vb==null||vb==='');
+      if(ea||eb)return _planSmartCmp(va,vb);     // golurile raman ultimele in ambele sensuri
+      const c=_planSmartCmp(va,vb);
+      return c!==0?c*_sd:a[0].localeCompare(b[0]);
+    });
+  };
+  return _applySort([...S.planData.entries()])
     .filter(([itemNo,plan])=>{
       const first=plan.entries[0]||{};
       const customer=[...new Set(plan.entries.map(e=>e.customer).filter(Boolean))].join(', ');
@@ -8630,6 +8697,12 @@ function _planSyncTableW(tbl,visCols){
 }
 
 function renderPlanPage(wrap){
+  if(!S.planFilter._sortLoaded){
+    S.planFilter._sortLoaded=true;
+    try{const v=JSON.parse(localStorage.getItem('pps_plan_sort')||'null');
+      if(v&&typeof v==='object'){S.planFilter.sortCol=v.c||null;S.planFilter.sortDir=v.d==='desc'?'desc':'asc';}
+    }catch{}
+  }
   wrap.innerHTML='';
   if(!S._planObsLoaded){S._planObsLoaded=true;loadPlanCompObs();}
   // Migration: add _subco column
@@ -8701,7 +8774,28 @@ function renderPlanPage(wrap){
     const w=(pf2.colWidths[colId]??120);
     const th=el('th');th.style.width=w+'px';th.setAttribute('data-col',colId);
     const inner=dv('plan-th-inner');
-    inner.appendChild(sp('plan-th-lbl',COL_LABELS[colId]||colId));
+    const lblSp=sp('plan-th-lbl',COL_LABELS[colId]||colId);
+    inner.appendChild(lblSp);
+    if(colId!=='_del'){
+      const isSorted=pf2.sortCol===colId;
+      const ar=sp('');
+      ar.textContent=isSorted?(pf2.sortDir==='desc'?' ▼':' ▲'):'';
+      ar.style.cssText='font-size:9px;color:#1d4ed8;font-weight:900;flex-shrink:0';
+      inner.appendChild(ar);
+      lblSp.style.cursor='pointer';
+      lblSp.title='Click pentru sortare (numeric sau alfabetic, după conținut)';
+      lblSp.addEventListener('click',e=>{
+        e.stopPropagation();e.preventDefault();
+        if(pf2.sortCol===colId){
+          if(pf2.sortDir==='asc')pf2.sortDir='desc';
+          else {pf2.sortCol=null;pf2.sortDir='asc';}   // al 3-lea click = fara sortare
+        } else {pf2.sortCol=colId;pf2.sortDir='asc';}
+        try{localStorage.setItem('pps_plan_sort',JSON.stringify({c:pf2.sortCol,d:pf2.sortDir}));}catch{}
+        renderPlanPage(wrap);
+      });
+      // nu porni drag-ul cand se face click pe eticheta
+      lblSp.addEventListener('mousedown',e=>e.stopPropagation());
+    }
     // Resize handle
     const rh=el('div','plan-col-rh');
     rh.addEventListener('mousedown',e=>{
