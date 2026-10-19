@@ -1706,6 +1706,18 @@ function applyLivrariFile(rows,ts){
   console.log('[Livrari] rows:',clean.length,'· subtotale ignorate:',(rows||[]).length-clean.length);
 }
 
+/* ═══════════════════════════════════════════════════════════════
+   LOCATII EXCLUSE DIN STOCUL DISPONIBIL
+   Stocul aflat in aceste locatii (ex: carantina QC) ramane vizibil
+   in directorul Stocuri, dar NU este luat in calcul la planificare,
+   necesare, programare pe workcentere etc.
+═══════════════════════════════════════════════════════════════ */
+const STOCK_EXCLUDED_LOCS=['QC1111'];
+function isExcludedStockLoc(loc){
+  const l=String(loc||'').trim().toUpperCase();
+  return STOCK_EXCLUDED_LOCS.some(x=>x.toUpperCase()===l);
+}
+
 function applyStocklist(rows,ts){
   S.stocklistData=rows;
   // Aggregate by ITEM NR (an item can exist in multiple locations)
@@ -1722,20 +1734,26 @@ function applyStocklist(rows,ts){
         name:str(r['ITEM NAME']||'').trim(),
         desc:str(r['ITEM DESCRIPTION']||'').trim(),
         um,
-        totalQty:0,
+        totalQty:0,      // tot stocul fizic, toate locatiile
+        usableQty:0,     // stocul utilizabil (fara locatiile excluse)
+        excludedQty:0,   // cat sta in locatiile excluse (ex: QC1111)
         locations:[],
       });
     }
     const e=idx.get(itemNo);
+    const excluded=isExcludedStockLoc(loc);
     e.totalQty+=qty;
-    if(loc)e.locations.push({loc,qty,um});
+    if(excluded)e.excludedQty+=qty;else e.usableQty+=qty;
+    if(loc)e.locations.push({loc,qty,um,excluded});
     if(!e.um&&um)e.um=um;
   }
   S.stocklistIdx=idx;
   S.meta.stocklist={rows:rows.length,items:idx.size,ts};
   // Merge into stockIdx: stocklist qty overrides PO on-hand
   mergeStocklistIntoStockIdx();
-  console.log('[Stocklist] items:',idx.size,'rows:',rows.length);
+  {let nEx=0,qEx=0;for(const e of idx.values()){if(e.excludedQty>0){nEx++;qEx+=e.excludedQty;}}
+   console.log('[Stocklist] items:',idx.size,'rows:',rows.length,
+     '· excluse din planificare ('+STOCK_EXCLUDED_LOCS.join(', ')+'):',nEx,'repere /',Math.round(qEx*100)/100,'buc');}
 }
 
 // Fill missing FP list and Type from BOM data
@@ -1781,8 +1799,11 @@ function mergeStocklistIntoStockIdx(){
   for(const [itemNo,sl] of S.stocklistIdx){
     const existing=S.stockIdx.get(itemNo);
     if(existing){
-      // Keep PO's WIP/FP/type info, replace on-hand with stocklist qty
-      existing.onHand=sl.totalQty;
+      // Keep PO's WIP/FP/type info, replace on-hand with stocklist qty.
+      // onHand = stoc UTILIZABIL (fara locatiile excluse, ex. QC1111)
+      existing.onHand=sl.usableQty;
+      existing.onHandTotal=sl.totalQty;
+      existing.excludedQty=sl.excludedQty;
       existing.slName=sl.name;
       existing.slDesc=sl.desc;
       existing.slUm=sl.um;
@@ -1792,7 +1813,8 @@ function mergeStocklistIntoStockIdx(){
       // Item exists only in stocklist (no PO row) — create entry
       S.stockIdx.set(itemNo,{
         itemNo,name:sl.name,desc:sl.desc,
-        onHand:sl.totalQty,onMO:0,totalWIP:0,wipByWC:{},
+        onHand:sl.usableQty,onHandTotal:sl.totalQty,excludedQty:sl.excludedQty,
+        onMO:0,totalWIP:0,wipByWC:{},
         fps:[],type:'',group:'',itemGroup:'',unit:sl.um,
         slName:sl.name,slDesc:sl.desc,slUm:sl.um,slLocations:sl.locations,
         _fromStocklist:true,
@@ -4729,8 +4751,12 @@ function _buildStkTbody(){
           const expanded=!!S.stockLocAll||!!(S.stockLocExp&&S.stockLocExp[code]);
           const shown=(expanded||locs.length<=LIMIT)?locs:locs.slice(0,LIMIT);
           shown.forEach(l=>{
-            const lp=sp('');lp.textContent=`${l.loc}: ${fmtN(l.qty)}`;
-            lp.style.cssText='display:inline-block;padding:1px 5px;border-radius:8px;font-size:9px;font-weight:600;background:#e0f2fe;color:#0369a1;border:1px solid #7dd3fc;white-space:nowrap';
+            const exL=l.excluded||isExcludedStockLoc(l.loc);
+            const lp=sp('');lp.textContent=`${exL?'⊘ ':''}${l.loc}: ${fmtN(l.qty)}`;
+            lp.style.cssText='display:inline-block;padding:1px 5px;border-radius:8px;font-size:9px;font-weight:600;white-space:nowrap;'+
+              (exL?'background:#fef3c7;color:#92400e;border:1px solid #fcd34d'
+                 :'background:#e0f2fe;color:#0369a1;border:1px solid #7dd3fc');
+            if(exL)lp.title='Locatie exclusa din planificare — stocul de aici nu este considerat disponibil';
             lw.appendChild(lp);
           });
           if(locs.length>LIMIT){
@@ -4748,7 +4774,10 @@ function _buildStkTbody(){
             lw.appendChild(more);
           }
           if(locs.length>1){
-            const tot=sp('');tot.textContent=`Σ ${fmtN(locs.reduce((s,l)=>s+(l.qty||0),0))} · ${locs.length} loc.`;
+            const _sumAll=locs.reduce((s,l)=>s+(l.qty||0),0);
+            const _sumEx=locs.reduce((s,l)=>s+(((l.excluded||isExcludedStockLoc(l.loc))?(l.qty||0):0)),0);
+            const tot=sp('');
+            tot.textContent=`Σ ${fmtN(_sumAll)} · ${locs.length} loc.`+(_sumEx>0?` (disponibil ${fmtN(_sumAll-_sumEx)})`:'');
             tot.style.cssText='display:block;width:100%;font-size:9px;color:#94a3b8;margin-top:2px;font-weight:600';
             lw.appendChild(tot);
           }
@@ -4760,6 +4789,12 @@ function _buildStkTbody(){
       } else if(colId==='oh'){
         const s2=sp(`stk-num${st.onHand>0?' pos':st.onHand<0?' neg':' zero'}`,fmtN(st.onHand));
         s2.style.cssText='display:block;text-align:right';td.appendChild(s2);
+        if(st.excludedQty>0){
+          const ex=sp('',`+${fmtN(st.excludedQty)} ${STOCK_EXCLUDED_LOCS.join('/')}`);
+          ex.title=`${fmtN(st.excludedQty)} buc in ${STOCK_EXCLUDED_LOCS.join(', ')} — NU se iau in calcul la planificare.\nTotal fizic: ${fmtN(st.onHandTotal!=null?st.onHandTotal:st.onHand)}`;
+          ex.style.cssText='display:block;text-align:right;font-size:9px;font-weight:700;color:#92400e;cursor:help';
+          td.appendChild(ex);
+        }
       } else if(colId==='mo'){
         const s2=sp(`stk-num${st.onMO>0?' pos':st.onMO<0?' neg':' zero'}`,fmtN(st.onMO));
         s2.style.cssText='display:block;text-align:right';td.appendChild(s2);
@@ -15209,7 +15244,10 @@ document.addEventListener('contextmenu', ev=>{
 
   // Get column label from th
   const th=table.querySelector(`th[data-col="${colKey}"]`);
-  const colLabel=th?((th.querySelector('.scan-th-lbl,.dctr-th-lbl,span:not(.dctr-th-sort):not(.scan-th-sort)')?.textContent||th.querySelector('div')?.textContent||th.textContent||colKey)).trim().replace(/[↑↓▾▴]/g,'').trim():colKey;
+  const explicitLbl=th?th.getAttribute('data-col-label'):null;
+  const colLabel=explicitLbl!=null&&explicitLbl!==''
+    ? explicitLbl
+    : (th?((th.querySelector('.scan-th-lbl,.dctr-th-lbl,span:not(.dctr-th-sort):not(.scan-th-sort)')?.textContent||th.querySelector('div')?.textContent||th.textContent||colKey)).trim().replace(/[↑↓▾▴⠿]/g,'').trim():colKey);
 
   ev.preventDefault();
   showUniversalCtxMenu(ev, colKey, cellText, foundAttr, colLabel);
@@ -19158,6 +19196,7 @@ function renderPwcTab(){
       });
       card.addEventListener('dragstart',e=>{e.dataTransfer.setData('text/plain',key);e.dataTransfer.effectAllowed='copy';});
       const codeEl=dv('pwc-card-code');codeEl.textContent=r.matNo;card.appendChild(codeEl);
+      _attachItemCtx(card,r.matNo);   // click dreapta pe casetă → desen de execuție
       const fpEl=dv('pwc-card-fp');fpEl.textContent=r.fps.slice(0,2).join(', ')+(r.fps.length>2?` +${r.fps.length-2}`:'');card.appendChild(fpEl);
       const qtyEl=dv('pwc-card-qty');qtyEl.textContent=fmtN(r.dePrelucrat)+' buc';card.appendChild(qtyEl);
       const timeEl=dv('pwc-card-time');timeEl.textContent=fmtMin(r.execTimeMin)+' ('+r.wcName+')';card.appendChild(timeEl);
@@ -19286,6 +19325,8 @@ function renderPwcTab(){
         VIS().forEach(col=>{
           const th=el('th');
           th.dataset.pwcCol=col;
+          th.setAttribute('data-col',col);
+          th.setAttribute('data-col-label',COL_LABELS[col]||col);
           th.style.position='relative';
           if(col==='del'){hr.appendChild(th);return;}
           const wrapH=dv('');wrapH.style.cssText='display:flex;align-items:center;gap:4px;cursor:pointer;user-select:none';
@@ -19437,7 +19478,14 @@ function renderPwcTab(){
         }
         rowsArr.forEach(({key,r})=>{
           const tr=el('tr');
-          cols.forEach(c=>{const f=CELL[c];if(f)tr.appendChild(f(r,key));});
+          cols.forEach(c=>{
+            const f=CELL[c];if(!f)return;
+            const td=f(r,key);
+            // activeaza meniul contextual universal (filtre + desen + stoc);
+            // sarim peste celulele cu input, ca sa ramana meniul nativ de text
+            if(c!=='obs'&&c!=='del')td.setAttribute('data-col',c);
+            tr.appendChild(td);
+          });
           tbody.appendChild(tr);
         });
       } // end buildPlanTable
