@@ -3623,7 +3623,6 @@ function render(){
   const navItems=[
     {id:'fisiere',label:'Fisiere',dot:true},
     {id:'structura',label:'Structura'},
-    {id:'masini',label:'🏭 Mașini / Echipamente'},
     {group:'Planificare & Urmărire',icon:'📅',children:[
       {id:'orderbook',label:'Order Book'},
       {id:'planificare',label:'Planificare'},
@@ -3639,6 +3638,7 @@ function render(){
     {id:'scanner',label:'📷 Scanner'},
   ];
   if(isAdm)navItems.push({group:'Diverse',icon:'🗂',children:[
+    {id:'masini',label:'🏭 Mașini / Echipamente'},
     {id:'dctr',label:'Disciplina CTR'},
     {id:'kpi8',label:'📈 KPI 8: Operational Efficiency'},
     {id:'performanta',label:'Performanță'},
