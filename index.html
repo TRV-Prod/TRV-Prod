@@ -8678,6 +8678,26 @@ function renderPlanificare(){
   loadRepBtn.addEventListener('click',openWcLoadReport);
   tb.appendChild(loadRepBtn);
 
+  // Sterge prioritatile doar pentru produsele vizibile (filtrate) in acest moment
+  const clrPrioBtn=el('button','tbtn');clrPrioBtn.innerHTML='🧹 Șterge prioritatile';
+  clrPrioBtn.style.cssText='border-color:#b45309;color:#b45309;background:#fffbeb;font-weight:700';
+  clrPrioBtn.title='Sterge prioritatile doar pentru produsele afisate acum (dupa filtrele active)';
+  clrPrioBtn.addEventListener('click',()=>{
+    const visible=getPlanRows().map(([itemNo])=>itemNo);
+    const withPrio=visible.filter(it=>String(S.planPrio[it]??'').trim()!=='');
+    if(!visible.length){showToast('Nu exista produse afisate','err',2500);return;}
+    if(!withPrio.length){showToast('Produsele afisate nu au prioritati setate','err',2800);return;}
+    const total=Object.keys(S.planPrio||{}).filter(k=>String(S.planPrio[k]??'').trim()!=='').length;
+    const rest=total-withPrio.length;
+    if(!confirm(`Stergeti prioritatea pentru ${withPrio.length} produse afisate?`+
+      (rest>0?`\n\nCelelalte ${rest} produse (ascunse de filtre) raman neatinse.`:'')))return;
+    withPrio.forEach(it=>{delete S.planPrio[it];});
+    savePlan();
+    renderPlanPage(planWrap);updatePlanStatsBar();
+    showToast(`✓ Prioritati sterse pentru ${withPrio.length} produse`,'ok',2800);
+  });
+  tb.appendChild(clrPrioBtn);
+
   const clearBtn=el('button','tbtn');clearBtn.innerHTML='✕ Goleste planul';clearBtn.style.color='#dc2626';
   clearBtn.addEventListener('click',()=>{if(confirm('Golesti tot planul de productie?')){S.planData=new Map();savePlan();renderPlanPage(planWrap);updatePlanStatsBar();}});
   tb.appendChild(clearBtn);
