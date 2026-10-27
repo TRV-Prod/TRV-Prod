@@ -8849,7 +8849,7 @@ function buildInventarByComp(data){
     usedIn:[...e.usedIn.values()].sort((a,b)=>b.qty-a.qty),
     parents:[...e.parents],
     lipsa:Math.max(0,e.total-(e.onHand||0)),
-  })).sort((a,b)=>b.usedIn.length-a.usedIn.length||a.matNo.localeCompare(b.matNo));
+  })).sort((a,b)=>a.matNo.localeCompare(b.matNo,'ro',{numeric:true,sensitivity:'base'}));
 }
 
 function openInventarReport(){
