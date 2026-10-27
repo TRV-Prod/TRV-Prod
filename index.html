@@ -8750,6 +8750,38 @@ function _invFlat(comps,depth,parent,acc){
   return acc;
 }
 
+/* Vedere pe componenta: un rand per reper, cu toate produsele finale
+   in care este necesar si cantitatea pentru fiecare. */
+function buildInventarByComp(data){
+  const m=new Map();
+  (data||[]).forEach(g=>{
+    _invFlat(g.comps,0,g.fp).forEach(c=>{
+      let e=m.get(c.matNo);
+      if(!e){
+        e={matNo:c.matNo,matName:c.matName,type:c.type,
+           onHand:c.onHand,wip:c.wip,wipList:c.wipList,locs:c.locs,
+           total:0,usedIn:new Map(),parents:new Set()};
+        m.set(c.matNo,e);
+      }
+      if(!e.matName&&c.matName)e.matName=c.matName;
+      // acelasi reper poate aparea de mai multe ori in acelasi produs final
+      // (ramuri diferite) — necesarul vine deja cumulat din calcNeeds,
+      // deci se ia o singura data per produs final
+      if(!e.usedIn.has(g.fp)){
+        e.usedIn.set(g.fp,{fp:g.fp,fpName:g.fpName,qty:c.needed,planQty:g.planQty});
+        e.total+=c.needed;
+      }
+      if(c.parent)e.parents.add(c.parent);
+    });
+  });
+  return [...m.values()].map(e=>({
+    ...e,
+    usedIn:[...e.usedIn.values()].sort((a,b)=>b.qty-a.qty),
+    parents:[...e.parents],
+    lipsa:Math.max(0,e.total-(e.onHand||0)),
+  })).sort((a,b)=>b.usedIn.length-a.usedIn.length||a.matNo.localeCompare(b.matNo));
+}
+
 function openInventarReport(){
   if(!S.planData?.size){showToast('Planul este gol — adăugați produse în Planificare.','err',3000);return;}
   if(!S.bomIdx){showToast('Încărcați fișierul BOM.','err',3000);return;}
@@ -8764,14 +8796,18 @@ function openInventarReport(){
   data.forEach(g=>{nComp+=g.count;nLipsa+=g.missing;});
 
   /* un rand de componenta */
-  const IND=15;                       // indentare per nivel, doar in coloana codului
-  const rowHtml=(c,depth)=>{
+  /* conector: linii verticale pentru stramosi + sageata catre copil */
+  const connHtml=(anc,isLast)=>{
+    if(!anc.length)return '';
+    const stems=anc.slice(0,-1).map(more=>more?'│ ':'&nbsp;&nbsp;').join('');
+    return `<span class="arw">${stems}${isLast?'└':'├'}─▶</span>`;
+  };
+  const rowHtml=(c,anc,isLast)=>{
     const wip=_invWipTxt(c);
     const locs=c.locs.length?c.locs.map(l=>`${l.excluded?'⊘ ':''}${l.loc}: ${fmtN(l.qty)}`).join(' · '):'';
     const hasKids=c.children&&c.children.length;
-    const pad=6+(depth||0)*IND;
     return `<div class="row${c.lipsa>0?' miss':''}${hasKids?' par':''}">
-      <div class="c-code" style="padding-left:${pad}px">${hasKids?'<span class="tog">▾</span>':''}<b>${esc(c.matNo)}</b>${c.repeat?'<span class="rep" title="apare si mai sus">↻</span>':''}</div>
+      <div class="c-code">${connHtml(anc||[],isLast)}${hasKids?'<span class="tog">▾</span>':''}<b>${esc(c.matNo)}</b>${c.repeat?'<span class="rep" title="apare si mai sus">↻</span>':''}</div>
       <div class="c-name">${esc(c.matName)}</div>
       <div class="c-tp"><span class="badge ${c.type==='MAKE'?'mk':'by'}">${c.type==='MAKE'?'MAKE':'BUY'}</span></div>
       <div class="c-n need">${nf(c.needed)}</div>
@@ -8784,19 +8820,14 @@ function openInventarReport(){
   };
 
   /* grup: componenta + acolada cu subcomponentele ei */
-  const groupHtml=(c,depth)=>{
-    depth=depth||0;
+  const groupHtml=(c,anc,isLast)=>{
+    anc=anc||[];
     const kids=(c.children||[]);
-    if(!kids.length)return rowHtml(c,depth);
-    const bx=4+depth*IND;             // pozitia acoladei pentru acest nivel
-    return `<div class="grp">
-      ${rowHtml(c,depth)}
-      <div class="kids">
-        <span class="brace" style="left:${bx}px"></span>
-        <span class="brace-lbl" style="left:${bx+13}px">din ${esc(c.matNo)}</span>
-        ${kids.map(k=>groupHtml(k,depth+1)).join('')}
-      </div>
-    </div>`;
+    const self=rowHtml(c,anc,isLast);
+    if(!kids.length)return self;
+    const kidAnc=[...anc,!isLast&&anc.length>0];
+    return self+kids.map((k,i)=>
+      groupHtml(k,[...anc,anc.length?!isLast:true],i===kids.length-1)).join('');
   };
 
   const blocks=data.map(g=>`<section>
@@ -8820,8 +8851,34 @@ function openInventarReport(){
       <div>Observații WIP / locații</div>
       <div class="cnt-h">Cantitate numărată</div><div class="cnt-h">Observații</div>
     </div>
-    <div class="body">${g.comps.map(k=>groupHtml(k,0)).join('')}</div>
+    <div class="body">${g.comps.map((k,i)=>groupHtml(k,[],i===g.comps.length-1)).join('')}</div>
   </section>`).join('');
+
+  /* ── vedere pe componenta ── */
+  const byComp=buildInventarByComp(data);
+  const compRows=byComp.map(c=>{
+    const wip=_invWipTxt(c);
+    const locs=c.locs.length?c.locs.map(l=>`${l.excluded?'⊘ ':''}${l.loc}: ${fmtN(l.qty)}`).join(' · '):'';
+    const fps=c.usedIn.map(u=>
+      `<span class="fpchip"><b>${esc(u.fp)}</b><i>${nf(u.qty)} buc</i></span>`).join('');
+    return `<div class="crow${c.lipsa>0?' miss':''}">
+      <div class="c-code"><b>${esc(c.matNo)}</b></div>
+      <div class="c-name">${esc(c.matName)}</div>
+      <div class="c-tp"><span class="badge ${c.type==='MAKE'?'mk':'by'}">${c.type==='MAKE'?'MAKE':'BUY'}</span></div>
+      <div class="c-n need">${nf(c.total)}</div>
+      <div class="c-n ${c.onHand>0?'pos':'zero'}">${nf(c.onHand)}</div>
+      <div class="c-n ${c.wip>0?'wip':'zero'}">${c.wip>0?nf(c.wip):'—'}</div>
+      <div class="c-fps">${fps}</div>
+      <div class="c-obs">${wip?esc(wip):''}${wip&&locs?'<br>':''}${locs?'<span class="loc">'+esc(locs)+'</span>':''}</div>
+      <div class="c-cnt"></div>
+    </div>`;
+  }).join('');
+  const compBlock=`<div class="chead">
+      <div>Cod MOVEX</div><div>Denumire</div><div>Tip</div>
+      <div class="r">Necesar total</div><div class="r">On Hand</div><div class="r">WIP</div>
+      <div>Produse finale în care este necesar (buc)</div>
+      <div>Observații WIP / locații</div><div class="cnt-h">Cant. numărată</div>
+    </div><div class="body">${compRows}</div>`;
 
   const w=window.open('','_blank');
   if(!w){showToast('Permiteți pop-up-urile pentru a genera lista','err',3500);return;}
@@ -8874,30 +8931,63 @@ function openInventarReport(){
   .c-obs{font-size:8.5px;color:#7c3aed;line-height:1.35}
   .loc{color:#0369a1}
   .c-cnt{border-bottom:1px solid #94a3b8;background:#fcfdff}
-  /* acolada pentru subcomponente — desenata peste coloana codului,
-     ca randurile sa ramana perfect aliniate pe coloane la orice nivel */
-  .kids{position:relative;padding-top:9px}
-  .brace{position:absolute;top:9px;bottom:3px;width:8px;
-         border:2px solid #6366f1;border-right:none;border-radius:6px 0 0 6px}
-  .brace-lbl{position:absolute;top:0;font-size:7px;font-weight:800;color:#6366f1;
-             letter-spacing:.03em;white-space:nowrap;background:#fff;padding:0 3px;line-height:9px}
-  .grp{page-break-inside:auto}
+  /* sageti parinte → copil, desenate in coloana codului */
+  .arw{font-family:'Courier New',monospace;font-size:11px;color:#6366f1;
+       font-weight:700;white-space:pre;letter-spacing:-.5px;margin-right:2px}
+  /* vedere pe componenta */
+  .chead,.crow{display:grid;
+    grid-template-columns:minmax(150px,1fr) minmax(120px,1.2fr) 44px 70px 64px 54px minmax(230px,2.2fr) minmax(130px,1.2fr) 92px;
+    align-items:start}
+  .chead{background:#eef2f7;border-bottom:2px solid #cbd5e1;page-break-after:avoid}
+  .chead>div{padding:5px 6px;font-size:8px;font-weight:800;color:#1e3a5f;text-transform:uppercase;letter-spacing:.04em}
+  .chead .r{text-align:right}
+  .chead .cnt-h{background:#fffbeb;color:#92400e}
+  .crow{border-bottom:1px solid #eef2f7;page-break-inside:avoid}
+  .crow>div{padding:4px 6px;min-height:19px}
+  .crow.miss{background:#fff5f5}
+  .crow.miss .c-code b{color:#b91c1c}
+  .c-fps{display:flex;flex-wrap:wrap;gap:3px}
+  .fpchip{display:inline-flex;align-items:baseline;gap:4px;border:1px solid #bfdbfe;background:#eff6ff;
+          border-radius:9px;padding:1px 6px;white-space:nowrap}
+  .fpchip b{font-family:'Courier New',monospace;font-size:9.5px;color:#1e3a5f;font-weight:900}
+  .fpchip i{font-style:normal;font-size:8.5px;font-weight:800;color:#1d4ed8}
+  /* comutator de vedere */
+  .vbtn{background:#f1f5f9;color:#334155}
+  .vbtn.on{background:#1d4ed8;color:#fff}
+  #view-comp{display:none}
   .noprint{margin-bottom:11px}
   button{padding:8px 17px;border:none;border-radius:6px;background:#1d4ed8;color:#fff;
          font-weight:800;font-size:12px;cursor:pointer;margin-right:7px}
   button.sec{background:#f1f5f9;color:#334155}
   @media print{.noprint{display:none!important}}
 </style></head><body>
-<div class="noprint"><button onclick="window.print()">🖨 Printează / PDF</button><button class="sec" onclick="window.close()">Închide</button></div>
+<div class="noprint">
+  <button onclick="window.print()">🖨 Printează / PDF</button>
+  <button class="vbtn on" id="b-fp" onclick="setView('fp')">🌳 Pe produs final</button>
+  <button class="vbtn" id="b-comp" onclick="setView('comp')">🧩 Pe componentă</button>
+  <button class="sec" onclick="window.close()">Închide</button>
+</div>
 <h1>Listă de inventariere — componente plan</h1>
 <div class="sub">Săptămâna <b>${esc(S.planCurrentWeek||'—')}</b> · filtru: <b>${filtLbl}</b> ·
-  generat ${new Date().toLocaleString('ro-RO')} · subcomponentele sunt grupate în acoladă sub componenta din care fac parte</div>
+  generat ${new Date().toLocaleString('ro-RO')} · <span id="sub-hint">subcomponentele sunt legate prin săgeți de componenta din care fac parte</span></div>
 <div class="kpis">
   <div class="kpi"><span>Produse finale</span><b>${data.length}</b></div>
   <div class="kpi"><span>Componente</span><b>${nComp}</b></div>
   <div class="kpi"><span>Sub necesar</span><b style="color:#dc2626">${nLipsa}</b></div>
 </div>
-${blocks}
+<div id="view-fp">${blocks}</div>
+<div id="view-comp"><section>${compBlock}</section></div>
+<script>
+function setView(v){
+  document.getElementById('view-fp').style.display=(v==='fp')?'block':'none';
+  document.getElementById('view-comp').style.display=(v==='comp')?'block':'none';
+  document.getElementById('b-fp').className='vbtn'+(v==='fp'?' on':'');
+  document.getElementById('b-comp').className='vbtn'+(v==='comp'?' on':'');
+  document.getElementById('sub-hint').textContent=(v==='fp')
+    ? 'subcomponentele sunt legate prin săgeți de componenta din care fac parte'
+    : 'fiecare componentă apare o singură dată, cu toate produsele finale în care este necesară';
+}
+<\/script>
 </body></html>`);
   w.document.close();
 }
@@ -8921,7 +9011,26 @@ function exportInventarExcel(){
   const wb=XLSX.utils.book_new();const ws=XLSX.utils.aoa_to_sheet(aoa);
   ws['!cols']=[{wch:18},{wch:26},{wch:10},{wch:7},{wch:20},{wch:24},{wch:30},{wch:9},
                {wch:11},{wch:11},{wch:10},{wch:38},{wch:28},{wch:10},{wch:16},{wch:22}];
-  XLSX.utils.book_append_sheet(wb,ws,'Inventariere');
+  XLSX.utils.book_append_sheet(wb,ws,'Pe produs final');
+
+  // Foaia 2: o linie per componenta, cu toate produsele finale in care apare
+  const byComp=buildInventarByComp(data);
+  const aoa2=[['Cod MOVEX','Denumire','Tip','Necesar total','On Hand','WIP',
+               'Nr. produse finale','Produse finale (cod: buc)','Face parte din',
+               'Observatii WIP (workcenter: cantitate)','Locatii stoc','Lipsa','Cantitate numarata','Observatii']];
+  byComp.forEach(c=>aoa2.push([
+    c.matNo,c.matName,c.type,c.total,c.onHand,c.wip,
+    c.usedIn.length,
+    c.usedIn.map(u=>`${u.fp}: ${u.qty}`).join(' · '),
+    (c.parents||[]).join(' · '),
+    _invWipTxt(c),
+    c.locs.map(l=>`${l.loc}: ${l.qty}${l.excluded?' (exclus)':''}`).join(' · '),
+    c.lipsa>0?c.lipsa:0,'','']));
+  const ws2=XLSX.utils.aoa_to_sheet(aoa2);
+  ws2['!cols']=[{wch:24},{wch:30},{wch:9},{wch:13},{wch:11},{wch:10},{wch:9},
+                {wch:52},{wch:26},{wch:38},{wch:26},{wch:10},{wch:16},{wch:22}];
+  XLSX.utils.book_append_sheet(wb,ws2,'Pe componenta');
+
   XLSX.writeFile(wb,`Inventariere_${(S.planCurrentWeek||'plan')}_${new Date().toISOString().slice(0,10)}.xlsx`);
 }
 
