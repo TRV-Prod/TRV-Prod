@@ -1470,11 +1470,28 @@ async function sbUpload(cfg,path,data){
   return true;
 }
 
+/* Verifica rapid daca un fisier de pe server s-a schimbat (ETag / Last-Modified),
+   fara a-l descarca. Permite pornirea din cache-ul local cand nimic nu s-a schimbat. */
+async function sbHead(cfg,path,timeoutMs){
+  const url=`${cfg.url}/storage/v1/object/${cfg.bucket}/${path}`;
+  const ac=(typeof AbortController!=='undefined')?new AbortController():null;
+  const t=ac?setTimeout(()=>ac.abort(),timeoutMs||8000):null;
+  try{
+    const r=await fetch(url,{method:'HEAD',headers:{'Authorization':'Bearer '+cfg.key,'apikey':cfg.key},
+      signal:ac?ac.signal:undefined});
+    if(t)clearTimeout(t);
+    if(!r.ok)return null;
+    const tag=r.headers.get('etag')||r.headers.get('last-modified')||'';
+    const len=r.headers.get('content-length')||'';
+    return {tag:String(tag).replace(/"/g,''),len};
+  }catch(e){ if(t)clearTimeout(t); return null; }
+}
+
 /* Descarcare cu timeout: fara el, o resursa inaccesibila tine pornirea
    aplicatiei blocata pana expira timeout-ul sistemului de operare. */
 async function sbDownload(cfg,path,timeoutMs){
   const url=`${cfg.url}/storage/v1/object/${cfg.bucket}/${path}`;
-  const ms=timeoutMs||25000;
+  const ms=timeoutMs||45000;
   const ac=(typeof AbortController!=='undefined')?new AbortController():null;
   const t=ac?setTimeout(()=>ac.abort(),ms):null;
   let r;
@@ -1581,12 +1598,48 @@ async function sbLoadAllData(){
     {k:'quality',label:'TI-Quality reporting set',apply:(r,t)=>applyQuality(r,t)},
   ]){
     S.loadMsg=`Se incarca ${label}...`;setLoadMsg(S.loadMsg);await yieldFrame();
-    const data=await sbDownload(cfg,`data-${k}.json`);
-    if(data?.rows){apply(data.rows,data.ts);await dbSave(k,{rows:data.rows,ts:data.ts});loaded=true;}
+    // Fisierele mari au nevoie de mai mult timp decat cele mici
+    const BIG=(k==='bom'||k==='bow'||k==='po'||k==='ob');
+    try{
+      const cached=await dbLoad(k).catch(()=>null);
+      const head=await sbHead(cfg,`data-${k}.json`);
+      // Daca versiunea de pe server e identica cu cea din cache, nu o mai descarcam
+      if(cached?.rows?.length&&head?.tag&&cached._tag&&cached._tag===head.tag){
+        S.loadMsg=`${label} — din cache local`;setLoadMsg(S.loadMsg);await yieldFrame();
+        apply(cached.rows,cached.ts);loaded=true;
+        console.log(`[Load] ${k}: cache local (neschimbat pe server)`);
+        continue;
+      }
+      const data=await sbDownload(cfg,`data-${k}.json`,BIG?180000:45000);
+      if(data?.rows){
+        apply(data.rows,data.ts);
+        await dbSave(k,{rows:data.rows,ts:data.ts,_tag:head?head.tag:''});
+        loaded=true;
+      } else if(cached?.rows?.length){
+        apply(cached.rows,cached.ts);loaded=true;
+      }
+    }catch(e){
+      // O eroare la un fisier nu trebuie sa opreasca incarcarea celorlalte
+      console.warn(`[Load] ${k}:`,e&&e.message?e.message:e);
+      try{
+        const cached=await dbLoad(k);
+        if(cached?.rows?.length){
+          apply(cached.rows,cached.ts);loaded=true;
+          console.log(`[Load] ${k}: s-a folosit copia locala`);
+          showToast(`${label}: server indisponibil — s-a folosit copia locala`,'err',3500);
+        }
+      }catch(_){}
+    }
   }
 
   // ── Plan data (needed for Planificare) — part of phase 1 ──
-  const planData=await sbDownload(cfg,'data-plan.json');
+  let planData=null;
+  try{ planData=await sbDownload(cfg,'data-plan.json'); }
+  catch(e){
+    console.warn('[Load] plan:',e&&e.message?e.message:e);
+    try{const c=await dbLoad('plan');if(c)planData={entries:c.entries,obs:c.obs,wcAvailHours:c.wcAvailHours,
+      prio:c.prio,pwcScheduled:c.pwcScheduled,pwcNotes:c.pwcNotes};}catch(_){}
+  }
   if(planData){
     if(planData.entries){S.planData=new Map(planData.entries);
     // Migrate: reconstruct _obKey for entries saved before applyOb added _obKey to rows
