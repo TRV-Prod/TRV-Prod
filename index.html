@@ -1470,9 +1470,25 @@ async function sbUpload(cfg,path,data){
   return true;
 }
 
-async function sbDownload(cfg,path){
+/* Descarcare cu timeout: fara el, o resursa inaccesibila tine pornirea
+   aplicatiei blocata pana expira timeout-ul sistemului de operare. */
+async function sbDownload(cfg,path,timeoutMs){
   const url=`${cfg.url}/storage/v1/object/${cfg.bucket}/${path}`;
-  const r=await fetch(url,{headers:{'Authorization':'Bearer '+cfg.key,'apikey':cfg.key}});
+  const ms=timeoutMs||25000;
+  const ac=(typeof AbortController!=='undefined')?new AbortController():null;
+  const t=ac?setTimeout(()=>ac.abort(),ms):null;
+  let r;
+  try{
+    r=await fetch(url,{headers:{'Authorization':'Bearer '+cfg.key,'apikey':cfg.key},signal:ac?ac.signal:undefined});
+  }catch(e){
+    if(t)clearTimeout(t);
+    if(e&&e.name==='AbortError'){
+      console.warn(`[Supabase] ${path}: timeout dupa ${Math.round(ms/1000)}s — se continua fara acest fisier`);
+      const err=new Error(`Supabase timeout ${path}`);err._timeout=true;throw err;
+    }
+    throw e;
+  }
+  if(t)clearTimeout(t);
   if(r.status===404||r.status===400)return null;
   if(!r.ok)throw new Error(`Supabase download ${path}: ${r.status}`);
   return await r.json();
@@ -2236,12 +2252,13 @@ async function loadFromIndexedDB(){
 
   // scanari: load from month-split IDB keys (or legacy single key)
   S.loadMsg='Se incarca Raport Scanari...';setLoadMsg(S.loadMsg);await yieldFrame();
-  // Load Disciplina CTR from Supabase
-  S.loadMsg='Se incarca Disciplina CTR...';setLoadMsg(S.loadMsg);await yieldFrame();
-  try{
-    const dctrRec=await loadDctrFromSupabase();
-    if(dctrRec?.length) S.dctrData=dctrRec;
-  }catch(e){console.warn('DCTR load:',e);}
+  // Disciplina CTR: modul optional — se incarca in fundal, ca o eventuala
+  // problema de retea sa nu intarzie pornirea aplicatiei.
+  loadDctrFromSupabase()
+    .then(rec=>{
+      if(rec?.length){S.dctrData=rec;if(S.tab==='dctr')render();}
+    })
+    .catch(e=>console.warn('DCTR load (fundal):',e&&e.message?e.message:e));
   const scanE=await loadScanariFromIDB();
   if(scanE?.rows?.length){applyScanari(scanE.rows,scanE.ts);}
   await yieldFrame();
