@@ -8655,6 +8655,222 @@ ${bars}
   w.document.close();
 }
 
+
+/* ═══════════════════════════════════════════════════════════════
+   LISTĂ DE INVENTARIERE — componentele produselor din plan,
+   structurate pe produs final, cu necesar, stoc şi WIP pe
+   workcentere. Respectă filtrul MAKE / PURCHASE / FULL.
+═══════════════════════════════════════════════════════════════ */
+function buildInventarData(){
+  const out=[];
+  if(!S.planData?.size||!S.bomIdx)return out;
+  const bomFilt=S.planBomFilter||'FULL';
+  const rows=(typeof getPlanRows==='function')?getPlanRows():[...S.planData.entries()];
+
+  for(const [itemNo,plan] of rows){
+    const planQty=plan.totalQty||0;
+    const first=plan.entries?.[0]||{};
+    let tree=[];
+    try{tree=buildTree(itemNo,itemNo)||[];}catch(e){console.warn('[Inventar] buildTree',itemNo,e);}
+    const _prevIgn=S.structIgnoreStock;S.structIgnoreStock=true;
+    const needsMap=S.stockIdx?calcNeeds(itemNo,planQty||1):new Map();
+    S.structIgnoreStock=_prevIgn;
+
+    const comps=[];
+    const seen=new Set();
+    const walk=(nodes,depth,mult)=>{
+      nodes.forEach(n=>{
+        const unQty=parseFloat(String(n.qty??1).replace(',','.'))||1;
+        const nd=needsMap.get(n.matNo);
+        const needed=(nd&&nd.needed!=null)?nd.needed:(mult*unQty*(planQty||1));
+        const nType=n.isMake?'MAKE':'PURCHASE';
+        const typeOk=(bomFilt==='FULL')||(nType===bomFilt);
+        if(typeOk&&!seen.has(n.matNo)){
+          seen.add(n.matNo);
+          const st=S.stockIdx?.get(n.matNo)||{onHand:0,totalWIP:0,wipByWC:{}};
+          const wipE=Object.entries(st.wipByWC||{}).filter(e=>e[1]>0).sort((a,b)=>b[1]-a[1]);
+          comps.push({
+            matNo:n.matNo, matName:n.matName||'', type:nType, depth,
+            unQty, needed:Math.round(needed*1000)/1000,
+            onHand:st.onHand||0,
+            wip:st.totalWIP||0,
+            wipList:wipE.map(e=>({wc:wcLabel(e[0]),qty:e[1]})),
+            locs:(st.slLocations||[]).map(l=>({loc:l.loc,qty:l.qty,excluded:!!l.excluded})),
+            lipsa:Math.max(0,needed-(st.onHand||0)),
+          });
+        }
+        if(n.children&&n.children.length)walk(n.children,depth+(typeOk?1:0),mult*unQty);
+      });
+    };
+    walk(tree,0,1);
+    if(!comps.length)continue;
+    const fpSt=S.stockIdx?.get(itemNo)||{onHand:0,totalWIP:0,wipByWC:{}};
+    out.push({
+      fp:itemNo,
+      fpName:first.itemName||fpSt.name||'',
+      planQty,
+      fpOnHand:fpSt.onHand||0,
+      fpWip:fpSt.totalWIP||0,
+      prio:S.planPrio?.[itemNo]||'',
+      comps,
+    });
+  }
+  return out;
+}
+
+function _invWipTxt(c){
+  if(!c.wipList.length)return '';
+  return c.wipList.map(w=>`${w.wc}: ${fmtN(w.qty)}`).join(' · ');
+}
+
+function openInventarReport(){
+  if(!S.planData?.size){showToast('Planul este gol — adăugați produse în Planificare.','err',3000);return;}
+  if(!S.bomIdx){showToast('Încărcați fișierul BOM.','err',3000);return;}
+  const data=buildInventarData();
+  if(!data.length){showToast('Nicio componentă pentru filtrul curent.','err',3000);return;}
+
+  const filt=S.planBomFilter||'FULL';
+  const filtLbl=filt==='MAKE'?'doar MAKE':filt==='PURCHASE'?'doar PURCHASE (BUY)':'toate componentele';
+  const esc=t=>String(t==null?'':t).replace(/[&<>]/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;'}[m]));
+  const nf=v=>fmtN(v);
+
+  let nComp=0,nLipsa=0;
+  data.forEach(g=>{nComp+=g.comps.length;nLipsa+=g.comps.filter(c=>c.lipsa>0).length;});
+
+  const blocks=data.map(g=>{
+    const trs=g.comps.map(c=>{
+      const wip=_invWipTxt(c);
+      const locs=c.locs.length?c.locs.map(l=>`${l.excluded?'⊘ ':''}${l.loc}: ${fmtN(l.qty)}`).join(' · '):'';
+      return `<tr class="${c.lipsa>0?'miss':''}">
+        <td class="code">${esc(c.matNo)}</td>
+        <td class="t">${esc(c.matName)}</td>
+        <td class="tp"><span class="badge ${c.type==='MAKE'?'mk':'by'}">${c.type==='MAKE'?'MAKE':'BUY'}</span></td>
+        <td class="n need">${nf(c.needed)}</td>
+        <td class="n ${c.onHand>0?'pos':'zero'}">${nf(c.onHand)}</td>
+        <td class="n ${c.wip>0?'wip':'zero'}">${c.wip>0?nf(c.wip):'—'}</td>
+        <td class="obs">${wip?esc(wip):''}${wip&&locs?'<br>':''}${locs?'<span class="loc">'+esc(locs)+'</span>':''}</td>
+        <td class="cnt"></td>
+        <td class="cnt"></td>
+      </tr>`;
+    }).join('');
+    return `<section>
+      <div class="fp">
+        <div class="fp-l">
+          <span class="fp-lbl">PRODUS FINAL</span>
+          <span class="fp-code">${esc(g.fp)}</span>
+          ${g.fpName?`<span class="fp-name">${esc(g.fpName)}</span>`:''}
+        </div>
+        <div class="fp-r">
+          ${g.prio?`<span class="chip">Prio <b>${esc(g.prio)}</b></span>`:''}
+          <span class="chip">Plan <b>${nf(g.planQty)}</b> buc</span>
+          <span class="chip">On Hand FP <b>${nf(g.fpOnHand)}</b></span>
+          ${g.fpWip>0?`<span class="chip">WIP FP <b>${nf(g.fpWip)}</b></span>`:''}
+          <span class="chip">${g.comps.length} componente</span>
+        </div>
+      </div>
+      <table>
+        <thead><tr>
+          <th class="code">Cod MOVEX</th><th>Denumire</th><th>Tip</th>
+          <th class="n">Necesar</th><th class="n">On Hand</th><th class="n">WIP</th>
+          <th>Observații WIP / locații</th>
+          <th class="cnt">Cantitate numărată</th><th class="cnt">Observații</th>
+        </tr></thead>
+        <tbody>${trs}</tbody>
+      </table>
+    </section>`;
+  }).join('');
+
+  const w=window.open('','_blank');
+  if(!w){showToast('Permiteți pop-up-urile pentru a genera lista','err',3500);return;}
+  w.document.write(`<!doctype html><html lang="ro"><head><meta charset="utf-8">
+<title>Listă inventariere — ${esc(S.planCurrentWeek||'')}</title>
+<style>
+  @page{size:A4 landscape;margin:9mm}
+  *{box-sizing:border-box}
+  body{font-family:system-ui,'Segoe UI',Arial,sans-serif;margin:0;padding:12px 14px;color:#0f172a}
+  h1{font-size:19px;margin:0 0 2px;color:#1e3a5f;letter-spacing:-.01em}
+  .sub{font-size:11px;color:#64748b;margin-bottom:12px}
+  .kpis{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:14px}
+  .kpi{border:1px solid #e2e8f0;border-left:4px solid #1e3a5f;border-radius:6px;padding:6px 11px;min-width:105px}
+  .kpi b{display:block;font-size:17px;color:#1e3a5f;line-height:1.1}
+  .kpi span{font-size:8.5px;font-weight:800;color:#94a3b8;text-transform:uppercase;letter-spacing:.05em}
+  section{margin-bottom:15px;page-break-inside:auto}
+  .fp{display:flex;align-items:center;gap:12px;flex-wrap:wrap;background:#1e3a5f;color:#fff;
+      padding:7px 11px;border-radius:6px 6px 0 0;page-break-after:avoid}
+  .fp-l{display:flex;align-items:baseline;gap:9px;flex-wrap:wrap}
+  .fp-lbl{font-size:8px;font-weight:800;letter-spacing:.09em;opacity:.75}
+  .fp-code{font-family:'Courier New',monospace;font-size:21px;font-weight:900;letter-spacing:.5px}
+  .fp-name{font-size:11.5px;opacity:.9}
+  .fp-r{margin-left:auto;display:flex;gap:6px;flex-wrap:wrap}
+  .chip{background:rgba(255,255,255,.14);border:1px solid rgba(255,255,255,.3);
+        border-radius:9px;padding:1px 8px;font-size:9.5px;white-space:nowrap}
+  table{width:100%;border-collapse:collapse;font-size:10px}
+  thead{display:table-header-group}
+  th{background:#eef2f7;color:#1e3a5f;padding:5px 6px;text-align:left;font-size:8px;
+     font-weight:800;text-transform:uppercase;letter-spacing:.04em;border-bottom:2px solid #cbd5e1}
+  th.n,td.n{text-align:right}
+  td{padding:4px 6px;border-bottom:1px solid #eef2f7;vertical-align:top}
+  tr{page-break-inside:avoid}
+  td.code{font-family:'Courier New',monospace;font-weight:900;font-size:13px;color:#1e3a5f;white-space:nowrap}
+  th.code{width:150px}
+  td.t{font-size:9.5px;color:#334155}
+  td.tp{width:46px}
+  .badge{display:inline-block;padding:0 4px;border-radius:3px;font-size:7.5px;font-weight:800}
+  .badge.mk{background:#ede9fe;color:#6d28d9}
+  .badge.by{background:#d1fae5;color:#065f46}
+  td.n{font-family:'Courier New',monospace;font-size:12px;font-weight:800;white-space:nowrap}
+  td.need{color:#1d4ed8}
+  td.pos{color:#15803d}
+  td.zero{color:#cbd5e1}
+  td.wip{color:#7c3aed}
+  td.obs{font-size:8.5px;color:#7c3aed;line-height:1.35;max-width:210px}
+  .loc{color:#0369a1}
+  td.cnt{border-bottom:1px solid #94a3b8;background:#fcfdff}
+  th.cnt{width:95px;background:#fffbeb;color:#92400e}
+  tr.miss td{background:#fff5f5}
+  tr.miss td.code{color:#b91c1c}
+  .noprint{margin-bottom:11px}
+  button{padding:8px 17px;border:none;border-radius:6px;background:#1d4ed8;color:#fff;
+         font-weight:800;font-size:12px;cursor:pointer;margin-right:7px}
+  button.sec{background:#f1f5f9;color:#334155}
+  @media print{.noprint{display:none!important}}
+</style></head><body>
+<div class="noprint"><button onclick="window.print()">🖨 Printează / PDF</button><button class="sec" onclick="window.close()">Închide</button></div>
+<h1>Listă de inventariere — componente plan</h1>
+<div class="sub">Săptămâna <b>${esc(S.planCurrentWeek||'—')}</b> · filtru: <b>${filtLbl}</b> ·
+  generat ${new Date().toLocaleString('ro-RO')}</div>
+<div class="kpis">
+  <div class="kpi"><span>Produse finale</span><b>${data.length}</b></div>
+  <div class="kpi"><span>Componente</span><b>${nComp}</b></div>
+  <div class="kpi"><span>Sub necesar</span><b style="color:#dc2626">${nLipsa}</b></div>
+</div>
+${blocks}
+</body></html>`);
+  w.document.close();
+}
+
+function exportInventarExcel(){
+  if(!S.planData?.size){showToast('Planul este gol','err',2500);return;}
+  const data=buildInventarData();
+  if(!data.length){showToast('Nicio componentă pentru filtrul curent.','err',3000);return;}
+  const aoa=[['Produs final','FP name','Plan (buc)','Cod MOVEX','Denumire','Tip',
+              'Necesar','On Hand','WIP','Observatii WIP (workcenter: cantitate)','Locatii stoc',
+              'Lipsa','Cantitate numarata','Observatii']];
+  data.forEach(g=>{
+    g.comps.forEach(c=>{
+      aoa.push([g.fp,g.fpName,g.planQty,c.matNo,c.matName,c.type,
+        c.needed,c.onHand,c.wip,_invWipTxt(c),
+        c.locs.map(l=>`${l.loc}: ${l.qty}${l.excluded?' (exclus)':''}`).join(' · '),
+        c.lipsa>0?c.lipsa:0,'','']);
+    });
+  });
+  const wb=XLSX.utils.book_new();const ws=XLSX.utils.aoa_to_sheet(aoa);
+  ws['!cols']=[{wch:18},{wch:26},{wch:10},{wch:20},{wch:30},{wch:9},
+               {wch:11},{wch:11},{wch:10},{wch:38},{wch:28},{wch:10},{wch:16},{wch:22}];
+  XLSX.utils.book_append_sheet(wb,ws,'Inventariere');
+  XLSX.writeFile(wb,`Inventariere_${(S.planCurrentWeek||'plan')}_${new Date().toISOString().slice(0,10)}.xlsx`);
+}
+
 function renderPlanificare(){
   const page=dv('plan-page');
 
@@ -8671,6 +8887,18 @@ function renderPlanificare(){
   const expBtn=el('button','tbtn');expBtn.innerHTML='⬇ Export Excel';
   expBtn.addEventListener('click',exportPlan);
   tb.appendChild(expBtn);
+
+  const invBtn=el('button','tbtn');invBtn.innerHTML='📋 Listă inventariere';
+  invBtn.title='Lista componentelor produselor din plan (respectă filtrul MAKE / PURCHASE), pentru inventar fizic';
+  invBtn.style.cssText='border-color:#0891b2;color:#0e7490;background:#ecfeff;font-weight:700';
+  invBtn.addEventListener('click',openInventarReport);
+  tb.appendChild(invBtn);
+
+  const invXlsBtn=el('button','tbtn');invXlsBtn.innerHTML='⬇ Inventar Excel';
+  invXlsBtn.title='Aceeași listă de inventariere, în Excel';
+  invXlsBtn.style.cssText='border-color:#16a34a;color:#15803d;background:#f0fdf4;font-weight:700';
+  invXlsBtn.addEventListener('click',exportInventarExcel);
+  tb.appendChild(invXlsBtn);
 
   const loadRepBtn=el('button','tbtn');loadRepBtn.innerHTML='📊 Raport incarcare WC';
   loadRepBtn.title='Estimare printabila a incarcarii pe workcentere pentru planul saptamanii curente';
