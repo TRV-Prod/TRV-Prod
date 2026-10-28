@@ -8751,8 +8751,10 @@ function buildInventarData(){
 
     const mk=(n,mult)=>{
       const unQty=parseFloat(String(n.qty??1).replace(',','.'))||1;
-      const nd=needsMap.get(n.matNo);
-      const needed=(nd&&nd.needed!=null)?nd.needed:(mult*unQty*(planQty||1));
+      // Cantitatea acestei ramuri: produsul cantitatilor unitare de la produsul
+      // final pana aici. needsMap contine TOTALUL cumulat pe reper (toate ramurile),
+      // deci nu poate fi folosit per aparitie — ar repeta totalul la fiecare parinte.
+      const needed=mult*unQty*(planQty||1);
       const st=S.stockIdx?.get(n.matNo)||{onHand:0,totalWIP:0,wipByWC:{}};
       const wipE=Object.entries(st.wipByWC||{}).filter(e=>e[1]>0).sort((a,b)=>b[1]-a[1]);
       const repeat=seen.has(n.matNo);
@@ -8834,13 +8836,12 @@ function buildInventarByComp(data){
         m.set(c.matNo,e);
       }
       if(!e.matName&&c.matName)e.matName=c.matName;
-      // acelasi reper poate aparea de mai multe ori in acelasi produs final
-      // (ramuri diferite) — necesarul vine deja cumulat din calcNeeds,
-      // deci se ia o singura data per produs final
-      if(!e.usedIn.has(g.fp)){
-        e.usedIn.set(g.fp,{fp:g.fp,fpName:g.fpName,qty:c.needed,planQty:g.planQty});
-        e.total+=c.needed;
-      }
+      // Acelasi reper poate aparea sub mai multi parinti ai aceluiasi produs
+      // final — cantitatile acestor ramuri se ADUNA.
+      const prev=e.usedIn.get(g.fp);
+      if(prev){prev.qty=Math.round((prev.qty+c.needed)*1000)/1000;}
+      else e.usedIn.set(g.fp,{fp:g.fp,fpName:g.fpName,qty:c.needed,planQty:g.planQty});
+      e.total=Math.round((e.total+c.needed)*1000)/1000;
       if(c.parent)e.parents.add(c.parent);
     });
   });
@@ -9621,9 +9622,9 @@ function _buildPlanTbody(wrap){
       const renderBomRows=(nodes,depth,mult)=>{
         nodes.forEach(n=>{
           const unQty=parseFloat(String(n.qty??1).replace(',','.'))||1;
-          // Needed comes from calcNeeds (identical to Structura), not manual multiplication
-          const nd=needsMap.get(n.matNo);
-          const needed=(nd&&nd.needed!=null)?nd.needed:(mult*unQty*planQtyVal);
+          // Cantitatea acestei ramuri (nu totalul cumulat pe reper din needsMap:
+          // acela e suma tuturor ramurilor si s-ar repeta la fiecare parinte).
+          const needed=mult*unQty*planQtyVal;
           const st=S.stockIdx?.get(n.matNo)||{onHand:0,totalWIP:0,wipByWC:{}};
           const oh=st.onHand||0;
           const lipsa=Math.max(0,needed-oh);
