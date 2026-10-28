@@ -1302,8 +1302,9 @@ const S={
   paintIdx:null,
   masini:null,
   livFilter:{q:'',cols:{},sortCol:'Date',sortDir:'desc',hidden:[]},  // Livrari: cautare + filtre
-  subcoCfg:{days:{},defaultDays:10},   // zile de executie per subcontractor
-  subcoState:{sub:'plan',q:'',cols:{},sortCol:null,sortDir:'asc',months:6,ignoreStock:false},
+  subcoCfg:{days:{},defaultDays:10,sent:{}},  // zile per subcontractor + cantitati trimise
+  subcoState:{sub:'plan',q:'',cols:{},sortCol:null,sortDir:'asc',months:6,ignoreStock:false,
+               onlyToSend:false,group:true,expanded:[]},
   stocklistData:null,
   stocklistIdx:null,
   asmFP:null,
@@ -7669,7 +7670,7 @@ function loadSubcoCfgLocal(){
   try{
     const d=JSON.parse(localStorage.getItem(SUBCO_CFG_KEY)||'null');
     if(d&&typeof d==='object'){
-      S.subcoCfg={days:d.days||{},defaultDays:d.defaultDays??10};
+      S.subcoCfg={days:d.days||{},defaultDays:d.defaultDays??10,sent:d.sent||{}};
     }
   }catch{}
 }
@@ -7677,7 +7678,7 @@ async function loadSubcoCfgRemote(){
   if(!S.sbCfg)return;
   try{
     const d=await sbDownload(S.sbCfg,'data-subco.json');
-    if(d&&typeof d==='object'&&d.days)S.subcoCfg={days:d.days||{},defaultDays:d.defaultDays??10};
+    if(d&&typeof d==='object'&&d.days)S.subcoCfg={days:d.days||{},defaultDays:d.defaultDays??10,sent:d.sent||S.subcoCfg?.sent||{}};
   }catch(e){console.warn('loadSubcoCfgRemote',e);}
 }
 
@@ -7845,6 +7846,7 @@ const SUBCO_PLAN_COLS=[
   {k:'onHand',   l:'Stoc',         w:80,  t:'num'},
   {k:'customer', l:'Client',       w:170, t:'txt'},
   {k:'coNo',     l:'Comandă',      w:95,  t:'txt'},
+  {k:'sent',     l:'De trimis',     w:92,  t:'inp'},
 ];
 const SUBCO_LIST_COLS=[
   {k:'supplier', l:'Subcontractor',w:190, t:'txt'},
@@ -7879,6 +7881,50 @@ function _subcoRaw(r,c){
   const v=r[c.k];
   if(c.t==='num')return (v==null||v==='')?null:Number(v);
   return String(v??'').trim();
+}
+
+/* Total necesar pe (subcontractor + reper), pentru filtrul "doar de trimis" */
+function _subcoTotals(rows){
+  const m=new Map();
+  (rows||[]).forEach(r=>{
+    const k=r.supplier+'||'+r.productNo;
+    const e=m.get(k)||{need:0,onHand:r.onHand||0};
+    e.need=Math.round((e.need+(r.need||0))*1000)/1000;
+    m.set(k,e);
+  });
+  return m;
+}
+/* Cantitatile introduse manual (cate bucati trimit efectiv) */
+function subcoSentGet(key){
+  const v=S.subcoCfg?.sent?.[key];
+  return (v==null||v==='')?'':String(v);
+}
+function subcoSentSet(key,val){
+  if(!S.subcoCfg.sent)S.subcoCfg.sent={};
+  const raw=String(val??'').trim().replace(',','.');
+  if(!raw)delete S.subcoCfg.sent[key];
+  else S.subcoCfg.sent[key]=Math.max(0,parseFloat(raw)||0);
+  saveSubcoCfg();
+}
+/* Grupeaza liniile pe (subcontractor + reper) */
+function _subcoGroup(rows){
+  const m=new Map();
+  (rows||[]).forEach(r=>{
+    const k=r.supplier+'||'+r.productNo;
+    let g=m.get(k);
+    if(!g){
+      g={_key:k,_group:true,supplier:r.supplier,productNo:r.productNo,prodName:r.prodName,
+         info:r.info,days:r.days,onHand:r.onHand,need:0,sendBy:r.sendBy,reqDt:r.reqDt,
+         status:r.status,slack:r.slack,fp:'',fpName:'',customer:'',coNo:'',lines:[]};
+      m.set(k,g);
+    }
+    g.need=Math.round((g.need+(r.need||0))*1000)/1000;
+    if((r.sendBy||'9999')<(g.sendBy||'9999')){g.sendBy=r.sendBy;g.reqDt=r.reqDt;g.slack=r.slack;}
+    const rank={late:0,urgent:1,ok:2,nd:3};
+    if((rank[r.status]??3)<(rank[g.status]??3))g.status=r.status;
+    g.lines.push(r);
+  });
+  return [...m.values()];
 }
 
 function renderSubco(){
@@ -8010,6 +8056,22 @@ function _subcoRenderTable(page,allRows,COLS,mode){
       if((st.months||6)===m)o.selected=true;mSel.appendChild(o);});
     mSel.addEventListener('change',()=>{st.months=parseInt(mSel.value)||6;render();});
     tb.appendChild(mSel);
+
+    const mkChk=(label,prop,title,col)=>{
+      const lab=el('label');
+      const on=!!st[prop];
+      lab.style.cssText='display:inline-flex;align-items:center;gap:6px;height:28px;padding:0 10px;'+
+        'border-radius:6px;cursor:pointer;font-size:11.5px;font-weight:700;white-space:nowrap;'+
+        'border:1.5px solid '+(on?col:'var(--border)')+';background:'+(on?col+'14':'#fff')+';color:'+(on?col:'var(--text2)');
+      lab.title=title;
+      const cb=el('input');cb.type='checkbox';cb.checked=on;
+      cb.style.cssText='width:14px;height:14px;cursor:pointer;margin:0';
+      cb.addEventListener('change',()=>{st[prop]=cb.checked;render();});
+      lab.appendChild(cb);lab.appendChild(document.createTextNode(label));
+      tb.appendChild(lab);
+    };
+    mkChk('Doar de trimis','onlyToSend','Ascunde reperele al caror necesar total este acoperit de stocul existent','#b45309');
+    mkChk('Cumulat pe reper','group','Grupeaza liniile pe reper; click pe rand pentru a vedea comenzile din care provine','#1d4ed8');
   }
 
   const qInp=el('input');qInp.type='search';qInp.id='subco-q';
@@ -8049,7 +8111,16 @@ function _subcoRenderTable(page,allRows,COLS,mode){
 
   function filtered(){
     const q=(st.q||'').trim().toLowerCase();
-    let out=allRows.filter(r=>{
+    // "Doar de trimis": necesarul TOTAL pe reper trebuie sa depaseasca stocul
+    let base=allRows;
+    if(mode==='plan'&&st.onlyToSend){
+      const tot=_subcoTotals(allRows);
+      base=allRows.filter(r=>{
+        const e=tot.get(r.supplier+'||'+r.productNo);
+        return e?(e.need>(e.onHand||0)):true;
+      });
+    }
+    let out=base.filter(r=>{
       if(q){
         let hit=false;
         for(const c of COLS){if(String(_subcoCellText(r,c)).toLowerCase().includes(q)){hit=true;break;}}
@@ -8090,12 +8161,16 @@ function _subcoRenderTable(page,allRows,COLS,mode){
       const sup=new Set(rows.map(r=>r.supplier));
       const comp=new Set(rows.map(r=>r.productNo));
       const qty=rows.reduce((s2,r)=>s2+(r.need||0),0);
+      const tot=_subcoTotals(rows);
+      let planned=0;
+      tot.forEach((v,k)=>{planned+=parseFloat(subcoSentGet('G|'+k.replace('||','|')))||0;});
       kpi.innerHTML=
         `<span><b style="font-size:14px">${rows.length.toLocaleString('ro-RO')}</b> poziții</span>`+
         `<span style="color:#dc2626">✕ <b>${late}</b> întârziate</span>`+
         `<span style="color:#b45309">▲ <b>${urg}</b> urgente (≤7 zile)</span>`+
         `<span><b>${comp.size}</b> repere · <b>${sup.size}</b> subcontractori</span>`+
-        `<span>Cantitate totală: <b>${qty.toLocaleString('ro-RO',{maximumFractionDigits:2})}</b> buc</span>`;
+        `<span>Necesar total: <b>${qty.toLocaleString('ro-RO',{maximumFractionDigits:2})}</b> buc</span>`+
+        (planned>0?`<span style="color:#15803d">Planificat de trimis: <b>${planned.toLocaleString('ro-RO',{maximumFractionDigits:2})}</b> buc</span>`:'');
     } else {
       const sup=new Set(rows.map(r=>r.supplier));
       const comp=new Set(rows.map(r=>r.productNo));
@@ -8118,18 +8193,21 @@ function _subcoRenderTable(page,allRows,COLS,mode){
       th.textContent=c.l+(sorted?(st.sortDir==='desc'?' ▼':' ▲'):'');
       th.style.cssText=`padding:7px 8px;text-align:${c.t==='num'?'right':'left'};font-size:9.5px;font-weight:800;`+
         `text-transform:uppercase;letter-spacing:.04em;white-space:nowrap;width:${c.w}px;min-width:${c.w}px;cursor:pointer;user-select:none`;
-      th.title='Click pentru sortare';
-      th.addEventListener('click',()=>{
-        if(st.sortCol===c.k)st.sortDir=(st.sortDir==='asc')?'desc':'asc';
-        else{st.sortCol=c.k;st.sortDir='asc';}
-        rebuild();
-      });
+      if(c.t!=='inp'){
+        th.title='Click pentru sortare';
+        th.addEventListener('click',()=>{
+          if(st.sortCol===c.k)st.sortDir=(st.sortDir==='asc')?'desc':'asc';
+          else{st.sortCol=c.k;st.sortDir='asc';}
+          rebuild();
+        });
+      } else { th.style.cursor='default';th.title='Cantitatea pe care o trimiti la subcontractare'; }
       hr.appendChild(th);
     });
     thead.appendChild(hr);
     const fr=el('tr');fr.style.cssText='background:#fff;position:sticky;top:27px;z-index:2';
     COLS.forEach(c=>{
       const th=el('th');th.style.cssText='padding:2px 4px;background:#fff;border-bottom:1.5px solid var(--border)';
+      if(c.t==='inp'){fr.appendChild(th);return;}
       const inp=el('input');inp.type='text';
       inp.placeholder=c.t==='num'?'>10, 1-5…':'filtru…';
       inp.value=st.cols[c.k]||'';
@@ -8148,18 +8226,68 @@ function _subcoRenderTable(page,allRows,COLS,mode){
 
     const LIMIT=1200;
     const tbody=el('tbody');
-    rows.slice(0,LIMIT).forEach((r,i)=>{
+    // in modul "cumulat", randurile devin grupuri (reper) cu linii expandabile
+    let display=rows;
+    if(mode==='plan'&&st.group){
+      const groups=_subcoGroup(rows);
+      if(st.sortCol){
+        const c=COLS.find(x=>x.k===st.sortCol);
+        if(c){const dir=st.sortDir==='desc'?-1:1;
+          groups.sort((a,b)=>{
+            const va=_subcoRaw(a,c),vb=_subcoRaw(b,c);
+            if(typeof va==='number'&&typeof vb==='number')return ((va||0)-(vb||0))*dir;
+            return String(va??'').localeCompare(String(vb??''),'ro',{numeric:true})*dir;});
+        }
+      } else groups.sort((a,b)=>(a.sendBy||'9999').localeCompare(b.sendBy||'9999')||a.supplier.localeCompare(b.supplier,'ro'));
+      display=[];
+      groups.forEach(g=>{
+        display.push(g);
+        if(st.expanded.includes(g._key))g.lines.forEach(l=>display.push({...l,_child:true,_pkey:g._key}));
+      });
+    }
+    display.slice(0,LIMIT).forEach((r,i)=>{
       const tr=el('tr');
       const stDef=_SUBCO_ST[r.status];
-      tr.style.cssText=`border-bottom:1px solid #f1f5f9;background:${
+      tr.style.cssText=`border-bottom:1px solid ${r._group?'#dbeafe':'#f1f5f9'};background:${
+        r._child?'#fbfdff':
         (mode==='plan'&&r.status==='late')?'#fef2f2':
         (mode==='plan'&&r.status==='urgent')?'#fffbeb':(i%2?'#f8fafc':'#fff')}`;
+      if(r._group){
+        tr.style.cursor='pointer';
+        tr.title='Click pentru a vedea comenzile din care rezulta necesarul';
+        tr.addEventListener('click',e=>{
+          if(e.target&&e.target.tagName==='INPUT')return;
+          const i2=st.expanded.indexOf(r._key);
+          if(i2>=0)st.expanded.splice(i2,1);else st.expanded.push(r._key);
+          rebuild();
+        });
+      }
       COLS.forEach(c=>{
         const td=el('td');
         const isNum=c.t==='num';
         td.style.cssText=`padding:4px 8px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;`+
           `max-width:${c.w}px;text-align:${isNum?'right':'left'}`+(isNum?';font-family:monospace':'');
-        if(c.k==='status'&&stDef){
+        if(c.k==='sent'){
+          // cantitatea pe care o trimit efectiv — se salveaza
+          const key=(r._group?'G|':'L|')+r.supplier+'|'+r.productNo+
+            (r._group?'':'|'+(r.coNo||'')+'|'+(r.reqDt||''));
+          const inp=el('input');inp.type='text';inp.inputMode='decimal';
+          inp.value=subcoSentGet(key);
+          inp.placeholder='—';
+          const done=parseFloat(subcoSentGet(key))||0;
+          inp.style.cssText='width:100%;height:22px;padding:0 5px;border:1.5px solid '+
+            (done>0?(done>=(r.need||0)?'#86efac':'#fcd34d'):'#e2e8f0')+';border-radius:4px;'+
+            'font-size:11px;font-weight:800;text-align:right;font-family:monospace;background:'+
+            (done>0?(done>=(r.need||0)?'#f0fdf4':'#fffbeb'):'#fff')+';color:'+
+            (done>0?(done>=(r.need||0)?'#15803d':'#92400e'):'#0f172a');
+          ['click','mousedown','dblclick'].forEach(ev=>inp.addEventListener(ev,e=>e.stopPropagation()));
+          const save=()=>{subcoSentSet(key,inp.value);rebuild();};
+          inp.addEventListener('change',save);
+          inp.addEventListener('blur',save);
+          inp.addEventListener('keydown',e=>{if(e.key==='Enter'){e.preventDefault();inp.blur();}});
+          td.style.padding='2px 5px';
+          td.appendChild(inp);
+        } else if(c.k==='status'&&stDef){
           const pill=sp('',`${stDef.ico} ${stDef.l}`);
           pill.style.cssText=`display:inline-block;padding:1px 7px;border-radius:9px;font-size:9.5px;font-weight:800;`+
             `color:${stDef.col};background:${stDef.bg};border:1px solid ${stDef.bd}`;
@@ -8170,7 +8298,22 @@ function _subcoRenderTable(page,allRows,COLS,mode){
           if(txt&&txt!=='—')td.title=txt;
           if(c.k==='slack'&&r.slack!=null)td.style.color=r.slack<0?'#dc2626':r.slack<=7?'#b45309':'#15803d';
           if(c.k==='need')td.style.fontWeight='800';
-          if(c.k==='productNo'||c.k==='fp'){
+          if(c.k==='productNo'){
+            td.style.fontWeight='700';td.style.color='#1e3a5f';
+            if(r._group){
+              td.textContent='';
+              const tg=sp('',st.expanded.includes(r._key)?'▾ ':'▸ ');
+              tg.style.cssText='color:#1d4ed8;font-size:10px';
+              td.appendChild(tg);
+              td.appendChild(document.createTextNode(txt));
+              const n=sp('',' ('+r.lines.length+')');
+              n.style.cssText='color:#64748b;font-size:9.5px;font-weight:700';
+              td.appendChild(n);
+            } else if(r._child){
+              td.style.paddingLeft='22px';td.style.color='#64748b';td.style.fontWeight='600';
+            }
+            _attachItemCtx(td,String(r[c.k]||''));
+          } else if(c.k==='fp'){
             td.style.fontWeight='700';td.style.color='#1e3a5f';
             _attachItemCtx(td,String(r[c.k]||''));
           }
@@ -8198,12 +8341,18 @@ function _subcoRenderTable(page,allRows,COLS,mode){
   rebuild();
 }
 
+function _subcoFillSent(rows){
+  return (rows||[]).map(r=>({...r,
+    sent:subcoSentGet('G|'+r.supplier+'|'+r.productNo)||
+         subcoSentGet('L|'+r.supplier+'|'+r.productNo+'|'+(r.coNo||'')+'|'+(r.reqDt||''))||''}));
+}
 function _subcoExport(COLS,mode){
-  const rows=S._subcoLastRows||[];
+  const rows=_subcoFillSent(S._subcoLastRows||[]);
   if(!rows.length){showToast('Nimic de exportat','err',2000);return;}
   const data=[COLS.map(c=>c.l)];
   rows.forEach(r=>data.push(COLS.map(c=>{
     if(c.k==='status')return _SUBCO_ST[r.status]?.l||'';
+    if(c.t==='inp')return (r.sent===''||r.sent==null)?'':Number(r.sent);
     if(c.t==='num')return (r[c.k]==null||r[c.k]==='')?'':Number(r[c.k]);
     if(c.t==='date')return _fmtIso(r[c.k]);
     return String(r[c.k]??'').trim();
@@ -8215,7 +8364,7 @@ function _subcoExport(COLS,mode){
 }
 
 function _subcoPrint(COLS,mode){
-  const rows=S._subcoLastRows||[];
+  const rows=_subcoFillSent(S._subcoLastRows||[]);
   if(!rows.length){showToast('Nimic de printat','err',2000);return;}
   const esc=t=>String(t==null?'':t).replace(/[&<>]/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;'}[m]));
   const trs=rows.slice(0,2500).map(r=>'<tr>'+COLS.map(c=>{
