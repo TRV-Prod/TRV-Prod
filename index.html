@@ -7737,6 +7737,34 @@ function buildSubcoSuppliers(){
     .sort((a,b)=>a.supplier.localeCompare(b.supplier,'ro'));
 }
 
+/* Stoc utilizabil pentru un reper trimis la subcontractare:
+   On Hand + piesele din WIP care au trecut DEJA de operatia de Subcontracting
+   (sunt la un workcenter cu secventa ulterioara). Acelea nu mai trebuie trimise. */
+function _subcoAvailable(fpCtx,productNo){
+  const st=S.stockIdx?.get(productNo)||{onHand:0,wipByWC:{}};
+  const onHand=Math.max(0,st.onHand||0);
+  const rawOps=S.bowIdx?.get(`${fpCtx}__${productNo}`)||[];
+  if(!rawOps.length)return {onHand,wipAfter:0,avail:onHand,wipAfterList:[]};
+  const ops=rawOps.map(op=>({
+    seq:parseFloat(String(op['Ope seq']||'0').replace(',','.'))||0,
+    productSeq:parseFloat(String(op['Product seq']||'0').replace(',','.'))||0,
+    wcName:str(op['Ope name']||op['Ope descr']||'?'),
+    isSub:_isSubcoOp(op),
+  })).sort((a,b)=>b.productSeq!==a.productSeq?(b.productSeq-a.productSeq):(a.seq-b.seq));
+  const subIdx=ops.findIndex(o=>o.isSub);
+  if(subIdx<0)return {onHand,wipAfter:0,avail:onHand,wipAfterList:[]};
+  let wipAfter=0;const lst=[];
+  for(const [poCol,qty] of Object.entries(st.wipByWC||{})){
+    if(!qty||qty<=0)continue;
+    const wcNamePO=wcLabel(poCol).toLowerCase();
+    // cel mai avansat workcenter care corespunde acestei coloane de WIP
+    let bestIdx=-1;
+    for(let i=ops.length-1;i>=0;i--){if(ops[i].wcName.toLowerCase()===wcNamePO){bestIdx=i;break;}}
+    if(bestIdx>subIdx){wipAfter+=qty;lst.push({wc:wcLabel(poCol),qty});}
+  }
+  return {onHand,wipAfter,avail:onHand+wipAfter,wipAfterList:lst};
+}
+
 /* Cantitatea cumulata a fiecarui component pentru 1 buc din produsul final */
 function _subcoQtyPerFp(fp){
   const m=new Map();
@@ -7820,8 +7848,8 @@ function buildSubcoPlan(){
       const perUnit=(c.productNo===fp)?1:(qmap.get(c.productNo)||0);
       if(perUnit<=0)continue;
       const need=perUnit*openQty;
-      const stock=S.stockIdx?.get(c.productNo)||{onHand:0};
-      const onHand=Math.max(0,stock.onHand||0);
+      const av=_subcoAvailable(fp,c.productNo);
+      const onHand=av.onHand;
       const days=subcoDaysFor(c.supplier);
       const sendBy=_dateMinusDays(reqDt,days);
       const slack=_daysBetween(sendBy,todayIso);   // zile ramase pana la trimitere
@@ -7833,6 +7861,9 @@ function buildSubcoPlan(){
         fp, fpName:c.fpName||str(ob['Item_name']||''),
         need: Math.round(need*100)/100,
         onHand,
+        wipAfter:Math.round((av.wipAfter||0)*100)/100,
+        avail:Math.round((av.avail||0)*100)/100,
+        wipAfterTxt:(av.wipAfterList||[]).map(x=>`${x.wc}: ${fmtN(x.qty)}`).join(' · '),
         customer:str(ob['Customer_name']||''),
         coNo:str(ob['CO_no']||''),
         obQty:openQty,
@@ -7858,6 +7889,8 @@ const SUBCO_PLAN_COLS=[
   {k:'fpName',   l:'FP name',      w:170, t:'txt'},
   {k:'need',     l:'Cant. necesară',w:105,t:'num'},
   {k:'onHand',   l:'Stoc',         w:80,  t:'num'},
+  {k:'wipAfter', l:'WIP după subco',w:105, t:'num'},
+  {k:'avail',    l:'Disponibil',    w:92,  t:'num'},
   {k:'customer', l:'Client',       w:170, t:'txt'},
   {k:'coNo',     l:'Comandă',      w:95,  t:'txt'},
   {k:'sent',     l:'De trimis',     w:92,  t:'inp'},
@@ -7904,7 +7937,8 @@ function _subcoTotals(rows){
   const m=new Map();
   (rows||[]).forEach(r=>{
     const k=r.supplier+'||'+r.productNo;
-    const e=m.get(k)||{need:0,onHand:r.onHand||0};
+    // "disponibil" = On Hand + WIP care a trecut deja de subcontractare
+    const e=m.get(k)||{need:0,onHand:(r.avail!=null?r.avail:(r.onHand||0))};
     e.need=Math.round((e.need+(r.need||0))*1000)/1000;
     m.set(k,e);
   });
@@ -7932,7 +7966,8 @@ function _subcoGroup(rows){
     let g=m.get(k);
     if(!g){
       g={_key:k,_group:true,supplier:r.supplier,proc:r.proc,productNo:r.productNo,prodName:r.prodName,
-         info:r.info,days:r.days,onHand:r.onHand,need:0,sendBy:r.sendBy,reqDt:r.reqDt,
+         info:r.info,days:r.days,onHand:r.onHand,wipAfter:r.wipAfter,avail:r.avail,
+         wipAfterTxt:r.wipAfterTxt,need:0,sendBy:r.sendBy,reqDt:r.reqDt,
          status:r.status,slack:r.slack,fp:'',fpName:'',customer:'',coNo:'',lines:[]};
       m.set(k,g);
     }
@@ -8490,6 +8525,15 @@ function _subcoRenderTable(page,allRows,COLS0,mode){
           td.textContent=txt;
           if(txt&&txt!=='—')td.title=txt;
           if(c.k==='slack'&&r.slack!=null)td.style.color=r.slack<0?'#dc2626':r.slack<=7?'#b45309':'#15803d';
+          if(c.k==='wipAfter'){
+            td.style.color=(r.wipAfter>0)?'#7c3aed':'#cbd5e1';
+            if(r.wipAfterTxt){td.title='Piese care au trecut deja de subcontractare:\n'+r.wipAfterTxt;td.style.cursor='help';}
+          }
+          if(c.k==='avail'){
+            td.style.fontWeight='800';
+            td.style.color=(r.avail>=(r.need||0)&&r.avail>0)?'#15803d':(r.avail>0?'#b45309':'#cbd5e1');
+            td.title='On Hand '+fmtN(r.onHand||0)+' + WIP după subco '+fmtN(r.wipAfter||0);
+          }
           if(c.k==='need')td.style.fontWeight='800';
           if(c.k==='productNo'){
             td.style.fontWeight='700';td.style.color='#1e3a5f';
