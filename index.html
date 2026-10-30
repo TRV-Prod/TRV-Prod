@@ -1302,10 +1302,10 @@ const S={
   paintIdx:null,
   masini:null,
   livFilter:{q:'',cols:{},sortCol:'Date',sortDir:'desc',hidden:[]},  // Livrari: cautare + filtre
-  subcoCfg:{days:{},defaultDays:10,sent:{},groups:{}},  // zile, cantitati trimise, grupa de proces
+  subcoCfg:{days:{},defaultDays:10,sent:{},done:{},groups:{}},  // zile, planificat/trimis, grupa de proces
   subcoState:{sub:'plan',q:'',cols:{},sortCol:null,sortDir:'asc',months:6,ignoreStock:false,
                onlyToSend:false,group:true,expanded:[],procGroup:'',
-               colOrder:{},colW:{}},
+               colOrder:{},colW:{},hiddenCols:{}},
   stocklistData:null,
   stocklistIdx:null,
   asmFP:null,
@@ -7681,7 +7681,7 @@ function loadSubcoCfgLocal(){
   try{
     const d=JSON.parse(localStorage.getItem(SUBCO_CFG_KEY)||'null');
     if(d&&typeof d==='object'){
-      S.subcoCfg={days:d.days||{},defaultDays:d.defaultDays??10,sent:d.sent||{},groups:d.groups||{}};
+      S.subcoCfg={days:d.days||{},defaultDays:d.defaultDays??10,sent:d.sent||{},done:d.done||{},groups:d.groups||{}};
     }
   }catch{}
 }
@@ -7689,7 +7689,8 @@ async function loadSubcoCfgRemote(){
   if(!S.sbCfg)return;
   try{
     const d=await sbDownload(S.sbCfg,'data-subco.json');
-    if(d&&typeof d==='object'&&d.days)S.subcoCfg={days:d.days||{},defaultDays:d.defaultDays??10,sent:d.sent||S.subcoCfg?.sent||{},groups:d.groups||S.subcoCfg?.groups||{}};
+    if(d&&typeof d==='object'&&d.days)S.subcoCfg={days:d.days||{},defaultDays:d.defaultDays??10,
+      sent:d.sent||S.subcoCfg?.sent||{},done:d.done||S.subcoCfg?.done||{},groups:d.groups||S.subcoCfg?.groups||{}};
   }catch(e){console.warn('loadSubcoCfgRemote',e);}
 }
 
@@ -7860,6 +7861,7 @@ const SUBCO_PLAN_COLS=[
   {k:'customer', l:'Client',       w:170, t:'txt'},
   {k:'coNo',     l:'Comandă',      w:95,  t:'txt'},
   {k:'sent',     l:'De trimis',     w:92,  t:'inp'},
+  {k:'done',     l:'Trimise',       w:86,  t:'inp'},
 ];
 const SUBCO_LIST_COLS=[
   {k:'supplier', l:'Subcontractor',w:180, t:'txt'},
@@ -7908,18 +7910,20 @@ function _subcoTotals(rows){
   });
   return m;
 }
-/* Cantitatile introduse manual (cate bucati trimit efectiv) */
-function subcoSentGet(key){
-  const v=S.subcoCfg?.sent?.[key];
+/* Cantitati introduse manual: 'sent' = planificat de trimis, 'done' = efectiv trimise */
+function subcoQtyGet(bucket,key){
+  const v=S.subcoCfg?.[bucket]?.[key];
   return (v==null||v==='')?'':String(v);
 }
-function subcoSentSet(key,val){
-  if(!S.subcoCfg.sent)S.subcoCfg.sent={};
+function subcoQtySet(bucket,key,val){
+  if(!S.subcoCfg[bucket])S.subcoCfg[bucket]={};
   const raw=String(val??'').trim().replace(',','.');
-  if(!raw)delete S.subcoCfg.sent[key];
-  else S.subcoCfg.sent[key]=Math.max(0,parseFloat(raw)||0);
+  if(!raw)delete S.subcoCfg[bucket][key];
+  else S.subcoCfg[bucket][key]=Math.max(0,parseFloat(raw)||0);
   saveSubcoCfg();
 }
+function subcoSentGet(key){return subcoQtyGet('sent',key);}
+function subcoSentSet(key,val){subcoQtySet('sent',key,val);}
 /* Grupeaza liniile pe (subcontractor + reper) */
 function _subcoGroup(rows){
   const m=new Map();
@@ -8085,12 +8089,13 @@ function _subcoRenderPlan(page){
 /* ── Tabel comun (lista / planificare) cu cautare, filtre, sortare ── */
 /* Ordinea si latimile coloanelor, per tab (plan / list), persistate local */
 function _subcoSaveCols(){
-  try{localStorage.setItem('pps_subco_cols',JSON.stringify({order:S.subcoState.colOrder,w:S.subcoState.colW}));}catch{}
+  try{localStorage.setItem('pps_subco_cols',JSON.stringify(
+    {order:S.subcoState.colOrder,w:S.subcoState.colW,hidden:S.subcoState.hiddenCols}));}catch{}
 }
 function _subcoLoadCols(){
   try{
     const d=JSON.parse(localStorage.getItem('pps_subco_cols')||'null');
-    if(d&&typeof d==='object'){S.subcoState.colOrder=d.order||{};S.subcoState.colW=d.w||{};}
+    if(d&&typeof d==='object'){S.subcoState.colOrder=d.order||{};S.subcoState.colW=d.w||{};S.subcoState.hiddenCols=d.hidden||{};}
   }catch{}
 }
 function _subcoOrderedCols(COLS,mode){
@@ -8099,8 +8104,9 @@ function _subcoOrderedCols(COLS,mode){
   let ord=(st.colOrder&&Array.isArray(st.colOrder[mode]))?st.colOrder[mode].filter(k=>keys.includes(k)):[];
   keys.forEach(k=>{if(!ord.includes(k))ord.push(k);});
   st.colOrder=st.colOrder||{};st.colOrder[mode]=ord;
+  const hid=(st.hiddenCols&&Array.isArray(st.hiddenCols[mode]))?st.hiddenCols[mode]:[];
   const byKey=new Map(COLS.map(c=>[c.k,c]));
-  return ord.map(k=>{
+  return ord.filter(k=>!hid.includes(k)).map(k=>{
     const c=byKey.get(k);
     const w=st.colW?.[mode+'|'+k];
     return (typeof w==='number'&&w>=0)?{...c,w}:c;
@@ -8187,10 +8193,16 @@ function _subcoRenderTable(page,allRows,COLS0,mode){
   prn.addEventListener('click',()=>_subcoPrint(COLS,mode));
   tb.appendChild(prn);
 
+  const colsBtn=el('button','tbtn');colsBtn.textContent='⚙ Coloane';
+  colsBtn.title='Alege ce coloane se afișează și în ce ordine';
+  colsBtn.addEventListener('click',()=>openSubcoColPicker(COLS0,mode,()=>rebuild()));
+  tb.appendChild(colsBtn);
+
   const rstCols=el('button','tbtn');rstCols.textContent='↔ Reset coloane';
   rstCols.title='Readuce ordinea și lățimile implicite ale coloanelor';
   rstCols.addEventListener('click',()=>{
     if(st.colOrder)delete st.colOrder[mode];
+    if(st.hiddenCols)delete st.hiddenCols[mode];
     Object.keys(st.colW||{}).forEach(k=>{if(k.startsWith(mode+'|'))delete st.colW[k];});
     _subcoSaveCols();render();
   });
@@ -8213,8 +8225,8 @@ function _subcoRenderTable(page,allRows,COLS0,mode){
     let base=allRows;
     if(mode==='plan'&&st.procGroup)base=base.filter(r=>String(r.proc||'')===st.procGroup);
     if(mode==='plan'&&st.onlyToSend){
-      const tot=_subcoTotals(allRows);
-      base=allRows.filter(r=>{
+      const tot=_subcoTotals(base);      // pe setul deja filtrat pe grupa
+      base=base.filter(r=>{
         const e=tot.get(r.supplier+'||'+r.productNo);
         return e?(e.need>(e.onHand||0)):true;
       });
@@ -8262,15 +8274,19 @@ function _subcoRenderTable(page,allRows,COLS0,mode){
       const comp=new Set(rows.map(r=>r.productNo));
       const qty=rows.reduce((s2,r)=>s2+(r.need||0),0);
       const tot=_subcoTotals(rows);
-      let planned=0;
-      tot.forEach((v,k)=>{planned+=parseFloat(subcoSentGet('G|'+k.replace('||','|')))||0;});
+      let planned=0,shipped=0;
+      tot.forEach((v,k)=>{
+        planned+=parseFloat(subcoQtyGet('sent','G|'+k.replace('||','|')))||0;
+        shipped+=parseFloat(subcoQtyGet('done','G|'+k.replace('||','|')))||0;
+      });
       kpi.innerHTML=
         `<span><b style="font-size:14px">${rows.length.toLocaleString('ro-RO')}</b> poziții</span>`+
         `<span style="color:#dc2626">✕ <b>${late}</b> întârziate</span>`+
         `<span style="color:#b45309">▲ <b>${urg}</b> urgente (≤7 zile)</span>`+
         `<span><b>${comp.size}</b> repere · <b>${sup.size}</b> subcontractori</span>`+
         `<span>Necesar total: <b>${qty.toLocaleString('ro-RO',{maximumFractionDigits:2})}</b> buc</span>`+
-        (planned>0?`<span style="color:#15803d">Planificat de trimis: <b>${planned.toLocaleString('ro-RO',{maximumFractionDigits:2})}</b> buc</span>`:'');
+        (planned>0?`<span style="color:#b45309">Planificat: <b>${planned.toLocaleString('ro-RO',{maximumFractionDigits:2})}</b> buc</span>`:'')+
+        (shipped>0?`<span style="color:#15803d">Trimise: <b>${shipped.toLocaleString('ro-RO',{maximumFractionDigits:2})}</b> buc</span>`:'');
     } else {
       const sup=new Set(rows.map(r=>r.supplier));
       const comp=new Set(rows.map(r=>r.productNo));
@@ -8439,21 +8455,26 @@ function _subcoRenderTable(page,allRows,COLS0,mode){
         td.style.cssText=`padding:4px 8px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;`+
           `width:${c.w}px;min-width:${c.w}px;max-width:${c.w}px;text-align:${isNum?'right':'left'}`+
           (isNum?';font-family:monospace':'');
-        if(c.k==='sent'){
-          // cantitatea pe care o trimit efectiv — se salveaza
+        if(c.t==='inp'){
+          const bucket=(c.k==='done')?'done':'sent';
           const key=(r._group?'G|':'L|')+r.supplier+'|'+r.productNo+
             (r._group?'':'|'+(r.coNo||'')+'|'+(r.reqDt||''));
           const inp=el('input');inp.type='text';inp.inputMode='decimal';
-          inp.value=subcoSentGet(key);
+          inp.value=subcoQtyGet(bucket,key);
           inp.placeholder='—';
-          const done=parseFloat(subcoSentGet(key))||0;
+          inp.title=(bucket==='done')?'Cantitatea deja trimisa la subcontractare'
+                                     :'Cantitatea pe care planifici sa o trimiti';
+          const v=parseFloat(subcoQtyGet(bucket,key))||0;
+          const full=v>=(r.need||0)&&v>0;
+          const col=(bucket==='done')?{b:'#60a5fa',bg:'#eff6ff',c:'#1d4ed8'}
+                                     :{b:'#fcd34d',bg:'#fffbeb',c:'#92400e'};
           inp.style.cssText='width:100%;height:22px;padding:0 5px;border:1.5px solid '+
-            (done>0?(done>=(r.need||0)?'#86efac':'#fcd34d'):'#e2e8f0')+';border-radius:4px;'+
+            (v>0?(full?'#86efac':col.b):'#e2e8f0')+';border-radius:4px;'+
             'font-size:11px;font-weight:800;text-align:right;font-family:monospace;background:'+
-            (done>0?(done>=(r.need||0)?'#f0fdf4':'#fffbeb'):'#fff')+';color:'+
-            (done>0?(done>=(r.need||0)?'#15803d':'#92400e'):'#0f172a');
+            (v>0?(full?'#f0fdf4':col.bg):'#fff')+';color:'+
+            (v>0?(full?'#15803d':col.c):'#0f172a');
           ['click','mousedown','dblclick'].forEach(ev=>inp.addEventListener(ev,e=>e.stopPropagation()));
-          const save=()=>{subcoSentSet(key,inp.value);rebuild();};
+          const save=()=>{subcoQtySet(bucket,key,inp.value);rebuild();};
           inp.addEventListener('change',save);
           inp.addEventListener('blur',save);
           inp.addEventListener('keydown',e=>{if(e.key==='Enter'){e.preventDefault();inp.blur();}});
@@ -8514,17 +8535,77 @@ function _subcoRenderTable(page,allRows,COLS0,mode){
 }
 
 function _subcoFillSent(rows){
-  return (rows||[]).map(r=>({...r,
-    sent:subcoSentGet('G|'+r.supplier+'|'+r.productNo)||
-         subcoSentGet('L|'+r.supplier+'|'+r.productNo+'|'+(r.coNo||'')+'|'+(r.reqDt||''))||''}));
+  const pick=(bucket,r)=>subcoQtyGet(bucket,'G|'+r.supplier+'|'+r.productNo)||
+    subcoQtyGet(bucket,'L|'+r.supplier+'|'+r.productNo+'|'+(r.coNo||'')+'|'+(r.reqDt||''))||'';
+  return (rows||[]).map(r=>({...r,sent:pick('sent',r),done:pick('done',r)}));
 }
+/* Alegerea coloanelor vizibile + ordinea lor, per sub-tab */
+function openSubcoColPicker(COLS0,mode,onChange){
+  const st=S.subcoState;
+  st.hiddenCols=st.hiddenCols||{};
+  if(!Array.isArray(st.hiddenCols[mode]))st.hiddenCols[mode]=[];
+  document.getElementById('subco-col-ov')?.remove();
+  const ov=dv('');ov.id='subco-col-ov';
+  ov.style.cssText='position:fixed;inset:0;background:rgba(0,0,0,.45);z-index:9500;display:flex;align-items:center;justify-content:center;padding:16px';
+  const md=dv('');md.style.cssText='background:#fff;border-radius:11px;width:min(430px,95vw);max-height:84vh;display:flex;flex-direction:column;overflow:hidden';
+  const h=dv('');h.style.cssText='padding:13px 17px;border-bottom:2px solid var(--border);display:flex;align-items:center;gap:10px';
+  h.innerHTML='<b style="font-size:14.5px;color:#1e3a5f">⚙ Coloane</b><span style="font-size:10.5px;color:#94a3b8">bifate = vizibile</span>';
+  const cl=el('button');cl.textContent='✕';
+  cl.style.cssText='margin-left:auto;border:none;background:#f1f5f9;border-radius:6px;width:28px;height:28px;cursor:pointer';
+  cl.addEventListener('click',()=>ov.remove());h.appendChild(cl);md.appendChild(h);
+  const list=dv('');list.style.cssText='flex:1;overflow:auto;padding:9px 17px 13px';
+  function draw(){
+    list.innerHTML='';
+    const ord=(st.colOrder&&st.colOrder[mode])?st.colOrder[mode]:COLS0.map(c=>c.k);
+    const byKey=new Map(COLS0.map(c=>[c.k,c]));
+    ord.forEach(k=>{
+      const c=byKey.get(k);if(!c)return;
+      const row=dv('');
+      row.style.cssText='display:flex;align-items:center;gap:9px;padding:6px 2px;border-bottom:1px solid #f8fafc;font-size:12.5px';
+      const cb=el('input');cb.type='checkbox';cb.checked=!st.hiddenCols[mode].includes(k);
+      cb.style.cssText='width:15px;height:15px;cursor:pointer';
+      cb.addEventListener('change',()=>{
+        if(cb.checked)st.hiddenCols[mode]=st.hiddenCols[mode].filter(x=>x!==k);
+        else if(!st.hiddenCols[mode].includes(k))st.hiddenCols[mode].push(k);
+        _subcoSaveCols();onChange();
+      });
+      row.appendChild(cb);
+      const nm=sp('',c.l||k);nm.style.cssText='flex:1;font-weight:600;color:#334155';row.appendChild(nm);
+      [['▲',-1],['▼',1]].forEach(([t,d])=>{
+        const bt=el('button');bt.textContent=t;
+        bt.style.cssText='width:24px;height:24px;border:1px solid var(--border);background:#fff;border-radius:5px;cursor:pointer;font-size:9px;color:#475569';
+        bt.addEventListener('click',()=>{
+          const cur=(st.colOrder[mode]||COLS0.map(x=>x.k)).slice();
+          const pos=cur.indexOf(k),np=pos+d;
+          if(np<0||np>=cur.length)return;
+          cur.splice(pos,1);cur.splice(np,0,k);
+          st.colOrder[mode]=cur;_subcoSaveCols();onChange();draw();
+        });
+        row.appendChild(bt);
+      });
+      list.appendChild(row);
+    });
+  }
+  draw();md.appendChild(list);
+  const ft=dv('');ft.style.cssText='padding:10px 17px;border-top:1px solid var(--border);display:flex;justify-content:space-between;gap:8px';
+  const rst=el('button');rst.textContent='↺ Toate';
+  rst.style.cssText='padding:7px 14px;border:1px solid var(--border);border-radius:6px;background:#fff;font-weight:700;font-size:12px;cursor:pointer';
+  rst.addEventListener('click',()=>{st.hiddenCols[mode]=[];_subcoSaveCols();onChange();draw();});
+  const ok=el('button');ok.textContent='Gata';
+  ok.style.cssText='padding:7px 20px;border:none;border-radius:6px;background:#1d4ed8;color:#fff;font-weight:800;font-size:12px;cursor:pointer';
+  ok.addEventListener('click',()=>ov.remove());
+  ft.appendChild(rst);ft.appendChild(ok);md.appendChild(ft);
+  ov.appendChild(md);ov.addEventListener('click',e=>{if(e.target===ov)ov.remove();});
+  document.body.appendChild(ov);
+}
+
 function _subcoExport(COLS,mode){
   const rows=_subcoFillSent(S._subcoLastRows||[]);
   if(!rows.length){showToast('Nimic de exportat','err',2000);return;}
   const data=[COLS.map(c=>c.l)];
   rows.forEach(r=>data.push(COLS.map(c=>{
     if(c.k==='status')return _SUBCO_ST[r.status]?.l||'';
-    if(c.t==='inp')return (r.sent===''||r.sent==null)?'':Number(r.sent);
+    if(c.t==='inp'){const v=r[c.k];return (v===''||v==null)?'':Number(v);}
     if(c.t==='num')return (r[c.k]==null||r[c.k]==='')?'':Number(r[c.k]);
     if(c.t==='date')return _fmtIso(r[c.k]);
     return String(r[c.k]??'').trim();
