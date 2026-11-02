@@ -20348,16 +20348,24 @@ function buildPwcData(eff){
   // "Planifica fara stocuri": stocurile (produse finite + componente MAKE) si
   // WIP-ul sunt tratate ca 0, deci lista arata TOT ce trebuie executat de la zero.
   const IGN=!!S.pwcState?.ignoreStock;
-  const sortedPlan=[...S.planData.entries()].sort((a,b)=>{
-    const pa=S.planPrio[a[0]]||'',pb=S.planPrio[b[0]]||'';
-    if(!pa&&!pb)return a[0].localeCompare(b[0]);
+  const prioOf=n=>S.planPrio[n]||'';
+  const cmpPrio=(pa,pb)=>{
+    if(!pa&&!pb)return 0;
     if(!pa)return 1;if(!pb)return -1;
     const na=parseFloat(pa),nb=parseFloat(pb);
     if(!isNaN(na)&&!isNaN(nb))return na-nb;
+    if(!isNaN(na))return -1;if(!isNaN(nb))return 1;
     return pa.localeCompare(pb);
+  };
+  const sortedPlan=[...S.planData.entries()].sort((a,b)=>{
+    const c=cmpPrio(prioOf(a[0]),prioOf(b[0]));
+    return c!==0?c:a[0].localeCompare(b[0]);
   });
-  const processComp=(itemNo,prio,matNo,unitsNeeded)=>{
-    const rawOps=S.bowIdx?.get(`${itemNo}__${matNo}`)||[];if(!rawOps.length)return;
+  const rnd=x=>Math.round(x*1e6)/1e6;
+  // shares = [{itemNo,prio,qty}] — contributia fiecarui produs final la cerere
+  const processComp=(ctxFp,prio,matNo,unitsNeeded,shares)=>{
+    const rawOps=S.bowIdx?.get(`${ctxFp}__${matNo}`)||[];if(!rawOps.length)return;
+    if(!(unitsNeeded>0))return;
     const ops=rawOps.map(op=>({
       seq:parseFloat(String(op['Ope seq']||'0').replace(',','.'))||0,
       productSeq:parseFloat(String(op['Product seq']||'0').replace(',','.'))||0,
@@ -20380,11 +20388,12 @@ function buildPwcData(eff){
       wipAtIdx.set(bestIdx,(wipAtIdx.get(bestIdx)||0)+wipQty);
     }
     const st=S.stockIdx?.get(matNo)||{onHand:0,name:'',type:''};
+    const shList=(shares&&shares.length)?shares:[{itemNo:ctxFp,prio,qty:unitsNeeded}];
     for(let i=0;i<ops.length;i++){
       const op=ops[i];
       let alreadyDone=onHand;let wipBefore=0;const wipAtWC=wipAtIdx.get(i)||0;
       for(const [seqIdx,wq] of wipAtIdx){if(seqIdx>i)alreadyDone+=wq;if(seqIdx<i)wipBefore+=wq;}
-      const dePrelucrat=Math.max(0,unitsNeeded-alreadyDone);
+      const dePrelucrat=Math.max(0,rnd(unitsNeeded-alreadyDone));
       const runMin=dePrelucrat>0?(dePrelucrat*op.runT)/eff:0;
       const setupMin=dePrelucrat>0?op.setupT/eff:0;
       const wcMeta=S.wcSetupIdx?.[op.wcName];
@@ -20392,68 +20401,119 @@ function buildPwcData(eff){
       const key=`${matNo}||${op.wcName}`;
       if(!byKey.has(key)){byKey.set(key,{prio,matNo,matName:st.name||'',matType:st.type||'',wcName:op.wcName,wcGroup,opNo:op.opNo,opNoNum:op.opNoNum,opSeq:op.seq,totalNec:0,onHand:st.onHand,wipAtWC:0,wipBefore:0,dePrelucrat:0,runT:op.runT,setupT:op.setupT,runMin:0,setupMin:0,execTimeMin:0,fps:[],fpDetails:[]});}
       const row=byKey.get(key);
-      // Quantities: set only once per (matNo×wcName) — same component, same WC
-      // Multiple ops with same WC name → only update quantities on first encounter
+      // Cantitatile se seteaza o singura data per (reper x workcenter):
+      // acelasi reper poate avea mai multe operatii pe acelasi WC.
       const isFirst=row.totalNec===0&&row.dePrelucrat===0;
       if(isFirst){
-        row.totalNec=unitsNeeded;row.wipAtWC=wipAtWC;row.wipBefore=wipBefore;row.dePrelucrat=dePrelucrat;
+        row.totalNec=rnd(unitsNeeded);row.wipAtWC=wipAtWC;row.wipBefore=wipBefore;row.dePrelucrat=dePrelucrat;
       }
-      // Times always accumulated (multiple ops at same WC = multiple passes)
+      // Timpii se cumuleaza (mai multe operatii pe acelasi WC = mai multe treceri)
       row.runMin+=runMin;row.setupMin+=setupMin;row.execTimeMin+=runMin+setupMin;
-      if(!row.fps.includes(itemNo)){row.fps.push(itemNo);row.fpDetails.push({itemNo,prio,qty:isFirst?unitsNeeded:0,dePrelucrat:isFirst?dePrelucrat:0,execTimeMin:runMin+setupMin});}
-      else{const fd=row.fpDetails.find(f=>f.itemNo===itemNo);if(fd){if(isFirst){fd.qty+=unitsNeeded;fd.dePrelucrat+=dePrelucrat;}fd.execTimeMin+=runMin+setupMin;}}
-      const cp=parseFloat(prio),rp=parseFloat(row.prio);
-      if(!row.prio||(prio&&(!isNaN(cp)&&!isNaN(rp)?cp<rp:prio<row.prio)))row.prio=prio;
+      const opTime=runMin+setupMin;
+      for(const sh of shList){
+        if(!(sh.qty>0))continue;
+        const frac=sh.qty/unitsNeeded;
+        let fd=row.fpDetails.find(f=>f.itemNo===sh.itemNo);
+        if(!fd){fd={itemNo:sh.itemNo,prio:sh.prio||'',qty:0,dePrelucrat:0,execTimeMin:0};row.fpDetails.push(fd);row.fps.push(sh.itemNo);}
+        if(isFirst){fd.qty=rnd(fd.qty+sh.qty);fd.dePrelucrat=rnd(fd.dePrelucrat+dePrelucrat*frac);}
+        fd.execTimeMin+=opTime*frac;
+      }
+      if(!row.prio||cmpPrio(prio,row.prio)<0)row.prio=prio||row.prio;
     }
   };
+  // ================= MRP global pe intregul plan =================
+  // Cererea se cumuleaza pe TOATE produsele finale inainte de scaderea
+  // stocului, iar netarea se face pe niveluri, astfel incat stocul unui
+  // reper comun sa fie scazut O SINGURA DATA (nu o data pentru fiecare
+  // produs final in care apare).
+  const grossByC=new Map();    // reper -> cerere bruta totala
+  const grossByFC=new Map();   // `${fp}|${reper}` -> cerere bruta din acel FP
+  const fpOf=new Map();        // reper -> Set(produse finale)
+  const levelOf=new Map();     // reper -> nivelul maxim in structura
+  const addGross=(fp,c,q)=>{
+    if(!(q>0))return;
+    grossByC.set(c,rnd((grossByC.get(c)||0)+q));
+    const k=`${fp}|${c}`;grossByFC.set(k,rnd((grossByFC.get(k)||0)+q));
+    if(!fpOf.has(c))fpOf.set(c,new Set());
+    fpOf.get(c).add(fp);
+  };
+  const fpQty=new Map();
   for(const [itemNo,plan] of sortedPlan){
-    const prio=S.planPrio[itemNo]||'';
     const planQ=plan.totalQty;
     const stockFP=S.stockIdx?.get(itemNo)||{onHand:0};
-    // Fara stocuri: produsul finit se considera 0 pe stoc, deci se produce integral
     const effectiveQty=IGN?planQ:Math.max(0,planQ-Math.max(0,stockFP.onHand));
     if(effectiveQty<=0)continue;
-    processComp(itemNo,prio,itemNo,planQ);
-    // Necesarele componentelor; in modul "fara stocuri" calcNeeds ruleaza cu
-    // structIgnoreStock=true, deci intoarce cantitatile BRUTE, cumulate corect
-    // atunci cand acelasi reper apare la mai multe subansamble.
-    const _prevIgn=S.structIgnoreStock;
-    if(IGN)S.structIgnoreStock=true;
-    const needs=S.stockIdx?calcNeeds(itemNo,effectiveQty):null;
-    if(IGN)S.structIgnoreStock=_prevIgn;
-    const walkBOM=(compNo,parentQty,vis)=>{
-      const key=`${itemNo}__${compNo}`;
-      const bomRows=S.bomIdx?.get(key)||[];
-      for(const row of bomRows){
-        const matNo=str(row['Material no']);if(!matNo)continue;
-        const unQty=parseFloat(row['Material qty'])||1;
-        // If needs map exists: use net (stock-deducted) quantity
-        // If component not in needs map at all → parent was fully covered → skip
-        let neededQty;
-        if(needs){
-          const needEntry=needs.get(matNo);
-          if(!needEntry)continue; // not in needs = parent stock covered this branch
-          neededQty=needEntry.needed; // GROSS needed — processComp does per-WC WIP deduction
-          if(neededQty<=0)continue;
-        } else {
-          neededQty=parentQty*unQty;
-          if(neededQty<=0)continue;
-        }
-        const st2=S.stockIdx?.get(matNo)||{type:''};
-        if(st2.type!=='P')processComp(itemNo,prio,matNo,neededQty);
-        if(!vis.has(matNo)&&(S.bomIdx?.get(`${itemNo}__${matNo}`)||[]).length>0)
-          walkBOM(matNo,neededQty,new Set([...vis,matNo]));
+    fpQty.set(itemNo,{planQ,effectiveQty});
+    levelOf.set(itemNo,0);
+    addGross(itemNo,itemNo,effectiveQty);
+  }
+  if(!fpQty.size)return[];
+  // Nivelul fiecarui reper = adancimea maxima la care apare in oricare structura
+  const setLevel=(c,l)=>{if((levelOf.has(c)?levelOf.get(c):-1)<l)levelOf.set(c,l);};
+  for(const fp of fpQty.keys()){
+    const walk=(comp,lvl,vis)=>{
+      if(lvl>60)return;
+      for(const row of (S.bomIdx?.get(`${fp}__${comp}`)||[])){
+        const m=str(row['Material no']);if(!m||vis.has(m))continue;
+        setLevel(m,lvl+1);
+        walk(m,lvl+1,new Set([...vis,m]));
       }
     };
-    walkBOM(itemNo,effectiveQty,new Set([itemNo]));
+    walk(fp,0,new Set([fp]));
+  }
+  let maxLvl=0;for(const l of levelOf.values())if(l>maxLvl)maxLvl=l;
+  const byLevel=new Map();
+  for(const [c,l] of levelOf){if(!byLevel.has(l))byLevel.set(l,[]);byLevel.get(l).push(c);}
+  const availOf=c=>{
+    if(IGN)return 0;
+    const stk=S.stockIdx?.get(c);if(!stk)return 0;
+    let a=Math.max(0,stk.onHand||0);
+    for(const w of Object.values(stk.wipByWC||{}))if(w>0)a+=w;
+    return a;
+  };
+  for(let L=0;L<=maxLvl;L++){
+    for(const c of (byLevel.get(L)||[])){
+      const gross=grossByC.get(c)||0;
+      if(!(gross>0))continue;
+      // Nivel 0 = produse finale: stocul lor a fost deja scazut mai sus
+      const net=L===0?gross:Math.max(0,rnd(gross-availOf(c)));
+      if(!(net>0))continue;
+      for(const fp of (fpOf.get(c)||[])){
+        const gf=grossByFC.get(`${fp}|${c}`)||0;
+        if(!(gf>0))continue;
+        const share=net*(gf/gross);
+        for(const row of (S.bomIdx?.get(`${fp}__${c}`)||[])){
+          const m=str(row['Material no']);if(!m)continue;
+          const unQty=parseFloat(row['Material qty'])||1;
+          addGross(fp,m,rnd(share*unQty));
+        }
+      }
+    }
+  }
+  // Operatiile produselor finale (nu se cumuleaza intre ele)
+  for(const [itemNo,q] of fpQty){
+    const p=prioOf(itemNo);
+    processComp(itemNo,p,itemNo,q.planQ,[{itemNo,prio:p,qty:q.planQ}]);
+  }
+  // Componentele: o SINGURA trecere, cu cererea bruta cumulata din tot planul
+  for(const [c,gross] of grossByC){
+    if(fpQty.has(c))continue;
+    if(!(gross>0))continue;
+    const st=S.stockIdx?.get(c)||{type:''};
+    if(st.type==='P')continue;
+    const ctxs=[...(fpOf.get(c)||[])];
+    const ctx=ctxs.find(f=>(S.bowIdx?.get(`${f}__${c}`)||[]).length>0);
+    if(!ctx)continue;
+    const shares=ctxs.map(f=>({itemNo:f,prio:prioOf(f),qty:grossByFC.get(`${f}|${c}`)||0}))
+                     .filter(s=>s.qty>0)
+                     .sort((a,b)=>cmpPrio(a.prio,b.prio)||a.itemNo.localeCompare(b.itemNo));
+    let prio='';
+    for(const s of shares)if(!prio||cmpPrio(s.prio,prio)<0)prio=s.prio||prio;
+    processComp(ctx,prio,c,gross,shares);
   }
   return [...byKey.values()].sort((a,b)=>{
-    const pa=a.prio||'',pb=b.prio||'';
-    if(!pa&&!pb)return a.matNo.localeCompare(b.matNo);
-    if(!pa)return 1;if(!pb)return -1;
-    const na=parseFloat(pa),nb=parseFloat(pb);
-    if(!isNaN(na)&&!isNaN(nb))return na-nb;
-    return pa.localeCompare(pb)||a.matNo.localeCompare(b.matNo);
+    const c=cmpPrio(a.prio||'',b.prio||'');
+    return c!==0?c:a.matNo.localeCompare(b.matNo);
   });
 }
 
