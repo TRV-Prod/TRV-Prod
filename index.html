@@ -8029,7 +8029,9 @@ function _subcoRenderCfg(page){
   dInp.title='Se foloseste pentru subcontractorii fara valoare proprie';
   dInp.addEventListener('change',()=>{
     S.subcoCfg.defaultDays=Math.max(0,parseInt(dInp.value)||0);
-    saveSubcoCfg();render();
+    saveSubcoCfg();
+    // actualizare pe loc (fara render) ca sa nu se piarda focusul
+    document.querySelectorAll('.subco-days-inp').forEach(x=>{x.placeholder=String(S.subcoCfg.defaultDays);});
   });
   tb.appendChild(dInp);
   const note=sp('',`${sup.length} subcontractori găsiți în BOW`);
@@ -8066,13 +8068,27 @@ function _subcoRenderCfg(page){
     gi.style.cssText='width:100%;height:27px;border:1.5px solid '+(hasG?'#a78bfa':'#e2e8f0')+
       ';border-radius:5px;padding:0 7px;font-size:12px;font-weight:700;'+
       'color:'+(hasG?'#6d28d9':'#0f172a')+';background:'+(hasG?'#faf5ff':'#fff');
+    const styleG=()=>{
+      const h=!!gi.value.trim();
+      gi.style.borderColor=h?'#a78bfa':'#e2e8f0';
+      gi.style.color=h?'#6d28d9':'#0f172a';
+      gi.style.background=h?'#faf5ff':'#fff';
+    };
+    // Salvare fara re-render: un render() complet pe blur distrugea tabelul,
+    // muta view-ul si scotea cursorul din casuta.
     const saveG=()=>{
       if(!S.subcoCfg.groups)S.subcoCfg.groups={};
       const v=gi.value.trim();
+      const prev=S.subcoCfg.groups[s2.supplier]||'';
+      if(v===prev){styleG();return;}
       if(!v)delete S.subcoCfg.groups[s2.supplier];
       else S.subcoCfg.groups[s2.supplier]=v;
-      saveSubcoCfg();render();
+      saveSubcoCfg();styleG();
+      // completeaza lista de sugestii cu noua grupa
+      const dl0=document.getElementById('subco-proc-list');
+      if(dl0&&v&&![...dl0.options].some(o=>o.value===v)){const o=el('option');o.value=v;dl0.appendChild(o);}
     };
+    gi.addEventListener('input',styleG);
     gi.addEventListener('change',saveG);
     gi.addEventListener('blur',saveG);
     gi.addEventListener('keydown',e=>{if(e.key==='Enter'){e.preventDefault();gi.blur();}});
@@ -8083,6 +8099,7 @@ function _subcoRenderCfg(page){
     const inp=el('input');inp.type='number';inp.min='0';inp.step='1';
     inp.value=s2.own?String(S.subcoCfg.days[s2.supplier]):'';
     inp.placeholder=String(S.subcoCfg?.defaultDays??10);
+    inp.className='subco-days-inp';
     inp.title=s2.own?'Valoare proprie':'Foloseste valoarea implicită';
     inp.style.cssText='width:88px;height:27px;border:1.5px solid '+(s2.own?'#f59e0b':'#e2e8f0')+
       ';border-radius:5px;padding:0 7px;font-size:12.5px;font-weight:800;text-align:center;'+
@@ -8090,9 +8107,17 @@ function _subcoRenderCfg(page){
     const save=()=>{
       const raw=inp.value.trim();
       if(!S.subcoCfg.days)S.subcoCfg.days={};
-      if(!raw)delete S.subcoCfg.days[s2.supplier];
-      else S.subcoCfg.days[s2.supplier]=Math.max(0,parseInt(raw)||0);
-      saveSubcoCfg();render();
+      const prev=S.subcoCfg.days[s2.supplier];
+      const nv=raw?Math.max(0,parseInt(raw)||0):undefined;
+      if(nv===prev)return;
+      if(nv===undefined)delete S.subcoCfg.days[s2.supplier];
+      else S.subcoCfg.days[s2.supplier]=nv;
+      saveSubcoCfg();
+      const own=nv!==undefined;
+      inp.style.borderColor=own?'#f59e0b':'#e2e8f0';
+      inp.style.color=own?'#b45309':'#94a3b8';
+      inp.style.background=own?'#fffbeb':'#fff';
+      inp.title=own?'Valoare proprie':'Foloseste valoarea implicită';
     };
     inp.addEventListener('change',save);
     inp.addEventListener('keydown',e=>{if(e.key==='Enter'){e.preventDefault();inp.blur();}});
