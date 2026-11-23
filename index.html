@@ -3720,6 +3720,7 @@ function render(){
     {id:'manopera',label:'💶 Manoperă / EUR'},
     {id:'performanta',label:'Performanță'},
     {id:'utilizatori',label:'Utilizatori'},
+    {id:'migrare',label:'🚚 Migrare Supabase'},
   ]});
   // Flat list (used by the mobile sidebar and anywhere a simple list is needed)
   const tabs=[];
@@ -3873,6 +3874,7 @@ function render(){
   else if(S.tab==='asamblare')body.appendChild(renderAsamblare());
   else if(S.tab==='livrari')body.appendChild(renderLivrari());
   else if(S.tab==='manopera')body.appendChild(renderManopera());
+  else if(S.tab==='migrare')body.appendChild(renderMigrare());
   else if(S.tab==='subco')body.appendChild(renderSubco());
   else if(S.tab==='masini')body.appendChild(renderMasini());
   else if(S.tab==='normare')body.appendChild(renderNormare());
@@ -13258,6 +13260,303 @@ function mepFmtCell(v){
 function mepFmtEur(v){return (v||0).toLocaleString('ro-RO',{minimumFractionDigits:0,maximumFractionDigits:0})+' €';}
 
 /* ── UI ── */
+/* ═══════════════════════════════════════════════════════════════
+   MIGRARE SUPABASE — copiaza tot bucket-ul aplicatiei dintr-un
+   proiect Supabase in altul, direct din browser (byte cu byte,
+   deci si fisierele .xlsx ajung intacte).
+═══════════════════════════════════════════════════════════════ */
+const MIGR_DEST_KEY='pps_migr_dest';
+
+/* Lista obiectelor din bucket, recursiv (API-ul listeaza un nivel o data) */
+async function sbListAll(cfg,prefix){
+  const out=[];
+  const pref=prefix||'';
+  let offset=0;
+  for(let guard=0;guard<200;guard++){
+    const r=await fetch(`${cfg.url}/storage/v1/object/list/${cfg.bucket}`,{
+      method:'POST',
+      headers:{'Authorization':'Bearer '+cfg.key,'apikey':cfg.key,'Content-Type':'application/json'},
+      body:JSON.stringify({limit:100,offset,prefix:pref,sortBy:{column:'name',order:'asc'}})
+    });
+    if(!r.ok){
+      const e=await r.json().catch(()=>({}));
+      throw new Error(`Listare bucket: ${r.status} ${e.error||e.message||''}`);
+    }
+    const arr=await r.json();
+    if(!Array.isArray(arr)||!arr.length)break;
+    for(const it of arr){
+      const name=pref+it.name;
+      if(it.id===null||it.id===undefined){
+        // folder — coboara in el
+        const sub=await sbListAll(cfg,name+'/');
+        out.push(...sub);
+      } else {
+        out.push({path:name,size:it.metadata?.size??null,mime:it.metadata?.mimetype||''});
+      }
+    }
+    if(arr.length<100)break;
+    offset+=arr.length;
+  }
+  return out;
+}
+function migrMime(path,fallback){
+  if(fallback)return fallback;
+  const p=path.toLowerCase();
+  if(p.endsWith('.json'))return 'application/json';
+  if(p.endsWith('.xlsx'))return 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet';
+  if(p.endsWith('.xls'))return 'application/vnd.ms-excel';
+  if(p.endsWith('.pdf'))return 'application/pdf';
+  if(p.endsWith('.png'))return 'image/png';
+  if(p.endsWith('.jpg')||p.endsWith('.jpeg'))return 'image/jpeg';
+  if(p.endsWith('.csv'))return 'text/csv';
+  if(p.endsWith('.txt'))return 'text/plain';
+  return 'application/octet-stream';
+}
+async function sbGetRaw(cfg,path){
+  const r=await fetch(`${cfg.url}/storage/v1/object/${cfg.bucket}/${encodeURI(path)}`,
+    {headers:{'Authorization':'Bearer '+cfg.key,'apikey':cfg.key}});
+  if(r.status===404||r.status===400)return null;
+  if(!r.ok)throw new Error(`descarcare ${r.status}`);
+  const buf=await r.arrayBuffer();
+  return {buf,type:r.headers.get('content-type')||''};
+}
+async function sbPutRaw(cfg,path,buf,type){
+  const r=await fetch(`${cfg.url}/storage/v1/object/${cfg.bucket}/${encodeURI(path)}`,{
+    method:'POST',
+    headers:{'Authorization':'Bearer '+cfg.key,'apikey':cfg.key,'x-upsert':'true','Content-Type':type},
+    body:new Blob([buf],{type})
+  });
+  if(!r.ok){const e=await r.json().catch(()=>({}));throw new Error(`incarcare ${r.status} ${e.error||e.message||''}`);}
+  return true;
+}
+async function sbDeleteObj(cfg,path){
+  try{
+    await fetch(`${cfg.url}/storage/v1/object/${cfg.bucket}/${encodeURI(path)}`,
+      {method:'DELETE',headers:{'Authorization':'Bearer '+cfg.key,'apikey':cfg.key}});
+  }catch{}
+}
+/* Verifica si dreptul de scriere, nu doar de citire */
+async function migrCheckDest(cfg){
+  await sbTestConnection(cfg);
+  const probe='_migration-probe.json';
+  await sbPutRaw(cfg,probe,new TextEncoder().encode(JSON.stringify({t:Date.now()})),'application/json');
+  await sbDeleteObj(cfg,probe);
+  return true;
+}
+function migrFmtBytes(n){
+  if(n==null)return '—';
+  if(n<1024)return n+' B';
+  if(n<1048576)return (n/1024).toFixed(1)+' KB';
+  return (n/1048576).toFixed(2)+' MB';
+}
+
+function renderMigrare(){
+  const page=dv('cnt');page.style.cssText='flex:1;display:flex;flex-direction:column;overflow:hidden';
+  const src=S.sbCfg;
+
+  const hdr=dv('');hdr.style.cssText='padding:13px 20px 10px;border-bottom:2px solid var(--border);background:#fff;flex-shrink:0';
+  const h1=dv('');h1.style.cssText='font-size:17px;font-weight:900;color:#1e3a5f';
+  h1.textContent='🚚 Migrare Supabase';hdr.appendChild(h1);
+  const sub=dv('');sub.style.cssText='font-size:11.5px;color:#64748b;margin-top:2px';
+  sub.textContent='Copiază toate fișierele aplicației din bucket-ul actual în alt proiect Supabase. Nimic nu se șterge din proiectul vechi.';
+  hdr.appendChild(sub);page.appendChild(hdr);
+
+  const body=dv('');body.style.cssText='flex:1;overflow:auto;padding:16px 20px 40px;max-width:1000px';
+  page.appendChild(body);
+
+  if(!src){body.appendChild(mkEmpty('Lipsește configurarea','Aplicația nu are o conexiune Supabase activă.'));return page;}
+
+  let srcList=null, destCfg=null, destOk=false, running=false;
+
+  const cardCss='background:#fff;border:1.5px solid var(--border);border-radius:10px;padding:14px 16px;margin-bottom:14px';
+  const ttl=t=>{const d=dv('');d.style.cssText='font-size:12.5px;font-weight:900;color:#1e3a5f;margin-bottom:9px';d.textContent=t;return d;};
+
+  /* ── 1. Sursa ── */
+  const c1=dv('');c1.style.cssText=cardCss;
+  c1.appendChild(ttl('1. Proiectul actual (sursă)'));
+  const srcInfo=dv('');srcInfo.style.cssText='font-size:12px;color:#334155;line-height:1.7;font-family:ui-monospace,monospace';
+  srcInfo.innerHTML=`URL: <b>${src.url}</b><br>Bucket: <b>${src.bucket}</b><br>Cheie: <b>${String(src.key||'').slice(0,12)}…${String(src.key||'').slice(-6)}</b>`;
+  c1.appendChild(srcInfo);
+  const scanRow=dv('');scanRow.style.cssText='display:flex;gap:9px;align-items:center;margin-top:11px;flex-wrap:wrap';
+  const bScan=el('button');bScan.textContent='🔍 Scanează bucket-ul sursă';
+  bScan.style.cssText='padding:8px 14px;border:1.5px solid #1d4ed8;border-radius:7px;background:#1d4ed8;color:#fff;font-size:12.5px;font-weight:800;cursor:pointer';
+  scanRow.appendChild(bScan);
+  const scanMsg=sp('','');scanMsg.style.cssText='font-size:12px;font-weight:700;color:#475569';
+  scanRow.appendChild(scanMsg);
+  c1.appendChild(scanRow);
+  const srcTbl=dv('');srcTbl.style.cssText='margin-top:10px;max-height:230px;overflow:auto;display:none;border:1px solid var(--border);border-radius:7px';
+  c1.appendChild(srcTbl);
+  body.appendChild(c1);
+
+  /* ── 2. Destinatia ── */
+  const c2=dv('');c2.style.cssText=cardCss;
+  c2.appendChild(ttl('2. Proiectul nou (destinație)'));
+  const hint=dv('');hint.style.cssText='font-size:11.5px;color:#64748b;margin-bottom:10px;line-height:1.6';
+  hint.innerHTML='Din noul proiect: <b>Settings → API</b> pentru URL și cheia <b>anon public</b>. '+
+    'Bucket-ul trebuie creat deja în <b>Storage</b> și să permită citire <i>și</i> scriere pentru rolul <code>anon</code>, '+
+    'altfel aplicația va putea citi dar nu va putea salva.';
+  c2.appendChild(hint);
+  const saved=(()=>{try{return JSON.parse(localStorage.getItem(MIGR_DEST_KEY)||'null')||{};}catch{return {};}})();
+  const mkIn=(ph,val,type)=>{
+    const i=el('input');i.type=type||'text';i.placeholder=ph;i.value=val||'';
+    i.style.cssText='width:100%;padding:8px 11px;border:1.5px solid var(--border);border-radius:7px;font-size:12.5px;font-family:ui-monospace,monospace';
+    return i;
+  };
+  const lb=t=>{const d=dv('');d.style.cssText='font-size:11px;font-weight:800;color:#475569;margin:7px 0 3px';d.textContent=t;return d;};
+  c2.appendChild(lb('URL proiect nou'));
+  const inUrl=mkIn('https://xxxxxxxx.supabase.co',saved.url);c2.appendChild(inUrl);
+  c2.appendChild(lb('Cheie anon public'));
+  const inKey=mkIn('eyJ...',saved.key);c2.appendChild(inKey);
+  c2.appendChild(lb('Nume bucket'));
+  const inBuck=mkIn(src.bucket,saved.bucket||src.bucket);c2.appendChild(inBuck);
+  const chkRow=el('label');chkRow.style.cssText='display:flex;align-items:center;gap:8px;margin-top:11px;font-size:12px;font-weight:700;color:#475569;cursor:pointer';
+  const chkSkip=el('input');chkSkip.type='checkbox';chkSkip.style.cssText='width:15px;height:15px;cursor:pointer';
+  chkRow.appendChild(chkSkip);chkRow.appendChild(document.createTextNode('Sari peste fișierele care există deja în destinație'));
+  c2.appendChild(chkRow);
+  const vRow=dv('');vRow.style.cssText='display:flex;gap:9px;align-items:center;margin-top:12px;flex-wrap:wrap';
+  const bCheck=el('button');bCheck.textContent='✓ Verifică conexiunea';
+  bCheck.style.cssText='padding:8px 14px;border:1.5px solid #16a34a;border-radius:7px;background:#fff;color:#15803d;font-size:12.5px;font-weight:800;cursor:pointer';
+  vRow.appendChild(bCheck);
+  const vMsg=sp('','');vMsg.style.cssText='font-size:12px;font-weight:800';vRow.appendChild(vMsg);
+  c2.appendChild(vRow);
+  body.appendChild(c2);
+
+  /* ── 3. Migrarea ── */
+  const c3=dv('');c3.style.cssText=cardCss;
+  c3.appendChild(ttl('3. Copiere'));
+  const warn=dv('');warn.style.cssText='font-size:11.5px;color:#92400e;background:#fffbeb;border:1.5px solid #fcd34d;border-radius:8px;padding:9px 12px;margin-bottom:11px;line-height:1.6';
+  warn.innerHTML='⚠ Fă migrarea când nimeni nu lucrează în aplicație. Dacă unii utilizatori rămân pe proiectul vechi '+
+    'și alții trec pe cel nou, salvările se împart între conturi și se pierd date. Ține proiectul vechi oprit, dar nu șters, câteva zile.';
+  c3.appendChild(warn);
+  const runRow=dv('');runRow.style.cssText='display:flex;gap:9px;align-items:center;flex-wrap:wrap';
+  const bRun=el('button');bRun.textContent='🚚 Pornește migrarea';bRun.disabled=true;
+  const styleRun=()=>{bRun.style.cssText='padding:9px 17px;border:none;border-radius:8px;font-size:13px;font-weight:900;cursor:'+
+    (bRun.disabled?'not-allowed':'pointer')+';background:'+(bRun.disabled?'#cbd5e1':'#7c3aed')+';color:#fff';};
+  styleRun();runRow.appendChild(bRun);
+  const runMsg=sp('','Scanează sursa și verifică destinația mai întâi.');
+  runMsg.style.cssText='font-size:12px;font-weight:700;color:#94a3b8';runRow.appendChild(runMsg);
+  c3.appendChild(runRow);
+  const barOut=dv('');barOut.style.cssText='margin-top:12px;height:12px;background:#e2e8f0;border-radius:7px;overflow:hidden;display:none';
+  const barIn=dv('');barIn.style.cssText='height:100%;width:0%;background:linear-gradient(90deg,#7c3aed,#1d4ed8);transition:width .18s';
+  barOut.appendChild(barIn);c3.appendChild(barOut);
+  const log=dv('');log.style.cssText='margin-top:11px;max-height:300px;overflow:auto;display:none;border:1px solid var(--border);border-radius:7px;font-size:11.5px;font-family:ui-monospace,monospace';
+  c3.appendChild(log);
+  const done=dv('');done.style.cssText='margin-top:13px;display:none';
+  c3.appendChild(done);
+  body.appendChild(c3);
+
+  /* ── logica ── */
+  const refreshRun=()=>{
+    bRun.disabled=!(srcList&&srcList.length&&destOk)||running;
+    styleRun();
+    if(running)runMsg.textContent='Se copiază…';
+    else if(bRun.disabled)runMsg.textContent=!srcList?'Scanează sursa mai întâi.':(!destOk?'Verifică destinația mai întâi.':'');
+    else {runMsg.textContent=`${srcList.length} fișiere pregătite pentru copiere.`;runMsg.style.color='#15803d';}
+  };
+
+  bScan.addEventListener('click',async()=>{
+    bScan.disabled=true;scanMsg.style.color='#475569';scanMsg.textContent='Se scanează…';
+    try{
+      srcList=await sbListAll(src,'');
+      srcList=srcList.filter(f=>!f.path.startsWith('_migration-probe'));
+      const total=srcList.reduce((s,f)=>s+(f.size||0),0);
+      scanMsg.style.color='#15803d';
+      scanMsg.textContent=`${srcList.length} fișiere · ${migrFmtBytes(total)}`;
+      srcTbl.style.display='';srcTbl.innerHTML='';
+      const t=el('table');t.style.cssText='border-collapse:collapse;width:100%';
+      srcList.forEach((f,i)=>{
+        const tr=el('tr');tr.style.cssText='border-bottom:1px solid #f1f5f9;background:'+(i%2?'#f8fafc':'#fff');
+        const a=el('td');a.textContent=f.path;a.style.cssText='padding:4px 9px;color:#1e3a5f';
+        const b2=el('td');b2.textContent=migrFmtBytes(f.size);b2.style.cssText='padding:4px 9px;text-align:right;color:#64748b';
+        tr.appendChild(a);tr.appendChild(b2);t.appendChild(tr);
+      });
+      srcTbl.appendChild(t);
+    }catch(e){
+      scanMsg.style.color='#dc2626';scanMsg.textContent='Eroare: '+e.message;srcList=null;
+    }
+    bScan.disabled=false;refreshRun();
+  });
+
+  bCheck.addEventListener('click',async()=>{
+    const cfg={url:inUrl.value.trim().replace(/\/+$/,''),key:inKey.value.trim(),bucket:inBuck.value.trim()};
+    if(!cfg.url||!cfg.key||!cfg.bucket){vMsg.style.color='#dc2626';vMsg.textContent='Completează toate cele trei câmpuri.';return;}
+    if(cfg.url===src.url&&cfg.bucket===src.bucket){
+      vMsg.style.color='#dc2626';vMsg.textContent='Destinația este identică cu sursa.';destOk=false;refreshRun();return;}
+    bCheck.disabled=true;vMsg.style.color='#475569';vMsg.textContent='Se verifică (citire + scriere)…';
+    try{
+      await migrCheckDest(cfg);
+      destCfg=cfg;destOk=true;
+      try{localStorage.setItem(MIGR_DEST_KEY,JSON.stringify(cfg));}catch{}
+      vMsg.style.color='#15803d';vMsg.textContent='✓ Conexiune și drept de scriere confirmate.';
+    }catch(e){
+      destOk=false;destCfg=null;
+      vMsg.style.color='#dc2626';vMsg.textContent='✗ '+e.message;
+    }
+    bCheck.disabled=false;refreshRun();
+  });
+
+  bRun.addEventListener('click',async()=>{
+    if(!srcList||!destCfg||running)return;
+    if(!confirm(`Se copiază ${srcList.length} fișiere în bucket-ul "${destCfg.bucket}" din noul proiect.\n\nProiectul vechi rămâne neatins. Continui?`))return;
+    running=true;refreshRun();
+    log.style.display='';log.innerHTML='';barOut.style.display='';done.style.display='none';
+    const t=el('table');t.style.cssText='border-collapse:collapse;width:100%';log.appendChild(t);
+    let ok=0,skip=0,fail=0,bytes=0;
+    const addLine=(path,state,info,color)=>{
+      const tr=el('tr');tr.style.cssText='border-bottom:1px solid #f1f5f9';
+      const a=el('td');a.textContent=path;a.style.cssText='padding:3px 9px;color:#334155';
+      const b2=el('td');b2.textContent=state;b2.style.cssText=`padding:3px 9px;font-weight:800;color:${color};white-space:nowrap`;
+      const c=el('td');c.textContent=info||'';c.style.cssText='padding:3px 9px;text-align:right;color:#64748b;white-space:nowrap';
+      tr.appendChild(a);tr.appendChild(b2);tr.appendChild(c);t.appendChild(tr);
+      log.scrollTop=log.scrollHeight;
+    };
+    for(let i=0;i<srcList.length;i++){
+      const f=srcList[i];
+      try{
+        if(chkSkip.checked){
+          const h=await sbHead(destCfg,f.path,8000);
+          if(h){skip++;addLine(f.path,'există deja','—','#b45309');
+            barIn.style.width=((i+1)/srcList.length*100).toFixed(1)+'%';continue;}
+        }
+        const got=await sbGetRaw(src,f.path);
+        if(!got){fail++;addLine(f.path,'lipsă la sursă','—','#dc2626');}
+        else{
+          await sbPutRaw(destCfg,f.path,got.buf,migrMime(f.path,f.mime||got.type));
+          ok++;bytes+=got.buf.byteLength;
+          addLine(f.path,'✓ copiat',migrFmtBytes(got.buf.byteLength),'#15803d');
+        }
+      }catch(e){
+        fail++;addLine(f.path,'✗ eroare',String(e.message||e).slice(0,60),'#dc2626');
+      }
+      barIn.style.width=((i+1)/srcList.length*100).toFixed(1)+'%';
+    }
+    running=false;refreshRun();
+    done.style.display='';
+    done.innerHTML=`<div style="background:${fail?'#fff7ed':'#f0fdf4'};border:1.5px solid ${fail?'#fdba74':'#86efac'};border-radius:8px;padding:11px 14px;font-size:12.5px;color:#14532d;line-height:1.7">
+      <b>Migrare încheiată.</b><br>
+      Copiate: <b>${ok}</b> · Sărite: <b>${skip}</b> · Eșuate: <b style="color:${fail?'#dc2626':'#14532d'}">${fail}</b> · Total transferat: <b>${migrFmtBytes(bytes)}</b>
+      ${fail?'<br><span style="color:#b45309">Reia migrarea pentru fișierele eșuate înainte de a comuta aplicația.</span>':''}
+    </div>`;
+    if(!fail){
+      const sw=el('button');sw.textContent='→ Comută aplicația pe proiectul nou';
+      sw.style.cssText='margin-top:11px;padding:10px 18px;border:none;border-radius:8px;background:#1d4ed8;color:#fff;font-size:13px;font-weight:900;cursor:pointer';
+      sw.addEventListener('click',()=>{
+        if(!confirm('Aplicația va folosi de acum proiectul nou și se va reîncărca.\n\nCeilalți utilizatori trebuie să introducă noile date la prima pornire. Continui?'))return;
+        saveSbCfg(destCfg);
+        try{localStorage.removeItem('pps_idb_warm');}catch{}
+        location.reload();
+      });
+      done.appendChild(sw);
+      const note=dv('');note.style.cssText='margin-top:8px;font-size:11.5px;color:#64748b;line-height:1.6';
+      note.innerHTML='După comutare: loghează-te (conturile vin din <code>users.json</code>), verifică fiecare director, '+
+        'confirmă că Raport Scanări și MO List s-au încărcat și fă o salvare de probă ca să validezi dreptul de scriere.';
+      done.appendChild(note);
+    }
+  });
+  refreshRun();
+  return page;
+}
+
 function renderManopera(){
   const page=dv('cnt');page.style.cssText='flex:1;display:flex;flex-direction:column;overflow:hidden';
   const st=mepState();
