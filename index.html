@@ -3720,8 +3720,12 @@ function render(){
     {id:'manopera',label:'💶 Manoperă / EUR'},
     {id:'performanta',label:'Performanță'},
     {id:'utilizatori',label:'Utilizatori'},
-    {id:'migrare',label:'🚚 Migrare Supabase'},
   ]});
+  // Migrarea bazei de date: doar contul "admin", nu orice rol de administrator
+  if(String(S.session?.username||'').toLowerCase()==='admin'){
+    const dg=navItems.find(n=>n.group==='Diverse');
+    if(dg)dg.children.push({id:'migrare',label:'🚚 Migrare Supabase'});
+  }
   // Flat list (used by the mobile sidebar and anywhere a simple list is needed)
   const tabs=[];
   navItems.forEach(n=>{if(n.group)n.children.forEach(ch=>tabs.push({...ch,_group:n.group}));else tabs.push(n);});
@@ -3874,7 +3878,10 @@ function render(){
   else if(S.tab==='asamblare')body.appendChild(renderAsamblare());
   else if(S.tab==='livrari')body.appendChild(renderLivrari());
   else if(S.tab==='manopera')body.appendChild(renderManopera());
-  else if(S.tab==='migrare')body.appendChild(renderMigrare());
+  else if(S.tab==='migrare'){
+    if(String(S.session?.username||'').toLowerCase()==='admin')body.appendChild(renderMigrare());
+    else body.appendChild(mkEmpty('Acces restrictionat','Migrarea bazei de date este disponibila doar pentru contul admin.'));
+  }
   else if(S.tab==='subco')body.appendChild(renderSubco());
   else if(S.tab==='masini')body.appendChild(renderMasini());
   else if(S.tab==='normare')body.appendChild(renderNormare());
@@ -11009,6 +11016,26 @@ function showScanCtxMenu(ev, colKey, cellText){
 ═══════════════════════════════════════════════════════════════ */
 const KPI_PALETTE=['#1d4ed8','#dc2626','#15803d','#b45309','#7c3aed','#0891b2',
                    '#db2777','#4d7c0f','#ea580c','#0f766e','#9333ea','#64748b'];
+/* Culoare pe luna: gradient rece→cald, ca evolutia Ian→Dec sa se citeasca din ordine */
+function kpiMonthColor(i){
+  const h=Math.round(214-(214/11)*i);
+  return `hsl(${h} 68% 46%)`;
+}
+/* Serii transpuse: o categorie pe fiecare workcenter/grup, o serie pe fiecare luna.
+   Asa se vede evolutia fiecarui workcenter de la o luna la alta. */
+function kpiSeriesByMonth(rows,data,sumFn,pctFn){
+  const arrs=rows.map(r=>r.type==='group'?sumFn(data,r.members):(data.get(r.name)||[]));
+  const series=[];
+  for(let mi=0;mi<12;mi++){
+    const values=arrs.map(a=>pctFn(a[mi]));
+    if(!values.some(v=>v!=null))continue;          // luni fara date: nu le afisam
+    series.push({name:KPI_MONTHS[mi],values,color:kpiMonthColor(mi)});
+  }
+  return series;
+}
+function kpiRowLabels(rows){
+  return rows.map(r=>r.type==='group'?'🗂 '+r.name:r.name);
+}
 const KPI_CHART_TYPES=[['line','Linie'],['bar','Coloane'],['area','Suprafață'],
                        ['stacked','Coloane suprapuse'],['hbar','Bare orizontale'],
                        ['barline','Coloane + linie']];
@@ -11027,9 +11054,11 @@ function kpiChartSvg(o){
   const labels=o.labels||[];
   const series=(o.series||[]).filter(s=>s&&Array.isArray(s.values)&&s.values.some(v=>v!=null));
   if(!series.length||!labels.length)return '';
-  const W=1000,H=o.height||310;
+  const W=o.width||1000,H=o.height||310;
   const legendRows=Math.ceil(series.length/4);
-  const pad={l:56,r:(o.rightUnit?52:16),t:12,b:34+legendRows*17};
+  const rotLbl=(type!=='hbar')&&(o.rotate||((W-56-(o.rightUnit?52:16))/Math.max(1,labels.length))<58);
+  const pad={l:o.yTitle?62:56,r:(o.rightUnit?(o.rightTitle?58:52):16),t:12,
+             b:(rotLbl?74:34)+legendRows*17};
   const iw=W-pad.l-pad.r, ih=H-pad.t-pad.b;
   const isH=type==='hbar';
   const lineSer=type==='barline'?series.filter(s=>s.kind==='line'||s.axis==='right'):(type==='line'||type==='area'?series:[]);
@@ -11062,14 +11091,21 @@ function kpiChartSvg(o){
   }
   g+=`<line x1="${pad.l}" y1="${pad.t+ih}" x2="${pad.l+iw}" y2="${pad.t+ih}" stroke="#cbd5e1"/>`;
   g+=`<line x1="${pad.l}" y1="${pad.t}" x2="${pad.l}" y2="${pad.t+ih}" stroke="#cbd5e1"/>`;
+  if(o.yTitle&&!isH)
+    g+=`<text x="${pad.l-42}" y="${pad.t+ih/2}" font-size="10" font-weight="700" fill="#64748b" text-anchor="middle" transform="rotate(-90 ${pad.l-42} ${pad.t+ih/2})">${kpiEsc(o.yTitle)}</text>`;
+  if(o.rightTitle&&!isH)
+    g+=`<text x="${pad.l+iw+40}" y="${pad.t+ih/2}" font-size="10" font-weight="700" fill="#7c3aed" text-anchor="middle" transform="rotate(90 ${pad.l+iw+40} ${pad.t+ih/2})">${kpiEsc(o.rightTitle)}</text>`;
 
   const n=labels.length;
   const slot=(isH?ih:iw)/n;
   // etichete categorii
+  const rot=!isH&&rotLbl;
   labels.forEach((lb,i)=>{
     const c=(isH?pad.t:pad.l)+slot*(i+.5);
-    if(isH)g+=`<text x="${pad.l-7}" y="${c+3.5}" font-size="9.5" fill="#475569" text-anchor="end">${kpiEsc(lb)}</text>`;
-    else   g+=`<text x="${c}" y="${pad.t+ih+15}" font-size="10" fill="#475569" text-anchor="middle">${kpiEsc(lb)}</text>`;
+    const txt=kpiEsc(lb.length>26?lb.slice(0,25)+'…':lb);
+    if(isH)g+=`<text x="${pad.l-7}" y="${c+3.5}" font-size="9.5" fill="#475569" text-anchor="end">${txt}</text>`;
+    else if(rot)g+=`<text x="${c}" y="${pad.t+ih+9}" font-size="9.5" fill="#475569" text-anchor="end" transform="rotate(-38 ${c} ${pad.t+ih+9})">${txt}</text>`;
+    else g+=`<text x="${c}" y="${pad.t+ih+15}" font-size="10" fill="#475569" text-anchor="middle">${txt}</text>`;
   });
 
   const yOf=v=>pad.t+ih-(Math.max(0,Math.min(v,yMax))/yMax)*ih;
@@ -11128,7 +11164,7 @@ function kpiChartSvg(o){
   // ── legenda ──
   series.forEach((s,i)=>{
     const col=i%4, rw=Math.floor(i/4);
-    const x=pad.l+col*(iw/4), y=pad.t+ih+28+rw*17;
+    const x=pad.l+col*(iw/4), y=pad.t+ih+(rotLbl?68:28)+rw*17;
     g+=`<rect x="${x}" y="${y-7}" width="11" height="11" rx="2.5" fill="${s.color}"/>`;
     const nm=s.name.length>30?s.name.slice(0,29)+'…':s.name;
     g+=`<text x="${x+16}" y="${y+2}" font-size="10" fill="#334155"${s.emph?' font-weight="800"':''}>${kpiEsc(nm)}</text>`;
@@ -11137,10 +11173,10 @@ function kpiChartSvg(o){
 }
 
 /* Card de grafic cu selector de tip (tipul se salveaza per indicator) */
-function kpiChartBox(key,title,build){
+function kpiChartBox(key,title,build,extra){
   const k=S.kpi8;
-  k.chart=k.chart||{};
-  if(!k.chart[key])k.chart[key]=key==='paint'?'barline':'line';
+  k.chart=k.chart||{};k.chartOpt=k.chartOpt||{};
+  if(!k.chart[key])k.chart[key]=key==='paint'?'barline':'bar';
   const box=dv('');box.id='kpi8-chart-'+key;
   box.style.cssText='margin:16px 0 4px;background:#fff;border:1.5px solid var(--border);border-radius:10px;padding:11px 14px 8px';
   const head=dv('');head.style.cssText='display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:6px';
@@ -11152,11 +11188,27 @@ function kpiChartBox(key,title,build){
   const sel=el('select');
   sel.style.cssText='padding:5px 9px;border:1.5px solid var(--border);border-radius:7px;font-size:12px;font-weight:700;background:#fff';
   KPI_CHART_TYPES.forEach(([v,l])=>{const o=el('option');o.value=v;o.textContent=l;if(k.chart[key]===v)o.selected=true;sel.appendChild(o);});
-  const canvas=dv('');
-  const draw=()=>{const html=kpiChartSvg(build(k.chart[key]));
-    canvas.innerHTML=html||'<div style="padding:22px;text-align:center;color:#94a3b8;font-size:12px">Fără date pentru grafic</div>';};
+  const canvas=dv('');canvas.style.cssText='overflow-x:auto';
+  const inner=dv('');canvas.appendChild(inner);
+  const draw=()=>{
+    const o=build(k.chart[key],!!k.chartOpt[key])||{};
+    const nLab=(o.labels||[]).length;
+    // grafic mai lat cand sunt multe workcentere, cu derulare orizontala
+    if(!o.width&&k.chart[key]!=='hbar'&&nLab>8)o.width=Math.min(3600,Math.max(1000,nLab*78));
+    if(k.chart[key]==='hbar')o.height=Math.max(300,nLab*26+120);
+    const html=kpiChartSvg(o);
+    inner.innerHTML=html||'<div style="padding:22px;text-align:center;color:#94a3b8;font-size:12px">Fără date pentru grafic</div>';
+    inner.style.minWidth=(o.width&&o.width>1000)?Math.round(o.width*.72)+'px':'';
+  };
   sel.addEventListener('change',()=>{k.chart[key]=sel.value;kpiSaveCfg();draw();});
   wrapSel.appendChild(sel);
+  if(extra&&extra.label){
+    const lab=el('label');lab.style.cssText='display:flex;align-items:center;gap:6px;font-size:11px;font-weight:700;color:#475569;cursor:pointer';
+    const cb=el('input');cb.type='checkbox';cb.checked=!!k.chartOpt[key];cb.style.cssText='width:14px;height:14px;cursor:pointer';
+    cb.addEventListener('change',()=>{k.chartOpt[key]=cb.checked;kpiSaveCfg();draw();});
+    lab.appendChild(cb);lab.appendChild(document.createTextNode(extra.label));
+    wrapSel.insertBefore(lab,sel);
+  }
   const hide=el('button');hide.textContent='▾';hide.title='Ascunde / arată graficul';
   hide.style.cssText='border:1.5px solid var(--border);background:#fff;border-radius:6px;width:26px;height:26px;cursor:pointer;font-weight:800;color:#475569';
   hide.addEventListener('click',()=>{
@@ -11199,6 +11251,7 @@ function kpiCfgPlain(){
     expanded:k.expanded?[...k.expanded]:[],
     colW:k.colW||{},
     chart:k.chart||{},
+    chartOpt:k.chartOpt||{},
   };
 }
 function kpiSaveCfg(){
@@ -11221,6 +11274,7 @@ function kpiApplyCfg(d){
   if(Array.isArray(d.groupOrder))k.groupOrder=d.groupOrder;
   if(d.colW&&typeof d.colW==='object')k.colW=d.colW;
   if(d.chart&&typeof d.chart==='object')k.chart=d.chart;
+  if(d.chartOpt&&typeof d.chartOpt==='object')k.chartOpt=d.chartOpt;
   k.expanded=new Set(Array.isArray(d.expanded)?d.expanded:[]);
 }
 function kpiLoadCfgLocal(){
@@ -11623,13 +11677,20 @@ function kpiRenderProd(body,k){
   wrap.appendChild(tbl);body.appendChild(wrap);
   setTimeout(kpiApplyColW,0);
 
-  /* grafic */
-  body.appendChild(kpiChartBox('prod','Eficienta pe luni (%)',type=>({
-    type,labels:KPI_MONTHS,unit:'%',
-    series:kpiSeriesFromRows(rows,data,kpiSumRow,
-      c=>(c&&c.real>0)?c.teo/c.real*100:null,tot,
-      c=>(c&&c.real>0)?c.teo/c.real*100:null)
-  })));
+  /* grafic: pe orizontala workcenterele/grupurile, o serie pentru fiecare luna */
+  const prodPct=c=>(c&&c.real>0)?c.teo/c.real*100:null;
+  body.appendChild(kpiChartBox('prod','Eficienta pe workcentere, evolutie lunara',
+    (type,withQty)=>{
+      const series=kpiSeriesByMonth(rows,data,kpiSumRow,prodPct);
+      const o={type,labels:kpiRowLabels(rows),unit:'%',yTitle:'Eficienta (%)',series};
+      if(withQty){
+        const arrs=rows.map(r=>r.type==='group'?kpiSumRow(data,r.members):(data.get(r.name)||[]));
+        o.rightUnit='h';o.rightTitle='Ore reale (h)';
+        series.push({name:'Ore reale (total an)',color:'#0f172a',emph:true,kind:'line',axis:'right',
+          values:arrs.map(a=>{let m=0;a.forEach(c=>{m+=c.real||0;});return m>0?m/60:null;})});
+      }
+      return o;
+    },{label:'+ ore reale (axă secundară)'}));
 }
 
 /* ── IP Calitate (Sheet Metal): Map wc → [12 x {exec,scrap,n}] ──
@@ -11647,8 +11708,10 @@ function kpiBuildQual(year){
     const wc=str(r['Workcenter name']||'');
     if(!wc)continue;
     const exec=parseFloat(String(r['Manufact qty']??'0').replace(',','.'))||0;
-    if(!(exec>0))continue;
     const scrap=Math.max(0,parseFloat(String(r['Scrapped qty']??'0').replace(',','.'))||0);
+    // Rebuturile sunt deseori declarate pe linii separate, cu CANT. EXEC. = 0.
+    // Daca le-am sari, workcenterul ar aparea la 100% conformitate.
+    if(!(exec>0)&&!(scrap>0))continue;
     let arr=m.get(wc);
     if(!arr){arr=Array.from({length:12},()=>({exec:0,scrap:0,n:0}));m.set(wc,arr);}
     arr[mi].exec+=exec;arr[mi].scrap+=scrap;arr[mi].n++;
@@ -11669,8 +11732,9 @@ const kpiQualPct=c=>(c&&c.exec>0)?Math.max(0,(c.exec-c.scrap)/c.exec*100):null;
 function kpiRenderQual(body,k){
   const data=kpiBuildQual(k.year);
   // acelasi univers de workcentere ca la IP Productie
-  let allWc=[...kpiBuildProd(k.year).keys()].sort((a,b)=>a.localeCompare(b));
-  if(!allWc.length)allWc=[...data.keys()].sort((a,b)=>a.localeCompare(b));
+  const allSet=new Set([...kpiBuildProd(k.year).keys()]);
+  for(const w of data.keys())allSet.add(w);
+  const allWc=[...allSet].sort((a,b)=>a.localeCompare(b));
   if(!allWc.length){body.appendChild(mkEmpty('Fara date','Nu exista scanari cu cantitati executate pentru anul selectat.'));return;}
   if(!k.wcSel){k.wcSel=new Set(allWc);kpiSaveCfg();}
   const sel=allWc.filter(w=>k.wcSel.has(w));
@@ -11783,10 +11847,18 @@ function kpiRenderQual(body,k){
   setTimeout(kpiApplyColW,0);
 
   /* grafic */
-  body.appendChild(kpiChartBox('qual','Conformitate pe luni (%)',type=>({
-    type,labels:KPI_MONTHS,unit:'%',yMax:100,
-    series:kpiSeriesFromRows(rows,data,kpiSumRowQ,kpiQualPct,tot,kpiQualPct)
-  })));
+  body.appendChild(kpiChartBox('qual','Conformitate pe workcentere, evolutie lunara',
+    (type,withQty)=>{
+      const series=kpiSeriesByMonth(rows,data,kpiSumRowQ,kpiQualPct);
+      const o={type,labels:kpiRowLabels(rows),unit:'%',yMax:100,yTitle:'Conformitate (%)',series};
+      if(withQty){
+        const arrs=rows.map(r=>r.type==='group'?kpiSumRowQ(data,r.members):(data.get(r.name)||[]));
+        o.rightUnit='buc';o.rightTitle='Cantitate executata (buc)';
+        series.push({name:'Cantitate executata (total an)',color:'#0f172a',emph:true,kind:'line',axis:'right',
+          values:arrs.map(a=>{let q=0;a.forEach(c=>{q+=c.exec||0;});return q>0?q:null;})});
+      }
+      return o;
+    },{label:'+ cantitate executată (axă secundară)'}));
 
   /* tile-uri */
   const SE=tot.reduce((a,c)=>a+c.exec,0),SS=tot.reduce((a,c)=>a+c.scrap,0);
@@ -12044,8 +12116,9 @@ function kpiRenderPaint(body,k){
 
   /* grafic */
   body.appendChild(kpiChartBox('paint','Piese vopsite / NOK si IP Vopsire pe luni',type=>({
-    type,labels:KPI_MONTHS,unit:'',
+    type,labels:KPI_MONTHS,unit:'',yTitle:'Cantitate (buc)',
     rightUnit:(type==='barline'?'%':''),rightMax:(type==='barline'?100:0),
+    rightTitle:(type==='barline'?'IP Vopsire (%)':''),
     series:[
       {name:'OK Products (buc)',color:'#15803d',values:d.map(c=>Math.max(0,c.painted-c.nok))},
       {name:'NOK — claims (buc)',color:'#dc2626',values:d.map(c=>c.nok)},
