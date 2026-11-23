@@ -1673,9 +1673,115 @@ async function sbLoadAllData(){
   return loaded;
 }
 
+/* ═══════════════════════════════════════════════════════════════
+   LOGO FIRMA — folosit in header-ul rapoartelor printate.
+   Se pastreaza ca data URL in bucket (data-logo.json) si in
+   localStorage, ca sa fie disponibil instant la print.
+═══════════════════════════════════════════════════════════════ */
+const LOGO_KEY='pps_logo';
+function logoGet(){
+  if(S.logo!==undefined)return S.logo;
+  try{S.logo=localStorage.getItem(LOGO_KEY)||null;}catch{S.logo=null;}
+  return S.logo;
+}
+function logoSetLocal(dataUrl){
+  S.logo=dataUrl||null;
+  try{if(dataUrl)localStorage.setItem(LOGO_KEY,dataUrl);else localStorage.removeItem(LOGO_KEY);}catch{}
+}
+async function logoLoadRemote(cfg){
+  if(!cfg)return;
+  try{
+    const d=await sbDownload(cfg,'data-logo.json',12000);
+    if(d&&typeof d.dataUrl==='string'&&d.dataUrl.startsWith('data:'))logoSetLocal(d.dataUrl);
+    else if(d&&d.dataUrl===null)logoSetLocal(null);
+  }catch(e){/* logo-ul nu e critic */}
+}
+async function logoSaveRemote(dataUrl){
+  logoSetLocal(dataUrl);
+  if(!S.sbCfg)return;
+  await sbUpload(S.sbCfg,'data-logo.json',{dataUrl:dataUrl||null,ts:Date.now()});
+}
+/* Header comun pentru rapoartele printate */
+function printHeaderHtml(title,subtitle){
+  const lg=logoGet();
+  const esc=x=>String(x??'').replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+  return `<div class="rep-head">
+    ${lg?`<img class="rep-logo" src="${lg}" alt="">`:''}
+    <div class="rep-titles">
+      <div class="rep-title">${esc(title)}</div>
+      ${subtitle?`<div class="rep-sub">${esc(subtitle)}</div>`:''}
+    </div>
+  </div>`;
+}
+const PRINT_HEAD_CSS=`.rep-head{display:flex;align-items:center;gap:14px;border-bottom:2px solid #1e3a5f;padding-bottom:8px;margin-bottom:10px}
+.rep-logo{max-height:46px;max-width:210px;object-fit:contain}
+.rep-titles{flex:1}
+.rep-title{font-size:16px;font-weight:800;color:#1e3a5f}
+.rep-sub{font-size:10px;color:#475569;margin-top:2px}`;
+
+/* Dialog de incarcare a logo-ului (din Fisiere) */
+function openLogoSettings(){
+  document.getElementById('logo-ov')?.remove();
+  const ov=dv('');ov.id='logo-ov';
+  ov.style.cssText='position:fixed;inset:0;background:rgba(0,0,0,.45);z-index:9600;display:flex;align-items:center;justify-content:center;padding:16px';
+  const md=dv('');md.style.cssText='background:#fff;border-radius:12px;width:min(520px,96vw);display:flex;flex-direction:column;overflow:hidden';
+  const h=dv('');h.style.cssText='padding:14px 18px;border-bottom:2px solid var(--border);display:flex;align-items:center';
+  h.innerHTML='<b style="font-size:15px;color:#1e3a5f">🖼 Logo firmă (header rapoarte)</b>';
+  const cl=el('button');cl.textContent='✕';
+  cl.style.cssText='margin-left:auto;border:none;background:#f1f5f9;border-radius:7px;width:30px;height:30px;cursor:pointer;font-size:14px';
+  cl.addEventListener('click',()=>ov.remove());h.appendChild(cl);md.appendChild(h);
+  const bd=dv('');bd.style.cssText='padding:16px 18px';
+  const info=dv('');info.style.cssText='font-size:11.5px;color:#64748b;line-height:1.6;margin-bottom:12px';
+  info.innerHTML='Logo-ul apare în partea de sus a rapoartelor printate. Recomandat PNG cu fundal transparent, '+
+    'lățime 400–800 px. Se salvează pe server, deci îl vor avea toți utilizatorii.';
+  bd.appendChild(info);
+  const prev=dv('');prev.id='logo-prev';
+  prev.style.cssText='border:1.5px dashed var(--border);border-radius:9px;padding:14px;text-align:center;background:#f8fafc;min-height:76px;display:flex;align-items:center;justify-content:center';
+  const drawPrev=()=>{
+    const lg=logoGet();
+    prev.innerHTML=lg?`<img src="${lg}" style="max-height:62px;max-width:100%;object-fit:contain">`
+      :'<span style="font-size:12px;color:#94a3b8">Niciun logo încărcat</span>';
+  };
+  drawPrev();bd.appendChild(prev);
+  const msg=dv('');msg.style.cssText='font-size:11.5px;font-weight:700;margin-top:10px;min-height:16px';
+  const row=dv('');row.style.cssText='display:flex;gap:9px;margin-top:12px;flex-wrap:wrap';
+  const inp=el('input');inp.type='file';inp.accept='image/png,image/jpeg,image/svg+xml,image/webp';inp.style.display='none';
+  const up=el('label');up.textContent='+ Încarcă imagine';
+  up.style.cssText='padding:8px 15px;border-radius:7px;background:#1d4ed8;color:#fff;font-size:12.5px;font-weight:800;cursor:pointer';
+  up.appendChild(inp);
+  inp.addEventListener('change',async e=>{
+    const f=e.target.files?.[0];if(!f)return;
+    if(f.size>900*1024){msg.style.color='#dc2626';msg.textContent='Imagine prea mare (max 900 KB). Redimensionează-o.';return;}
+    msg.style.color='#475569';msg.textContent='Se încarcă…';
+    try{
+      const dataUrl=await new Promise((res,rej)=>{
+        const fr=new FileReader();fr.onload=()=>res(String(fr.result));fr.onerror=()=>rej(new Error('citire eșuată'));
+        fr.readAsDataURL(f);
+      });
+      await logoSaveRemote(dataUrl);
+      drawPrev();
+      msg.style.color='#15803d';msg.textContent='✓ Logo salvat. Apare în rapoartele printate.';
+    }catch(err){msg.style.color='#dc2626';msg.textContent='Eroare: '+(err.message||err);}
+    inp.value='';
+  });
+  const del=el('button');del.textContent='🗑 Șterge logo';
+  del.style.cssText='padding:8px 15px;border:1.5px solid #fca5a5;border-radius:7px;background:#fff;color:#b91c1c;font-size:12.5px;font-weight:800;cursor:pointer';
+  del.addEventListener('click',async()=>{
+    if(!confirm('Ștergi logo-ul din rapoarte?'))return;
+    try{await logoSaveRemote(null);drawPrev();msg.style.color='#475569';msg.textContent='Logo șters.';}
+    catch(err){msg.style.color='#dc2626';msg.textContent='Eroare: '+(err.message||err);}
+  });
+  row.appendChild(up);row.appendChild(del);
+  bd.appendChild(row);bd.appendChild(msg);md.appendChild(bd);
+  ov.appendChild(md);ov.addEventListener('click',e=>{if(e.target===ov)ov.remove();});
+  document.body.appendChild(ov);
+}
+
 // ── FAZA 2: Fișiere secundare (Scanări + MO List) ── încărcate în fundal
 async function sbLoadSecondaryData(cfg){
   if(!cfg)return;
+
+  logoLoadRemote(cfg);   // logo pentru header-ul rapoartelor
 
   // Scanări
   S.loadMsg='Se incarca Raport Scanari (fundal)...';
@@ -4217,8 +4323,14 @@ function renderFisiereTab(){
   batchBtn.style.cssText='border-color:#15803d;color:#15803d;background:#f0fdf4;margin-top:8px;margin-left:8px;font-weight:800';
   batchBtn.title='Selectați mai multe fișiere deodată — se identifică automat după antet';
   batchBtn.addEventListener('click',()=>openBatchUpload(()=>render()));
+  const logoBtn=el('button','tbtn');
+  logoBtn.innerHTML='🖼 Logo firmă';
+  logoBtn.style.cssText='border-color:#7c3aed;color:#6d28d9;background:#f5f3ff;margin-top:8px;margin-left:8px;font-weight:700';
+  logoBtn.title='Logo-ul afișat în header-ul rapoartelor printate';
+  logoBtn.addEventListener('click',()=>openLogoSettings());
   hh.appendChild(batchBtn);
   hh.appendChild(dwgBtn);
+  hh.appendChild(logoBtn);
   hhBar.appendChild(hh);
   hhBar.appendChild(mkZoomCtrl('fisiere'));
   page.appendChild(hhBar);
@@ -11323,6 +11435,68 @@ function kpiChartSvg(o){
   return `<svg viewBox="0 0 ${W} ${H}" style="width:100%;height:auto;display:block;font-family:system-ui,Segoe UI,Arial,sans-serif" xmlns="http://www.w3.org/2000/svg">${g}</svg>`;
 }
 
+/* Ce workcentere/grupuri (dintre cele din tabel) intra in grafic.
+   Selectia este separata de cea a tabelului si se salveaza per indicator. */
+function kpiChartRows(key,rows){
+  const k=S.kpi8;k.chartWc=k.chartWc||{};
+  const sel=k.chartWc[key];
+  if(!Array.isArray(sel))return rows;
+  const set=new Set(sel);
+  const out=rows.filter(r=>set.has(r.name));
+  return out.length?out:rows;
+}
+function kpiChartWcPicker(key,rows){
+  const k=S.kpi8;k.chartWc=k.chartWc||{};
+  const names=rows.map(r=>r.name);
+  const sel=new Set(Array.isArray(k.chartWc[key])?k.chartWc[key].filter(n=>names.includes(n)):names);
+  document.getElementById('kpi-cwc-ov')?.remove();
+  const ov=dv('');ov.id='kpi-cwc-ov';
+  ov.style.cssText='position:fixed;inset:0;background:rgba(0,0,0,.45);z-index:9600;display:flex;align-items:center;justify-content:center;padding:16px';
+  const md=dv('');md.style.cssText='background:#fff;border-radius:12px;width:min(480px,96vw);max-height:84vh;display:flex;flex-direction:column;overflow:hidden';
+  const h=dv('');h.style.cssText='padding:14px 18px;border-bottom:2px solid var(--border);display:flex;align-items:center';
+  h.innerHTML='<b style="font-size:15px;color:#1e3a5f">📊 Workcentere afișate în grafic</b>';
+  const cl=el('button');cl.textContent='✕';
+  cl.style.cssText='margin-left:auto;border:none;background:#f1f5f9;border-radius:7px;width:30px;height:30px;cursor:pointer;font-size:14px';
+  cl.addEventListener('click',()=>ov.remove());h.appendChild(cl);md.appendChild(h);
+  const note=dv('');note.style.cssText='padding:9px 18px 0;font-size:11.5px;color:#64748b';
+  note.textContent='Tabelul rămâne neschimbat — se filtrează doar graficul.';
+  md.appendChild(note);
+  const bar=dv('');bar.style.cssText='padding:9px 18px;display:flex;gap:8px;border-bottom:1px solid var(--border)';
+  const list=dv('');list.style.cssText='flex:1;overflow:auto;padding:8px 18px 14px';
+  const draw=()=>{
+    list.innerHTML='';
+    rows.forEach(r=>{
+      const l=el('label');l.style.cssText='display:flex;align-items:center;gap:9px;padding:6px 2px;cursor:pointer;border-bottom:1px solid #f8fafc;font-size:12.5px';
+      const cb=el('input');cb.type='checkbox';cb.checked=sel.has(r.name);cb.style.cssText='width:15px;height:15px;cursor:pointer';
+      cb.addEventListener('change',()=>{if(cb.checked)sel.add(r.name);else sel.delete(r.name);});
+      l.appendChild(cb);
+      l.appendChild(document.createTextNode((r.type==='group'?'🗂 ':'')+r.name));
+      if(r.type==='group'){
+        const t=sp('',r.members.length+' WC');
+        t.style.cssText='margin-left:auto;font-size:9.5px;font-weight:800;color:#6d28d9;background:#f5f3ff;border:1px solid #ddd6fe;border-radius:6px;padding:1px 7px';
+        l.appendChild(t);
+      }
+      list.appendChild(l);
+    });
+  };
+  [['Toate',()=>{names.forEach(n=>sel.add(n));}],['Niciunul',()=>sel.clear()]].forEach(([t,fn])=>{
+    const b=el('button');b.textContent=t;
+    b.style.cssText='padding:5px 11px;border:1px solid var(--border);border-radius:6px;background:#fff;font-size:11.5px;font-weight:700;cursor:pointer';
+    b.addEventListener('click',()=>{fn();draw();});bar.appendChild(b);});
+  md.appendChild(bar);draw();md.appendChild(list);
+  const ft=dv('');ft.style.cssText='padding:11px 18px;border-top:1px solid var(--border);display:flex;justify-content:flex-end';
+  const ap=el('button');ap.textContent='Aplică';
+  ap.style.cssText='padding:8px 18px;border:none;border-radius:7px;background:#1d4ed8;color:#fff;font-weight:800;font-size:12.5px;cursor:pointer';
+  ap.addEventListener('click',()=>{
+    k.chartWc[key]=(sel.size===names.length)?null:[...sel];
+    try{kpiSaveCfg();}catch{}
+    ov.remove();render();
+  });
+  ft.appendChild(ap);md.appendChild(ft);
+  ov.appendChild(md);ov.addEventListener('click',e=>{if(e.target===ov)ov.remove();});
+  document.body.appendChild(ov);
+}
+
 /* Card de grafic: tip, limite de axa, valori, trendline si interval de luni.
    Toate setarile se salveaza separat pentru fiecare indicator. */
 function kpiChartBox(key,title,build,extra){
@@ -11435,6 +11609,14 @@ function kpiChartBox(key,title,build,extra){
     c.addEventListener('change',()=>{on(c.checked);save();draw();});
     l.appendChild(c);l.appendChild(document.createTextNode(lbl));return l;
   };
+  if(extra&&extra.rows&&extra.rows.length){
+    const selN=Array.isArray(k.chartWc?.[key])?extra.rows.filter(r=>k.chartWc[key].includes(r.name)).length:extra.rows.length;
+    const bw=el('button');bw.textContent=`⚙ Workcentere în grafic (${selN}/${extra.rows.length})`;
+    bw.title='Alege ce workcentere/grupuri din tabel apar în grafic';
+    bw.style.cssText='padding:4px 10px;border:1.5px solid #1d4ed8;border-radius:6px;background:#eff6ff;font-size:11px;font-weight:800;color:#1d4ed8;cursor:pointer';
+    bw.addEventListener('click',()=>kpiChartWcPicker(key,extra.rows));
+    bar.appendChild(bw);
+  }
   bar.appendChild(chk('Valorile seriilor',cfg.values,v=>{cfg.values=v;},'Afișează numeric fiecare punct din grafic'));
   bar.appendChild(chk('Trendline',cfg.trend,v=>{cfg.trend=v;},'Linie de tendință (regresie liniară) — câte una pentru fiecare workcenter'));
   box.appendChild(bar);
@@ -11475,6 +11657,7 @@ function kpiCfgPlain(){
     chart:k.chart||{},
     chartOpt:k.chartOpt||{},
     chartCfg:k.chartCfg||{},
+    chartWc:k.chartWc||{},
   };
 }
 function kpiSaveCfg(){
@@ -11499,6 +11682,7 @@ function kpiApplyCfg(d){
   if(d.chart&&typeof d.chart==='object')k.chart=d.chart;
   if(d.chartOpt&&typeof d.chartOpt==='object')k.chartOpt=d.chartOpt;
   if(d.chartCfg&&typeof d.chartCfg==='object')k.chartCfg=d.chartCfg;
+  if(d.chartWc&&typeof d.chartWc==='object')k.chartWc=d.chartWc;
   k.expanded=new Set(Array.isArray(d.expanded)?d.expanded:[]);
 }
 function kpiLoadCfgLocal(){
@@ -11641,6 +11825,8 @@ function kpiBuildPaint(year){
 
 /* ── Latimi de coloana redimensionabile (persistate per sub-tab) ── */
 const KPI_DEF_W={label:210,mon:66,tot:84};
+/* IP Calitate afiseaza valori cu mai multe cifre -> coloane de luna cu 10% mai late */
+function kpiMonDefW(){return S.kpi8?.sub==='qual'?Math.round(KPI_DEF_W.mon*1.1):KPI_DEF_W.mon;}
 function kpiColW(key,def){
   const w=S.kpi8?.colW?.[`${S.kpi8.sub}:${key}`];
   return (typeof w==='number'&&w>=0)?w:def;
@@ -11690,7 +11876,7 @@ function kpiApplyColW(){
   if(!tbl)return;
   tbl.querySelectorAll('th[data-kpi-col]').forEach(th=>{
     const key=th.dataset.kpiCol;
-    const def=key==='label'?KPI_DEF_W.label:key==='tot'?KPI_DEF_W.tot:KPI_DEF_W.mon;
+    const def=key==='label'?KPI_DEF_W.label:key==='tot'?KPI_DEF_W.tot:kpiMonDefW();
     const w=kpiColW(key,def);
     th.style.width=th.style.minWidth=th.style.maxWidth=w+'px';
     th.style.paddingLeft=th.style.paddingRight=(w<40?'2px':'10px');
@@ -11699,7 +11885,7 @@ function kpiApplyColW(){
   tbl.querySelectorAll('tbody tr').forEach(tr=>{
     [...tr.children].forEach((td,i)=>{
       const key=idx[i];if(!key)return;
-      const def=key==='label'?KPI_DEF_W.label:key==='tot'?KPI_DEF_W.tot:KPI_DEF_W.mon;
+      const def=key==='label'?KPI_DEF_W.label:key==='tot'?KPI_DEF_W.tot:kpiMonDefW();
       const w=kpiColW(key,def);
       td.style.width=td.style.minWidth=td.style.maxWidth=w+'px';
       td.style.paddingLeft=td.style.paddingRight=(w<40?'2px':'10px');
@@ -11903,18 +12089,19 @@ function kpiRenderProd(body,k){
 
   /* grafic: pe orizontala workcenterele/grupurile, o serie pentru fiecare luna */
   const prodPct=c=>(c&&c.real>0)?c.teo/c.real*100:null;
+  const cRows=kpiChartRows('prod',rows);
   body.appendChild(kpiChartBox('prod','Eficienta pe workcentere, evolutie lunara',
     (type,withQty)=>{
-      const series=kpiSeriesByMonth(rows,data,kpiSumRow,prodPct);
-      const o={type,labels:kpiRowLabels(rows),unit:'%',yTitle:'Eficienta (%)',series,monthAxis:'series'};
+      const series=kpiSeriesByMonth(cRows,data,kpiSumRow,prodPct);
+      const o={type,labels:kpiRowLabels(cRows),unit:'%',yTitle:'Eficienta (%)',series,monthAxis:'series'};
       if(withQty){
-        const arrs=rows.map(r=>r.type==='group'?kpiSumRow(data,r.members):(data.get(r.name)||[]));
+        const arrs=cRows.map(r=>r.type==='group'?kpiSumRow(data,r.members):(data.get(r.name)||[]));
         o.rightUnit='h';o.rightTitle='Ore reale (h)';
         series.push({name:'Ore reale (total an)',color:'#0f172a',emph:true,kind:'line',axis:'right',
           values:arrs.map(a=>{let m=0;a.forEach(c=>{m+=c.real||0;});return m>0?m/60:null;})});
       }
       return o;
-    },{label:'+ ore reale (axă secundară)'}));
+    },{label:'+ ore reale (axă secundară)',rows}));
 }
 
 /* ── IP Calitate (Sheet Metal): Map wc → [12 x {exec,scrap,n}] ──
@@ -11992,7 +12179,9 @@ function kpiRenderQual(body,k){
   tbl.style.cssText='border-collapse:collapse;font-size:12px;background:#fff;border:1px solid var(--border);table-layout:fixed';
   const thead=el('thead');const hr=el('tr');hr.style.cssText='background:#1e3a5f;color:#fff';
   hr.appendChild(kpiMakeTh('Workcenter / Grup','label',KPI_DEF_W.label,{align:'left',sticky:true,bg:'#1e3a5f'}));
-  KPI_MONTHS.forEach((mn,i)=>hr.appendChild(kpiMakeTh(mn,'m'+i,KPI_DEF_W.mon,{})));
+  // coloanele lunilor sunt cu 10% mai late aici (valorile au mai multe cifre)
+  const MON_W_Q=kpiMonDefW();
+  KPI_MONTHS.forEach((mn,i)=>hr.appendChild(kpiMakeTh(mn,'m'+i,MON_W_Q,{})));
   hr.appendChild(kpiMakeTh('Medie an','tot',KPI_DEF_W.tot,{bold:900,bg:'#15306b'}));
   thead.appendChild(hr);tbl.appendChild(thead);
 
@@ -12073,16 +12262,17 @@ function kpiRenderQual(body,k){
   /* grafic */
   body.appendChild(kpiChartBox('qual','Conformitate pe workcentere, evolutie lunara',
     (type,withQty)=>{
-      const series=kpiSeriesByMonth(rows,data,kpiSumRowQ,kpiQualPct);
-      const o={type,labels:kpiRowLabels(rows),unit:'%',yTitle:'Conformitate (%)',series,monthAxis:'series'};
+      const cRows=kpiChartRows('qual',rows);
+      const series=kpiSeriesByMonth(cRows,data,kpiSumRowQ,kpiQualPct);
+      const o={type,labels:kpiRowLabels(cRows),unit:'%',yTitle:'Conformitate (%)',series,monthAxis:'series'};
       if(withQty){
-        const arrs=rows.map(r=>r.type==='group'?kpiSumRowQ(data,r.members):(data.get(r.name)||[]));
+        const arrs=cRows.map(r=>r.type==='group'?kpiSumRowQ(data,r.members):(data.get(r.name)||[]));
         o.rightUnit='buc';o.rightTitle='Cantitate executata (buc)';
         series.push({name:'Cantitate executata (total an)',color:'#0f172a',emph:true,kind:'line',axis:'right',
           values:arrs.map(a=>{let q=0;a.forEach(c=>{q+=c.exec||0;});return q>0?q:null;})});
       }
       return o;
-    },{label:'+ cantitate executată (axă secundară)'}));
+    },{label:'+ cantitate executată (axă secundară)',rows}));
 
   /* tile-uri */
   const SE=tot.reduce((a,c)=>a+c.exec,0),SS=tot.reduce((a,c)=>a+c.scrap,0);
@@ -12427,8 +12617,9 @@ function kpiPrint(title,tblEl,chartEl){
   tr{page-break-inside:avoid}
   .chart{margin-top:12px;page-break-inside:avoid}
   .chart svg{width:100%;height:auto}
+  ${PRINT_HEAD_CSS}
   </style></head><body>
-  <h1>${title}</h1><div class="sub">KPI 8: Operational Efficiency · generat ${new Date().toLocaleString('ro-RO')}</div>
+  ${printHeaderHtml(title,'KPI 8: Operational Efficiency · generat '+new Date().toLocaleString('ro-RO'))}
   ${tblEl.outerHTML}${chartHtml}</body></html>`);
   w.document.close();
   setTimeout(()=>{try{w.focus();w.print();}catch(e){console.warn(e);}},350);
@@ -14306,11 +14497,13 @@ function mepPrint(res){
     'td.n{text-align:right;font-family:ui-monospace,monospace}td.tot{background:#eef2ff;font-weight:800}'+
     'tr.grp{background:#ede9fe}tr.grp td{font-weight:800;color:#5b21b6}tr.sub td.w{padding-left:16px;color:#64748b;font-weight:400}'+
     'tr.trow{background:#1e3a5f;color:#fff;font-weight:800}tr.trow td{border:0}tr.vrow{background:#f1f5f9;font-size:8.5px}'+
-    '</style></head><body><h1>Manoperă / EUR vândut — '+esc(mepUnitLabel())+'</h1>'+
-    '<div class="sub">Perioadă: '+esc(per)+' · Eficiență globală: '+(st.eff||100)+'% · '+
-    'Clienți: '+res.clients.length+' din '+res.allClients.length+' · '+
-    'Valoare livrată: '+esc(mepFmtEur(res.total.value))+' · Acoperire BOM/BOW: '+
-    (res.total.value>0?(res.total.valueCov/res.total.value*100).toFixed(1):'0')+'% · Generat '+new Date().toLocaleString('ro-RO')+'</div>'+
+    PRINT_HEAD_CSS+
+    '</style></head><body>'+
+    printHeaderHtml('Manoperă / EUR vândut — '+mepUnitLabel(),
+      'Perioadă: '+per+' · Eficiență globală: '+(st.eff||100)+'% · Clienți: '+res.clients.length+
+      ' din '+res.allClients.length+' · Valoare livrată: '+mepFmtEur(res.total.value)+
+      ' · Acoperire BOM/BOW: '+(res.total.value>0?(res.total.valueCov/res.total.value*100).toFixed(1):'0')+
+      '% · Generat '+new Date().toLocaleString('ro-RO'))+
     '<table><thead><tr><th class="l">Workcenter / Grup</th><th>Ef.%</th>'+
     cols.map(c=>'<th>'+esc(c.name)+'</th>').join('')+'</tr></thead><tbody>'+
     rows+totRow+hRow+valRow+'</tbody></table></body></html>';
