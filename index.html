@@ -8635,6 +8635,13 @@ function renderSubcoTrack(){
     S._sctLoaded=true;
     sctLoadRemote().then(()=>{if(S.tab==='subcotrack')render();});
   }
+  // Grupele si zilele vin din Config SUBCO; pana acum se incarcau doar la
+  // deschiderea paginii "Planificare Subco", deci selectorul era gol.
+  if(!S._subcoLoaded){
+    S._subcoLoaded=true;
+    loadSubcoCfgLocal();
+    loadSubcoCfgRemote().then(()=>{if(S.tab==='subcotrack')render();});
+  }
 
   const hdr=dv('');hdr.style.cssText='padding:11px 16px 9px;border-bottom:2px solid var(--border);background:#fff;flex-shrink:0';
   const h1=dv('');h1.style.cssText='font-size:16px;font-weight:900;color:#1e3a5f';
@@ -8947,13 +8954,34 @@ function sctOpenEdit(item){
 
   /* 1. GRUPA DE SUBCONTRACTARE — primul câmp */
   bd.appendChild(lb('Grupă de subcontractare'));
-  const grpSel=el('select');
-  grpSel.style.cssText=inStyle+';font-weight:800;background:#fff';
-  const g0=el('option');g0.value='';g0.textContent='— toate grupele —';grpSel.appendChild(g0);
-  sctGroups().forEach(g=>{const o=el('option');o.value=g;o.textContent=g;if((it.group||subcoProcFor(it.supplier))===g)o.selected=true;grpSel.appendChild(o);});
-  bd.appendChild(grpSel);
-  const grpHint=dv('');grpHint.style.cssText='font-size:10.5px;color:#64748b;margin-top:3px';
-  grpHint.textContent='Alege grupa, apoi click pe „Reper" pentru propuneri de repere care pleacă la acea grupă.';
+  const allGroups=sctGroups();
+  const grpWrap=dv('');grpWrap.style.cssText='display:flex;gap:7px;align-items:center;flex-wrap:wrap';
+  const grpSel=el('input');grpSel.type='text';
+  grpSel.value=it.group||subcoProcFor(it.supplier)||'';
+  grpSel.placeholder=allGroups.length?'alege o grupă sau scrie una nouă':'ex: Anodizare, Zincare, Nitrocarburare';
+  grpSel.setAttribute('list','sct-grp-list');
+  grpSel.style.cssText=inStyle+';font-weight:800;flex:1;min-width:180px';
+  const dl0=el('datalist');dl0.id='sct-grp-list';
+  allGroups.forEach(g=>{const o=el('option');o.value=g;dl0.appendChild(o);});
+  grpWrap.appendChild(grpSel);grpWrap.appendChild(dl0);
+  // butoane rapide pentru grupele existente
+  if(allGroups.length){
+    allGroups.slice(0,8).forEach(g=>{
+      const b2=el('button');b2.textContent=g;
+      b2.style.cssText='padding:5px 10px;border:1.5px solid #ddd6fe;border-radius:14px;background:#f5f3ff;color:#6d28d9;font-size:11px;font-weight:800;cursor:pointer';
+      b2.addEventListener('click',()=>{grpSel.value=g;grpSel.dispatchEvent(new Event('change'));});
+      grpWrap.appendChild(b2);
+    });
+  }
+  bd.appendChild(grpWrap);
+  const grpHint=dv('');grpHint.style.cssText='font-size:10.5px;margin-top:3px';
+  if(allGroups.length){
+    grpHint.style.color='#64748b';
+    grpHint.textContent='Alege grupa, apoi click pe „Reper" pentru propuneri de repere care pleacă la acea grupă.';
+  } else {
+    grpHint.style.color='#b45309';
+    grpHint.textContent='Nicio grupă definită încă — o poți scrie liber aici, sau o configurezi în Planificare Subco → Config SUBCO, în dreptul fiecărui subcontractor.';
+  }
   bd.appendChild(grpHint);
 
   /* 2. REPER */
@@ -8973,7 +9001,7 @@ function sctOpenEdit(item){
   const dl2=el('datalist');dl2.id='sct-sup-list';
   const fillSupList=()=>{
     dl2.innerHTML='';
-    const g=grpSel.value;
+    const g=grpSel.value.trim();
     buildSubcoSuppliers()
       .filter(s2=>!g||subcoProcFor(s2.supplier)===g)
       .forEach(s2=>{const o=el('option');o.value=s2.supplier;dl2.appendChild(o);});
@@ -9001,9 +9029,12 @@ function sctOpenEdit(item){
   compI.addEventListener('change',syncEcho);
   supI.addEventListener('input',syncEcho);supI.addEventListener('change',syncEcho);
   compI.addEventListener('focus',()=>{side.style.display='flex';drawSide();});
-  grpSel.addEventListener('change',()=>{
-    it.group=grpSel.value;fillSupList();side.style.display='flex';drawSide();syncEcho();
-  });
+  const onGrp=()=>{
+    it.group=grpSel.value.trim();_dirty=true;
+    fillSupList();side.style.display='flex';drawSide();syncEcho();
+  };
+  grpSel.addEventListener('change',onGrp);
+  grpSel.addEventListener('input',onGrp);
 
   /* 4. cantitati si date */
   const row=(a,b2)=>{const d=dv('');d.style.cssText='display:flex;gap:10px';
@@ -9122,7 +9153,7 @@ function sctOpenEdit(item){
   side.appendChild(sList);
   sQ.addEventListener('input',()=>drawSide());
   function drawSide(){
-    const g=grpSel.value;
+    const g=grpSel.value.trim();
     let sug=sctSuggestions(g);
     const q=(sQ.value||'').trim().toLowerCase();
     if(q)sug=sug.filter(x=>x.comp.toLowerCase().includes(q)||String(x.name).toLowerCase().includes(q)
@@ -9158,7 +9189,7 @@ function sctOpenEdit(item){
       sList.appendChild(m);
     }
   }
-  if(grpSel.value){side.style.display='flex';drawSide();}
+  if(grpSel.value.trim()){side.style.display='flex';drawSide();}
 
   /* footer */
   const ft=dv('');ft.style.cssText='padding:11px 18px;border-top:1px solid var(--border);display:flex;gap:9px;justify-content:flex-end';
@@ -9172,7 +9203,7 @@ function sctOpenEdit(item){
     if(!comp){err.textContent='Completează codul reperului.';compI.focus();return;}
     if(!sup){err.textContent='Completează subcontractorul.';supI.focus();return;}
     if(!(sctNum(qP.value)>0)&&!(sctNum(qS.value)>0)){err.textContent='Completează cantitatea planificată sau cea trimisă.';return;}
-    it.comp=comp;it.supplier=sup;it.group=grpSel.value||subcoProcFor(sup)||'';
+    it.comp=comp;it.supplier=sup;it.group=grpSel.value.trim()||subcoProcFor(sup)||'';
     it.compName=(S.stockIdx?.get(comp)?.name)||subList.find(x=>x.productNo===comp)?.prodName||it.compName||'';
     it.qtyPlanned=qP.value.trim();it.qtySent=qS.value.trim();it.qtyRecv=qR.value.trim();
     it.dateSentEst=dSE.value;it.dateSent=dS.value;it.dateRecv=dR.value;it.dateRecvEst=dRE.value;
