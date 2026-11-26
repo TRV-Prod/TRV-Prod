@@ -8466,8 +8466,10 @@ function _subcoGroup(rows){
     g.fpList=fps.map(([code,v])=>({fp:code,qty:v.qty,name:v.name}));
     if(fps.length===1){g.fp=fps[0][0];g.fpName=fps[0][1].name||'';}
     else if(fps.length>1){
-      g.fp=fps[0][0]+' +'+(fps.length-1);
-      g.fpName=fps.length+' produse finale';
+      // toate produsele finale in care intra reperul, nu doar primul
+      g.fp=fps.map(x=>x[0]).join(', ');
+      const nm=fps.map(x=>x[1].name).filter(Boolean);
+      g.fpName=nm.length?[...new Set(nm)].join(', '):fps.length+' produse finale';
     }
     g.fpTitle=fps.length?fps.map(([c2,v])=>`${c2}${v.name?' — '+v.name:''}: ${fmtN(v.qty)} buc`).join('\n'):'';
     const cu=[...g._cust];
@@ -9079,13 +9081,39 @@ function _subcoRenderTable(page,allRows,COLS0,mode){
           } else if(c.k==='fp'){
             td.style.fontWeight='700';td.style.color='#1e3a5f';
             if(r._group&&r.fpList&&r.fpList.length>1){
+              // afisam toate produsele finale, cate unul pe linie
+              td.textContent='';
+              td.style.whiteSpace='normal';
+              td.style.overflow='visible';
+              td.style.textOverflow='clip';
+              td.style.lineHeight='1.35';
+              td.style.padding='3px 8px';
+              r.fpList.forEach(x=>{
+                const ln=dv('');ln.style.cssText='display:flex;gap:5px;align-items:baseline';
+                const cd=sp('',x.fp);cd.style.cssText='font-weight:700;color:#1e3a5f;font-size:11px';
+                const q=sp('','· '+fmtN(x.qty));
+                q.style.cssText='font-size:9.5px;font-weight:700;color:#64748b;font-family:monospace';
+                ln.appendChild(cd);ln.appendChild(q);
+                _attachItemCtx(ln,x.fp);
+                td.appendChild(ln);
+              });
               td.title='Necesarul cumulat provine din:\n'+r.fpTitle;
-              td.style.cursor='help';
-              _attachItemCtx(td,String(r.fpList[0].fp||''));
             } else {
               if(r._group&&r.fpTitle)td.title=r.fpTitle;
               _attachItemCtx(td,String(r[c.k]||''));
             }
+          } else if(c.k==='fpName'&&r._group&&r.fpList&&r.fpList.length>1){
+            td.textContent='';
+            td.style.whiteSpace='normal';td.style.overflow='visible';
+            td.style.textOverflow='clip';td.style.lineHeight='1.35';
+            const seen=new Set();
+            r.fpList.forEach(x=>{
+              const nm=x.name||'—';
+              if(seen.has(nm))return;seen.add(nm);
+              const ln=dv('');ln.style.cssText='font-size:11px;color:#334155';
+              ln.textContent=nm;td.appendChild(ln);
+            });
+            td.title=r.fpTitle;td.style.cursor='help';
           } else if(c.k==='fpName'&&r._group&&r.fpTitle){
             td.title=r.fpTitle;td.style.cursor='help';
           } else if(c.k==='customer'&&r._group&&r.customerTitle&&r.customerTitle.includes('\n')){
