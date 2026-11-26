@@ -1671,6 +1671,7 @@ async function sbLoadAllData(){
     if(planData.prio)S.planPrio=planData.prio;
     if(planData.pwcScheduled)S.pwcState.scheduledByGroup=planData.pwcScheduled;
     if(planData.pwcNotes)S.pwcState.notes=planData.pwcNotes;
+    S._planSrvSig=planSigOf(planData.entries||[],planData.prio||{});
   }
   // ── Render app immediately after phase 1 ──
   // Phase 2 loads in background after render
@@ -6249,6 +6250,184 @@ function showToast(msg,type='ok',dur=2500){
   setTimeout(()=>{t.style.opacity='0';t.style.transition='opacity .3s';setTimeout(()=>t.remove(),300);},dur);
 }
 
+/* ═══════════════════════════════════════════════════════════════
+   JURNAL AL MODIFICARILOR DIN PLAN
+   Fiecare salvare este inregistrata in data-plan-log.json: cine,
+   cand, ce s-a adaugat / scos / modificat, plus o copie completa a
+   planului pentru ultimele versiuni, ca sa se poata restaura.
+═══════════════════════════════════════════════════════════════ */
+const PLAN_LOG_FILE='data-plan-log.json';
+const PLAN_LOG_MAX=120;        // cate inregistrari pastram
+const PLAN_LOG_SNAPS=20;       // pentru cate dintre ele pastram copia completa
+
+function planSnapshotObj(){
+  return {entries:[...S.planData.entries()],prio:Object.assign({},S.planPrio),obs:Object.assign({},S.planObs)};
+}
+function planQtyMap(entries){
+  const m=new Map();
+  (Array.isArray(entries)?entries:[]).forEach(([k,pl])=>m.set(k,(pl&&pl.totalQty)||0));
+  return m;
+}
+/* Diferenta intre doua stari ale planului */
+function planDiff(beforeEntries,afterEntries,beforePrio,afterPrio){
+  const A=planQtyMap(beforeEntries),B=planQtyMap(afterEntries);
+  const added=[],removed=[],changed=[];
+  B.forEach((q,k)=>{if(!A.has(k))added.push({item:k,qty:q});
+    else if(A.get(k)!==q)changed.push({item:k,from:A.get(k),to:q});});
+  A.forEach((q,k)=>{if(!B.has(k))removed.push({item:k,qty:q});});
+  const pa=beforePrio||{},pb=afterPrio||{};
+  const prio=[];
+  new Set([...Object.keys(pa),...Object.keys(pb)]).forEach(k=>{
+    const x=pa[k]||'',y=pb[k]||'';
+    if(String(x)!==String(y))prio.push({item:k,from:x,to:y});
+  });
+  return {added,removed,changed,prio};
+}
+function planLogIsEmptyDiff(d){
+  return !d.added.length&&!d.removed.length&&!d.changed.length&&!d.prio.length;
+}
+
+/* Scriere amanata: o actiune care cheama savePlan de mai multe ori
+   genereaza o singura inregistrare. */
+let _planLogPending=null, _planLogTimer=null;
+function planLogSchedule(beforeState){
+  if(!_planLogPending)_planLogPending={before:beforeState};
+  clearTimeout(_planLogTimer);
+  _planLogTimer=setTimeout(()=>{planLogFlush().catch(e=>console.warn('[PlanLog]',e));},2500);
+}
+async function planLogFlush(){
+  const pend=_planLogPending;_planLogPending=null;
+  if(!pend||!S.sbCfg)return;
+  const before=pend.before||{entries:[],prio:{}};
+  const after=planSnapshotObj();
+  const d=planDiff(before.entries,after.entries,before.prio,after.prio);
+  if(planLogIsEmptyDiff(d))return;
+  let log=[];
+  try{const r=await sbDownload(S.sbCfg,PLAN_LOG_FILE,20000);log=Array.isArray(r?.log)?r.log:[];}catch(_){}
+  let qty=0;after.entries.forEach(([,pl])=>{qty+=(pl&&pl.totalQty)||0;});
+  log.unshift({
+    ts:Date.now(),
+    user:String(S.session?.username||'?'),
+    items:after.entries.length,qty,
+    added:d.added.slice(0,400),removed:d.removed.slice(0,400),
+    changed:d.changed.slice(0,400),prio:d.prio.slice(0,400),
+    snapshot:after
+  });
+  if(log.length>PLAN_LOG_MAX)log=log.slice(0,PLAN_LOG_MAX);
+  // copiile complete se pastreaza doar pentru inregistrarile recente
+  log.forEach((e,i)=>{if(i>=PLAN_LOG_SNAPS&&e.snapshot)delete e.snapshot;});
+  await sbUpload(S.sbCfg,PLAN_LOG_FILE,{log});
+  S.planLog=log;
+}
+async function planLogLoad(force){
+  if(S.planLog&&!force)return S.planLog;
+  if(!S.sbCfg)return [];
+  try{
+    const r=await sbDownload(S.sbCfg,PLAN_LOG_FILE,25000);
+    S.planLog=Array.isArray(r?.log)?r.log:[];
+  }catch(e){S.planLog=[];}
+  return S.planLog;
+}
+
+/* ── Fereastra jurnalului ── */
+function openPlanLog(){
+  document.getElementById('plan-log-ov')?.remove();
+  const ov=dv('');ov.id='plan-log-ov';
+  ov.style.cssText='position:fixed;inset:0;background:rgba(0,0,0,.45);z-index:9600;display:flex;align-items:center;justify-content:center;padding:16px';
+  const md=dv('');md.style.cssText='background:#fff;border-radius:12px;width:min(840px,97vw);max-height:88vh;display:flex;flex-direction:column;overflow:hidden';
+  const h=dv('');h.style.cssText='padding:14px 18px;border-bottom:2px solid var(--border);display:flex;align-items:center;gap:10px';
+  h.innerHTML='<b style="font-size:15px;color:#1e3a5f">📜 Jurnalul modificărilor din plan</b>';
+  const rf=el('button');rf.textContent='⟲ Reîncarcă';
+  rf.style.cssText='margin-left:auto;padding:5px 11px;border:1.5px solid var(--border);border-radius:7px;background:#fff;font-size:11.5px;font-weight:800;cursor:pointer';
+  const cl=el('button');cl.textContent='✕';
+  cl.style.cssText='border:none;background:#f1f5f9;border-radius:7px;width:30px;height:30px;cursor:pointer;font-size:14px';
+  cl.addEventListener('click',()=>ov.remove());
+  h.appendChild(rf);h.appendChild(cl);md.appendChild(h);
+  const body=dv('');body.style.cssText='flex:1;overflow:auto;padding:12px 18px 20px';
+  md.appendChild(body);
+  ov.appendChild(md);ov.addEventListener('click',e=>{if(e.target===ov)ov.remove();});
+  document.body.appendChild(ov);
+
+  const draw=(log)=>{
+    body.innerHTML='';
+    if(!log.length){
+      const e=dv('');e.style.cssText='padding:26px;text-align:center;color:#94a3b8;font-size:12.5px';
+      e.textContent='Nicio modificare înregistrată încă. Jurnalul se completează la fiecare salvare a planului.';
+      body.appendChild(e);return;
+    }
+    log.forEach((en,i)=>{
+      const card=dv('');
+      card.style.cssText='border:1.5px solid var(--border);border-radius:9px;margin-bottom:9px;overflow:hidden';
+      const hd=dv('');hd.style.cssText='display:flex;align-items:center;gap:10px;padding:9px 12px;background:#f8fafc;cursor:pointer;flex-wrap:wrap';
+      const d=new Date(en.ts||0);
+      const dt=sp('',d.toLocaleDateString('ro-RO')+' '+d.toLocaleTimeString('ro-RO',{hour:'2-digit',minute:'2-digit'}));
+      dt.style.cssText='font-size:12px;font-weight:800;color:#1e3a5f;min-width:120px';
+      const us=sp('','👤 '+(en.user||'?'));
+      us.style.cssText='font-size:11.5px;font-weight:700;color:#475569;min-width:110px';
+      const st=sp('',`${en.items} produse · ${(en.qty||0).toLocaleString('ro-RO')} buc`);
+      st.style.cssText='font-size:11.5px;color:#64748b';
+      hd.appendChild(dt);hd.appendChild(us);hd.appendChild(st);
+      const chips=dv('');chips.style.cssText='margin-left:auto;display:flex;gap:6px;flex-wrap:wrap';
+      const chip=(txt,bg,fg)=>{const c=sp('',txt);
+        c.style.cssText=`font-size:10.5px;font-weight:800;color:${fg};background:${bg};border-radius:6px;padding:2px 8px`;return c;};
+      if(en.added?.length)chips.appendChild(chip('+'+en.added.length+' adăugate','#f0fdf4','#15803d'));
+      if(en.removed?.length)chips.appendChild(chip('−'+en.removed.length+' șterse','#fef2f2','#b91c1c'));
+      if(en.changed?.length)chips.appendChild(chip('~'+en.changed.length+' cantități','#eff6ff','#1d4ed8'));
+      if(en.prio?.length)chips.appendChild(chip(en.prio.length+' priorități','#faf5ff','#6d28d9'));
+      if(i===0)chips.appendChild(chip('cea mai recentă','#1e3a5f','#fff'));
+      hd.appendChild(chips);
+      card.appendChild(hd);
+      const det=dv('');det.style.cssText='display:none;padding:10px 12px;border-top:1px solid var(--border);font-size:11.5px';
+      const sect=(title,arr,fmt,col)=>{
+        if(!arr||!arr.length)return;
+        const t=dv('');t.style.cssText=`font-size:11px;font-weight:800;color:${col};margin:6px 0 3px`;
+        t.textContent=title+' ('+arr.length+')';det.appendChild(t);
+        const ul=dv('');ul.style.cssText='display:flex;flex-wrap:wrap;gap:5px';
+        arr.slice(0,200).forEach(x=>{
+          const b=sp('',fmt(x));
+          b.style.cssText='font-size:10.5px;font-family:ui-monospace,monospace;background:#f8fafc;border:1px solid var(--border);border-radius:5px;padding:2px 7px;color:#334155';
+          ul.appendChild(b);
+        });
+        if(arr.length>200){const m=sp('','… și '+(arr.length-200)+' altele');m.style.cssText='font-size:10.5px;color:#94a3b8';ul.appendChild(m);}
+        det.appendChild(ul);
+      };
+      sect('Adăugate',en.added,x=>`${x.item} · ${x.qty} buc`,'#15803d');
+      sect('Șterse',en.removed,x=>`${x.item} · ${x.qty} buc`,'#b91c1c');
+      sect('Cantități modificate',en.changed,x=>`${x.item}: ${x.from} → ${x.to}`,'#1d4ed8');
+      sect('Priorități',en.prio,x=>`${x.item}: ${x.from||'—'} → ${x.to||'—'}`,'#6d28d9');
+      const ft=dv('');ft.style.cssText='margin-top:10px;display:flex;align-items:center;gap:9px;flex-wrap:wrap';
+      if(en.snapshot){
+        const rb=el('button');rb.textContent='↩ Restaurează această versiune';
+        rb.style.cssText='padding:6px 12px;border:1.5px solid #b45309;border-radius:7px;background:#fffbeb;color:#b45309;font-size:11.5px;font-weight:800;cursor:pointer';
+        rb.addEventListener('click',async()=>{
+          if(!confirm(`Planul va fi înlocuit cu versiunea de la ${d.toLocaleString('ro-RO')} (${en.items} produse).\n\nVersiunea actuală rămâne în jurnal. Continui?`))return;
+          S.planData=new Map(en.snapshot.entries||[]);
+          S.planPrio=Object.assign({},en.snapshot.prio||{});
+          S.planObs=Object.assign({},en.snapshot.obs||{});
+          ov.remove();
+          await savePlan();
+          render();
+          showToast('✓ Plan restaurat din jurnal');
+        });
+        ft.appendChild(rb);
+      } else {
+        const n=sp('','Copia completă nu mai este păstrată pentru această înregistrare (prea veche) — se vede doar ce s-a modificat.');
+        n.style.cssText='font-size:10.5px;color:#94a3b8';ft.appendChild(n);
+      }
+      det.appendChild(ft);
+      card.appendChild(det);
+      hd.addEventListener('click',()=>{det.style.display=det.style.display==='none'?'block':'none';});
+      body.appendChild(card);
+    });
+  };
+  body.innerHTML='<div style="padding:24px;text-align:center;color:#64748b;font-size:12.5px">Se încarcă jurnalul…</div>';
+  planLogLoad(true).then(draw);
+  rf.addEventListener('click',()=>{
+    body.innerHTML='<div style="padding:24px;text-align:center;color:#64748b;font-size:12.5px">Se încarcă jurnalul…</div>';
+    planLogLoad(true).then(draw);
+  });
+}
+
 /* Amprenta planului: cu ea verificam ca ce e pe server e exact ce avem local */
 function planSigOf(entries,prio){
   const list=Array.isArray(entries)?entries:[];
@@ -6261,6 +6440,17 @@ async function savePlan(){
   await dbSave('plan',{entries:[...S.planData.entries()],obs:S.planObs,wcAvailHours:S.wcAvailHours,prio:S.planPrio,pwcScheduled:S.pwcState.scheduledByGroup,pwcNotes:S.pwcState.notes});
   if(S.sbCfg&&S.session){
     const sig=planSigLocal();
+    // Starea de pe server INAINTE de scriere: serveste si la jurnal,
+    // si la detectarea unei suprascrieri a muncii altui utilizator.
+    let before=null;
+    try{
+      const srv=await sbDownload(S.sbCfg,'data-plan.json',20000);
+      if(srv)before={entries:srv.entries||[],prio:srv.prio||{}};
+    }catch(_){}
+    if(before&&S._planSrvSig&&planSigOf(before.entries,before.prio)!==S._planSrvSig){
+      showToast('⚠ Planul de pe server fusese modificat de altcineva — vezi jurnalul pentru ce s-a suprascris','err',7000);
+    }
+    planLogSchedule(before||{entries:[],prio:{}});
     sbSavePlan()
       .then(async()=>{
         // Verificare: recitim de pe server si comparam, ca sa nu raman cu
@@ -6268,7 +6458,7 @@ async function savePlan(){
         try{
           const back=await sbDownload(S.sbCfg,'data-plan.json',20000);
           const sigSrv=back?planSigOf(back.entries,back.prio):null;
-          if(sigSrv===sig)showToast('✓ Plan sincronizat si verificat pe server');
+          if(sigSrv===sig){S._planSrvSig=sig;showToast('✓ Plan sincronizat si verificat pe server');}
           else showToast('⚠ Planul de pe server nu coincide cu cel local — reincearca salvarea','err',7000);
         }catch(e){
           showToast('✓ Plan trimis, dar verificarea nu a reusit: '+(e.message||e),'err',5000);
@@ -6294,6 +6484,7 @@ async function forcePlanReload(){
     if(d.pwcNotes)S.pwcState.notes=d.pwcNotes;
     await dbSave('plan',{entries:[...S.planData.entries()],obs:S.planObs,wcAvailHours:S.wcAvailHours,
       prio:S.planPrio,pwcScheduled:S.pwcState.scheduledByGroup,pwcNotes:S.pwcState.notes});
+    S._planSrvSig=planSigOf(d.entries||[],d.prio||{});
     showToast(`✓ Plan incarcat de pe server: ${S.planData.size} produse`);
     render();
   }catch(e){showToast('Eroare: '+(e.message||e),'err',4500);}
@@ -8249,14 +8440,43 @@ function _subcoGroup(rows){
       g={_key:k,_group:true,supplier:r.supplier,proc:r.proc,productNo:r.productNo,prodName:r.prodName,
          info:r.info,days:r.days,onHand:r.onHand,wipAfter:r.wipAfter,avail:r.avail,
          wipAfterTxt:r.wipAfterTxt,need:0,sendBy:r.sendBy,reqDt:r.reqDt,
-         status:r.status,slack:r.slack,fp:'',fpName:'',customer:'',coNo:'',lines:[]};
+         status:r.status,slack:r.slack,fp:'',fpName:'',customer:'',coNo:'',
+         _fps:new Map(),_cust:new Set(),_cos:new Set(),lines:[]};
       m.set(k,g);
     }
+    // produsele finale din care provine necesarul cumulat
+    if(r.fp){
+      const e=g._fps.get(r.fp)||{qty:0,name:r.fpName||''};
+      e.qty=Math.round((e.qty+(r.need||0))*1000)/1000;
+      if(!e.name&&r.fpName)e.name=r.fpName;
+      g._fps.set(r.fp,e);
+    }
+    if(r.customer)g._cust.add(r.customer);
+    if(r.coNo)g._cos.add(String(r.coNo));
     g.need=Math.round((g.need+(r.need||0))*1000)/1000;
     if((r.sendBy||'9999')<(g.sendBy||'9999')){g.sendBy=r.sendBy;g.reqDt=r.reqDt;g.slack=r.slack;}
     const rank={late:0,urgent:1,ok:2,nd:3};
     if((rank[r.status]??3)<(rank[g.status]??3))g.status=r.status;
     g.lines.push(r);
+  });
+  // Pe randul cumulat aratam codul produsului final; daca sunt mai multe,
+  // primul plus cate mai sunt, iar lista completa in tooltip.
+  m.forEach(g=>{
+    const fps=[...g._fps.entries()].sort((a,b)=>b[1].qty-a[1].qty||a[0].localeCompare(b[0]));
+    g.fpList=fps.map(([code,v])=>({fp:code,qty:v.qty,name:v.name}));
+    if(fps.length===1){g.fp=fps[0][0];g.fpName=fps[0][1].name||'';}
+    else if(fps.length>1){
+      g.fp=fps[0][0]+' +'+(fps.length-1);
+      g.fpName=fps.length+' produse finale';
+    }
+    g.fpTitle=fps.length?fps.map(([c2,v])=>`${c2}${v.name?' — '+v.name:''}: ${fmtN(v.qty)} buc`).join('\n'):'';
+    const cu=[...g._cust];
+    g.customer=cu.length===1?cu[0]:(cu.length>1?cu.length+' clienti':'');
+    g.customerTitle=cu.join('\n');
+    const co=[...g._cos];
+    g.coNo=co.length===1?co[0]:(co.length>1?co.length+' comenzi':'');
+    g.coTitle=co.join(', ');
+    delete g._fps;delete g._cust;delete g._cos;
   });
   return [...m.values()];
 }
@@ -8858,7 +9078,20 @@ function _subcoRenderTable(page,allRows,COLS0,mode){
             _attachItemCtx(td,String(r[c.k]||''));
           } else if(c.k==='fp'){
             td.style.fontWeight='700';td.style.color='#1e3a5f';
-            _attachItemCtx(td,String(r[c.k]||''));
+            if(r._group&&r.fpList&&r.fpList.length>1){
+              td.title='Necesarul cumulat provine din:\n'+r.fpTitle;
+              td.style.cursor='help';
+              _attachItemCtx(td,String(r.fpList[0].fp||''));
+            } else {
+              if(r._group&&r.fpTitle)td.title=r.fpTitle;
+              _attachItemCtx(td,String(r[c.k]||''));
+            }
+          } else if(c.k==='fpName'&&r._group&&r.fpTitle){
+            td.title=r.fpTitle;td.style.cursor='help';
+          } else if(c.k==='customer'&&r._group&&r.customerTitle&&r.customerTitle.includes('\n')){
+            td.title=r.customerTitle;td.style.cursor='help';
+          } else if(c.k==='coNo'&&r._group&&r.coTitle&&r.coTitle.includes(',')){
+            td.title=r.coTitle;td.style.cursor='help';
           }
         }
         tr.appendChild(td);
@@ -10052,6 +10285,7 @@ function updatePlanStatsBar(){
   };
   syncCell.appendChild(mkSyncBtn('⇧ Trimite pe server','Salveaza planul curent pe server si verifica rezultatul','#15803d',()=>savePlan()));
   syncCell.appendChild(mkSyncBtn('⇩ Incarca de pe server','Inlocuieste planul local cu cel de pe server','#1d4ed8',()=>forcePlanReload()));
+  syncCell.appendChild(mkSyncBtn('📜 Jurnal','Cine a modificat planul, cand si ce anume','#6d28d9',()=>openPlanLog()));
   bar.appendChild(syncCell);
 }
 
@@ -18569,7 +18803,8 @@ function getCtxMenuConfig(filterAttr, colKey){
       setFilter:  (k,v)=>{if(!S.pwcState.colFilters)S.pwcState.colFilters={};S.pwcState.colFilters[k]=v;},
       clearFilter:(k)=>{if(S.pwcState.colFilters)delete S.pwcState.colFilters[k];},
       clearAll:   ()=>{if(S.pwcState.colFilters)S.pwcState.colFilters={};},
-      rebuild:    ()=>{const w=document.getElementById('pwc-table-wrap');if(w){rebuildPwcBody(w);}else if(S.tab==='pwc')render();},
+      // re-randare completa: asa se recalculeaza si bara de incarcare
+      rebuild:    ()=>{if(S.tab==='pwc')render();},
       inputSel:   `input[data-pwc-filter="${colKey}"]`,
       allInputSel:'input[data-pwc-filter]',
     },
@@ -22747,22 +22982,54 @@ function renderPwcTab(){
 
     // Progress bar — use per-group scheduled list directly
     const schedKeys=ps.scheduledByGroup[grp].filter(k=>allData.find(r=>`${r.matNo}||${r.wcName}`===k));
-    const schedMin=schedKeys.reduce((s,k)=>{const r=grpData.find(r=>`${r.matNo}||${r.wcName}`===k);return s+(r?.execTimeMin||0);},0);
-    const realPct=availMin>0?schedMin/availMin*100:0;  // can exceed 100%
-    const barFillPct=Math.min(100,realPct);             // bar width capped at 100%
-    const barColor=realPct<75?'#16a34a':realPct<=100?'#d97706':'#dc2626';
+
+    /* Filtrele pe coloane se aplica si graficului de incarcare: altfel
+       bara arata incarcarea tuturor reperelor programate, nu a celor vizibile. */
+    const cfLoad=ps.colFilters||{};
+    const PWC_FILTERABLE=['prio','matNo','matName','fps'];
+    const pwcLoadMatches=(r)=>{
+      for(const col of PWC_FILTERABLE){
+        const fv=(cfLoad[col]||'').toLowerCase();if(!fv)continue;
+        const val=col==='prio'?r.prio:col==='matNo'?r.matNo:col==='matName'?r.matName:col==='fps'?r.fps.join(' '):'';
+        if(!String(val).toLowerCase().includes(fv))return false;
+      }
+      return true;
+    };
+    const pwcFilterActive=()=>PWC_FILTERABLE.some(c=>(cfLoad[c]||'').trim()!=='');
+    const pwcVisibleRows=()=>schedKeys
+      .map(k=>grpData.find(r=>`${r.matNo}||${r.wcName}`===k))
+      .filter(r=>r&&pwcLoadMatches(r));
+
+    let progFill=null,progLbl=null;
     if(availMin>0){
       const progWrap=dv('pwc-prog-wrap');
-      const progFill=dv('pwc-prog-fill');progFill.style.cssText=`width:${barFillPct.toFixed(1)}%;background:${barColor}`;
-      const progLbl=dv('pwc-prog-lbl');
-      progLbl.textContent=`${realPct.toFixed(0)}% · ${fmtMin(schedMin)} / ${fmtMin(availMin)}`;
-      if(realPct>100)progLbl.style.color='#fff'; // ensure readable on red
+      progFill=dv('pwc-prog-fill');
+      progLbl=dv('pwc-prog-lbl');
       progWrap.appendChild(progFill);progWrap.appendChild(progLbl);
       planHdr.appendChild(progWrap);
     }
     const metaEl=dv('pwc-plan-meta');
-    metaEl.textContent=`${schedKeys.length} componente · ${fmtMin(schedMin)} programat${availMin>0?' · Ramas: '+fmtMin(Math.max(0,availMin-schedMin)):''}`;
     planHdr.appendChild(metaEl);
+    /* Recalculeaza bara si textul in functie de filtrele active */
+    function updatePwcLoad(){
+      const rows=pwcVisibleRows();
+      const mins=rows.reduce((a,r)=>a+(r.execTimeMin||0),0);
+      const pct=availMin>0?mins/availMin*100:0;
+      const col=pct<75?'#16a34a':pct<=100?'#d97706':'#dc2626';
+      if(progFill){
+        progFill.style.cssText=`width:${Math.min(100,pct).toFixed(1)}%;background:${col}`;
+        progLbl.textContent=`${pct.toFixed(0)}% · ${fmtMin(mins)} / ${fmtMin(availMin)}`;
+        progLbl.style.color=pct>100?'#fff':'';
+      }
+      const filt=pwcFilterActive();
+      metaEl.textContent=(filt?`${rows.length} din ${schedKeys.length} componente (filtrat)`
+                              :`${schedKeys.length} componente`)
+        +` · ${fmtMin(mins)} programat`
+        +(availMin>0?` · Ramas: ${fmtMin(Math.max(0,availMin-mins))}`:'');
+      metaEl.style.color=filt?'#1d4ed8':'';
+      metaEl.style.fontWeight=filt?'800':'';
+    }
+    updatePwcLoad();
     planPanel.appendChild(planHdr);
 
     // Drop zone
@@ -22922,6 +23189,7 @@ function renderPwcTab(){
               ps.colFilters=cf;
               const ss=e.target.selectionStart,se2=e.target.selectionEnd;
               buildPlanTable();
+              updatePwcLoad();          // incarcarea urmeaza filtrul
               const r2=tableWrap.querySelector(`input[data-pwc-filter="${col}"]`);
               if(r2){r2.focus();try{r2.setSelectionRange(ss,se2);}catch(_){}}
             });
@@ -23078,7 +23346,8 @@ function renderPwcTab(){
       if(!rows2.length){alert('Nu exista date de exportat.');return;}
       const availH2=curGrp?curGrp.totalTeam*8:0;
       const availMin2=availH2*60;
-      const schedMin2=schedKeys.reduce((s,k)=>{const r=grpData.find(r=>`${r.matNo}||${r.wcName}`===k);return s+(r?.execTimeMin||0);},0);
+      // totalul se calculeaza pe reperele exportate (filtrate), nu pe toate
+      const schedMin2=rows2.reduce((s,r)=>s+(r.execTimeMin||0),0);
       const pct2=availMin2>0?(schedMin2/availMin2*100).toFixed(1)+'%':'—';
 
       const doc=new jsPDF({orientation:'landscape',unit:'mm',format:'a4'});
