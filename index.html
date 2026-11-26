@@ -3905,6 +3905,7 @@ function renderNow(){
       {id:'normare',label:'⏱ Normare'},
       {id:'livrari',label:'🚚 Livrări'},
       {id:'subco',label:'🏭 Planificare Subco'},
+      {id:'subcotrack',label:'🏭 Subcontractări'},
       {id:'scanari',label:'Raport Scanari'},
     ]},
     {id:'scanner',label:'📷 Scanner'},
@@ -4079,6 +4080,7 @@ function renderNow(){
     else body.appendChild(mkEmpty('Acces restrictionat','Migrarea bazei de date este disponibila doar pentru contul admin.'));
   }
   else if(S.tab==='subco')body.appendChild(renderSubco());
+  else if(S.tab==='subcotrack')body.appendChild(renderSubcoTrack());
   else if(S.tab==='masini')body.appendChild(renderMasini());
   else if(S.tab==='normare')body.appendChild(renderNormare());
   else if(S.tab==='dctr')body.appendChild(renderDctrTab());
@@ -8481,6 +8483,628 @@ function _subcoGroup(rows){
     delete g._fps;delete g._cust;delete g._cos;
   });
   return [...m.values()];
+}
+
+/* ═══════════════════════════════════════════════════════════════
+   SUBCONTRACTARI — registrul reperelor trimise la subcontractare
+   Pentru fiecare pozitie: reperul, subcontractorul, cantitatile
+   planificata / trimisa / receptionata, datele estimate si reale,
+   desenul de executie si atasamente (fisiere sau poze facute pe
+   telefon / tableta).
+   Datele stau in data-subco-track.json, atasamentele in bucket,
+   sub subco-att/<idPozitie>/<idAtasament>.<ext>
+═══════════════════════════════════════════════════════════════ */
+const SCT_FILE='data-subco-track.json';
+const SCT_LOCAL='pps_subco_track';
+const SCT_ATT_DIR='subco-att';
+const _SCT_ST={
+  plan:{l:'Planificat',ico:'📝',col:'#475569',bg:'#f1f5f9',bd:'#cbd5e1'},
+  out: {l:'La subcontractor',ico:'🚚',col:'#1d4ed8',bg:'#eff6ff',bd:'#bfdbfe'},
+  part:{l:'Recepție parțială',ico:'📦',col:'#b45309',bg:'#fffbeb',bd:'#fcd34d'},
+  done:{l:'Finalizat',ico:'✅',col:'#15803d',bg:'#f0fdf4',bd:'#86efac'},
+};
+function sctState(){
+  if(!S.sctState)S.sctState={q:'',status:'',supplier:'',group:'',sortCol:'',sortDir:'asc',hideDone:true};
+  return S.sctState;
+}
+function sctItems(){
+  if(!Array.isArray(S.sctItems)){
+    try{const d=JSON.parse(localStorage.getItem(SCT_LOCAL)||'null');S.sctItems=Array.isArray(d?.items)?d.items:[];}
+    catch{S.sctItems=[];}
+  }
+  return S.sctItems;
+}
+function sctSaveLocal(){
+  try{localStorage.setItem(SCT_LOCAL,JSON.stringify({items:S.sctItems||[]}));}catch{}
+}
+async function sctSave(){
+  sctSaveLocal();
+  if(!S.sbCfg)return;
+  clearTimeout(S._sctSaveT);
+  S._sctSaveT=setTimeout(async()=>{
+    try{await sbUpload(S.sbCfg,SCT_FILE,{items:S.sctItems||[],ts:Date.now()});}
+    catch(e){showToast('⚠ Salvare subcontractări eșuată: '+(e.message||e),'err',5000);}
+  },600);
+}
+async function sctLoadRemote(){
+  if(!S.sbCfg)return;
+  try{
+    const d=await sbDownload(S.sbCfg,SCT_FILE,25000);
+    if(d&&Array.isArray(d.items)){S.sctItems=d.items;sctSaveLocal();}
+  }catch(e){/* lipsa fisierului = registru gol */}
+}
+function sctId(){return 'p'+Date.now().toString(36)+Math.random().toString(36).slice(2,7);}
+function sctNum(v){const n=parseFloat(String(v??'').replace(',','.'));return isNaN(n)?0:n;}
+
+/* Data estimata a receptiei: manuala, altfel trimiterea (reala sau estimata) + zilele subcontractorului */
+function sctRecvEst(it){
+  if(it.dateRecvEst)return it.dateRecvEst;
+  const base=it.dateSent||it.dateSentEst;
+  if(!base)return '';
+  return _dateMinusDays(base,-subcoDaysFor(it.supplier));   // adunare prin scadere negativa
+}
+function sctStatus(it){
+  const pl=sctNum(it.qtyPlanned),se=sctNum(it.qtySent),rc=sctNum(it.qtyRecv);
+  if(se>0&&rc>=se&&rc>0)return 'done';
+  if(pl>0&&rc>=pl)return 'done';
+  if(rc>0)return 'part';
+  if(se>0)return 'out';
+  return 'plan';
+}
+function sctAtSub(it){  // cantitatea aflata efectiv la subcontractor
+  return Math.max(0,sctNum(it.qtySent)-sctNum(it.qtyRecv));
+}
+function sctIsLate(it){
+  if(sctStatus(it)==='done')return false;
+  const est=sctRecvEst(it);
+  if(!est)return false;
+  return est<_isoToday()&&sctNum(it.qtySent)>0;
+}
+function sctRows(){
+  const st=sctState();
+  let rows=(sctItems()||[]).map(it=>({...it,_st:sctStatus(it),_est:sctRecvEst(it),
+    _at:sctAtSub(it),_late:sctIsLate(it),_grp:subcoProcFor(it.supplier)||''}));
+  const q=(st.q||'').trim().toLowerCase();
+  if(q)rows=rows.filter(r=>[r.comp,r.compName,r.supplier,r.fp,r.notes,r._grp]
+    .some(x=>String(x||'').toLowerCase().includes(q)));
+  if(st.status)rows=rows.filter(r=>st.status==='late'?r._late:r._st===st.status);
+  if(st.supplier)rows=rows.filter(r=>r.supplier===st.supplier);
+  if(st.group)rows=rows.filter(r=>r._grp===st.group);
+  if(st.hideDone&&!st.status)rows=rows.filter(r=>r._st!=='done');
+  const dir=st.sortDir==='desc'?-1:1;
+  if(st.sortCol){
+    rows.sort((a,b)=>{
+      const va=a[st.sortCol],vb=b[st.sortCol];
+      if(typeof va==='number'&&typeof vb==='number')return ((va||0)-(vb||0))*dir;
+      return String(va??'').localeCompare(String(vb??''),'ro',{numeric:true})*dir;
+    });
+  } else {
+    rows.sort((a,b)=>(b._late?1:0)-(a._late?1:0)
+      ||String(a._est||'9999').localeCompare(String(b._est||'9999'))
+      ||String(a.comp||'').localeCompare(String(b.comp||'')));
+  }
+  return rows;
+}
+
+/* ── Atasamente ── */
+function sctAttExt(name,type){
+  const m=String(name||'').match(/\.([a-z0-9]{1,5})$/i);
+  if(m)return m[1].toLowerCase();
+  if(/png/.test(type||''))return 'png';
+  if(/jpe?g/.test(type||''))return 'jpg';
+  if(/pdf/.test(type||''))return 'pdf';
+  return 'bin';
+}
+async function sctAttUpload(it,file){
+  if(!S.sbCfg)throw new Error('fără conexiune Supabase');
+  if(file.size>8*1024*1024)throw new Error('fișier prea mare (max 8 MB)');
+  const id='a'+Date.now().toString(36)+Math.random().toString(36).slice(2,6);
+  const ext=sctAttExt(file.name,file.type);
+  const path=`${SCT_ATT_DIR}/${it.id}/${id}.${ext}`;
+  const buf=await file.arrayBuffer();
+  await sbPutRaw(S.sbCfg,path,buf,file.type||'application/octet-stream');
+  it.atts=Array.isArray(it.atts)?it.atts:[];
+  it.atts.push({id,path,name:file.name||('atasament.'+ext),type:file.type||'',
+    size:file.size,ts:Date.now(),by:String(S.session?.username||'')});
+  it.updTs=Date.now();
+  await sctSave();
+  return it.atts[it.atts.length-1];
+}
+async function sctAttUrl(att){
+  if(!S.sbCfg)return null;
+  S._sctAttUrls=S._sctAttUrls||{};
+  if(S._sctAttUrls[att.id])return S._sctAttUrls[att.id];
+  const got=await sbGetRaw(S.sbCfg,att.path);
+  if(!got)return null;
+  const url=URL.createObjectURL(new Blob([got.buf],{type:att.type||got.type||'application/octet-stream'}));
+  S._sctAttUrls[att.id]=url;
+  return url;
+}
+async function sctAttDelete(it,att){
+  if(S.sbCfg)await sbDeleteObj(S.sbCfg,att.path);
+  it.atts=(it.atts||[]).filter(a=>a.id!==att.id);
+  it.updTs=Date.now();
+  await sctSave();
+}
+
+/* ═══════════ Pagina ═══════════ */
+function renderSubcoTrack(){
+  const page=dv('cnt');page.style.cssText='flex:1;display:flex;flex-direction:column;overflow:hidden';
+  const st=sctState();
+  if(!S._sctLoaded){
+    S._sctLoaded=true;
+    sctLoadRemote().then(()=>{if(S.tab==='subcotrack')render();});
+  }
+
+  const hdr=dv('');hdr.style.cssText='padding:11px 16px 9px;border-bottom:2px solid var(--border);background:#fff;flex-shrink:0';
+  const h1=dv('');h1.style.cssText='font-size:16px;font-weight:900;color:#1e3a5f';
+  h1.textContent='🏭 Subcontractări';hdr.appendChild(h1);
+  const sub=dv('');sub.style.cssText='font-size:11px;color:#64748b;margin-top:2px';
+  sub.textContent='Ce repere sunt la subcontractori, cantități planificate / trimise / recepționate, date estimate și atașamente.';
+  hdr.appendChild(sub);
+
+  const tb=dv('');tb.style.cssText='display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-top:9px';
+  const addB=el('button');addB.textContent='+ Adaugă poziție';
+  addB.style.cssText='padding:7px 14px;border:none;border-radius:7px;background:#1d4ed8;color:#fff;font-size:12.5px;font-weight:800;cursor:pointer';
+  addB.addEventListener('click',()=>sctOpenEdit(null));
+  tb.appendChild(addB);
+
+  const qI=el('input');qI.type='text';qI.placeholder='caută reper, subcontractor, produs final…';qI.value=st.q||'';
+  qI.style.cssText='height:29px;border:1.5px solid var(--border);border-radius:7px;padding:0 10px;font-size:12px;min-width:230px';
+  let qT=null;
+  qI.addEventListener('input',()=>{clearTimeout(qT);qT=setTimeout(()=>{st.q=qI.value;rebuild(true);},280);});
+  tb.appendChild(qI);
+
+  const mkSel=(val,opts,ph,on)=>{
+    const s2=el('select');
+    s2.style.cssText='height:29px;border:1.5px solid var(--border);border-radius:7px;padding:0 7px;font-size:12px;font-weight:700;background:#fff';
+    const o0=el('option');o0.value='';o0.textContent=ph;s2.appendChild(o0);
+    opts.forEach(o=>{const x=el('option');x.value=o;x.textContent=o;if(val===o)x.selected=true;s2.appendChild(x);});
+    s2.addEventListener('change',()=>{on(s2.value);rebuild();});
+    return s2;
+  };
+  const sups=[...new Set([...buildSubcoSuppliers().map(s2=>s2.supplier),
+                          ...sctItems().map(i=>i.supplier)].filter(Boolean))].sort((a,b)=>a.localeCompare(b,'ro'));
+  tb.appendChild(mkSel(st.supplier,sups,'toți subcontractorii',v=>{st.supplier=v;}));
+  const grps=[...new Set(sups.map(s2=>subcoProcFor(s2)).filter(Boolean))].sort((a,b)=>a.localeCompare(b,'ro'));
+  if(grps.length)tb.appendChild(mkSel(st.group,grps,'toate grupele',v=>{st.group=v;}));
+
+  const chips=dv('');chips.style.cssText='display:flex;gap:5px;flex-wrap:wrap';
+  const mkChip=(lbl,val,col)=>{
+    const b=el('button');b.textContent=lbl;
+    const on=st.status===val;
+    b.style.cssText=`height:27px;padding:0 11px;border-radius:14px;border:1.5px solid ${col};font-size:11px;font-weight:800;cursor:pointer;background:${on?col:'#fff'};color:${on?'#fff':col}`;
+    b.addEventListener('click',()=>{st.status=on?'':val;rebuild();});
+    chips.appendChild(b);
+  };
+  mkChip('Toate','','#64748b');
+  mkChip('🚚 La subcontractor','out','#1d4ed8');
+  mkChip('⚠ Întârziate','late','#dc2626');
+  mkChip('📝 Planificate','plan','#475569');
+  mkChip('✅ Finalizate','done','#15803d');
+  tb.appendChild(chips);
+
+  const hd=el('label');hd.style.cssText='display:flex;align-items:center;gap:6px;font-size:11.5px;font-weight:700;color:#475569;cursor:pointer';
+  const hdc=el('input');hdc.type='checkbox';hdc.checked=!!st.hideDone;hdc.style.cssText='width:14px;height:14px;cursor:pointer';
+  hdc.addEventListener('change',()=>{st.hideDone=hdc.checked;rebuild();});
+  hd.appendChild(hdc);hd.appendChild(document.createTextNode('Ascunde finalizate'));
+  tb.appendChild(hd);
+
+  const rfB=el('button');rfB.textContent='⟲ Reîncarcă';
+  rfB.style.cssText='padding:6px 12px;border:1.5px solid var(--border);border-radius:7px;background:#fff;font-size:12px;font-weight:800;color:#334155;cursor:pointer';
+  rfB.addEventListener('click',async()=>{await sctLoadRemote();rebuild();showToast('✓ Registru reîncărcat');});
+  const xB=el('button');xB.textContent='⬇ Excel';
+  xB.style.cssText=rfB.style.cssText;
+  xB.addEventListener('click',()=>sctExport());
+  tb.appendChild(rfB);tb.appendChild(xB);
+  hdr.appendChild(tb);
+  page.appendChild(hdr);
+
+  const scroll=dv('');scroll.style.cssText='flex:1;overflow:auto;padding:12px 14px 30px';
+  page.appendChild(scroll);
+
+  function rebuild(keepFocus){
+    const rows=sctRows();
+    scroll.innerHTML='';
+    scroll.appendChild(sctTiles());
+    if(!rows.length){
+      const em=dv('');em.style.cssText='padding:40px;text-align:center;color:#94a3b8;font-size:13px';
+      em.textContent=sctItems().length?'Nicio poziție pentru filtrele selectate.'
+        :'Registrul este gol. Apasă „+ Adaugă poziție" pentru primul reper trimis la subcontractare.';
+      scroll.appendChild(em);
+    } else scroll.appendChild(sctTable(rows,()=>rebuild()));
+    if(keepFocus){qI.focus();try{qI.setSelectionRange(qI.value.length,qI.value.length);}catch{}}
+  }
+  rebuild();
+  return page;
+}
+
+function sctTiles(){
+  const all=(sctItems()||[]).map(it=>({...it,_st:sctStatus(it),_at:sctAtSub(it),_late:sctIsLate(it)}));
+  const out=all.filter(i=>i._st==='out'||i._st==='part');
+  const qOut=out.reduce((s2,i)=>s2+i._at,0);
+  const late=all.filter(i=>i._late);
+  const plan=all.filter(i=>i._st==='plan');
+  const box=dv('');box.style.cssText='display:flex;gap:10px;flex-wrap:wrap;margin-bottom:13px';
+  const card=(l,v,c,s2)=>{
+    const d=dv('');d.style.cssText=`background:#fff;border:1px solid var(--border);border-left:4px solid ${c};border-radius:8px;padding:8px 13px;min-width:146px`;
+    d.innerHTML=`<div style="font-size:10px;font-weight:800;color:#64748b;text-transform:uppercase;letter-spacing:.05em">${l}</div>
+      <div style="font-size:17px;font-weight:900;color:#0f172a;margin-top:2px">${v}</div>
+      ${s2?`<div style="font-size:9.5px;color:#94a3b8;margin-top:1px">${s2}</div>`:''}`;
+    return d;
+  };
+  box.appendChild(card('La subcontractori',String(out.length),'#1d4ed8',fmtN(qOut)+' buc în lucru'));
+  box.appendChild(card('Întârziate',String(late.length),'#dc2626',late.length?'depășit termenul estimat':'niciuna'));
+  box.appendChild(card('Planificate',String(plan.length),'#475569','încă netrimise'));
+  box.appendChild(card('Poziții în registru',String(all.length),'#15803d',
+    all.filter(i=>i._st==='done').length+' finalizate'));
+  return box;
+}
+
+const SCT_COLS=[
+  {k:'_st',l:'Status',w:132},
+  {k:'comp',l:'Reper',w:150},
+  {k:'compName',l:'Denumire',w:170},
+  {k:'supplier',l:'Subcontractor',w:150},
+  {k:'_grp',l:'Operație',w:100},
+  {k:'qtyPlanned',l:'Planificat',w:80,n:1},
+  {k:'qtySent',l:'Trimis',w:80,n:1},
+  {k:'qtyRecv',l:'Recepționat',w:90,n:1},
+  {k:'_at',l:'La subco',w:80,n:1},
+  {k:'dateSentEst',l:'Trimitere est.',w:106},
+  {k:'dateSent',l:'Trimis la',w:106},
+  {k:'_est',l:'Recepție est.',w:106},
+  {k:'dateRecv',l:'Recepționat la',w:112},
+  {k:'atts',l:'Atașamente',w:112},
+  {k:'act',l:'',w:86},
+];
+function sctTable(rows,onChange){
+  const st=sctState();
+  const wrap=dv('');wrap.style.cssText='overflow:auto;border:1px solid var(--border);border-radius:9px;background:#fff';
+  const tbl=el('table');tbl.style.cssText='border-collapse:collapse;font-size:11.5px;table-layout:fixed;min-width:100%';
+  const thead=el('thead');const hr=el('tr');hr.style.cssText='background:#1e3a5f;color:#fff';
+  SCT_COLS.forEach(c=>{
+    const th=el('th');
+    th.style.cssText=`padding:7px 8px;text-align:${c.n?'right':'left'};font-size:10px;font-weight:700;text-transform:uppercase;`+
+      `width:${c.w}px;min-width:${c.w}px;white-space:nowrap`+(c.k==='act'?'':';cursor:pointer');
+    th.textContent=c.l+(st.sortCol===c.k?(st.sortDir==='desc'?' ▾':' ▴'):'');
+    if(c.k!=='act')th.addEventListener('click',()=>{
+      if(st.sortCol===c.k)st.sortDir=st.sortDir==='desc'?'asc':'desc';
+      else{st.sortCol=c.k;st.sortDir='asc';}
+      onChange();
+    });
+    hr.appendChild(th);
+  });
+  thead.appendChild(hr);tbl.appendChild(thead);
+  const tb2=el('tbody');
+  rows.forEach((r,i)=>{
+    const it=(sctItems()||[]).find(x=>x.id===r.id);
+    const tr=el('tr');
+    tr.style.cssText=`border-bottom:1px solid #f1f5f9;background:${r._late?'#fef2f2':(i%2?'#f8fafc':'#fff')}`;
+    SCT_COLS.forEach(c=>{
+      const td=el('td');
+      td.style.cssText=`padding:4px 8px;width:${c.w}px;min-width:${c.w}px;max-width:${c.w}px;`+
+        `text-align:${c.n?'right':'left'};overflow:hidden;text-overflow:ellipsis;white-space:nowrap`+
+        (c.n?';font-family:monospace;font-weight:700':'');
+      if(c.k==='_st'){
+        const d=_SCT_ST[r._st];
+        const pill=sp('',`${d.ico} ${d.l}`);
+        pill.style.cssText=`display:inline-block;padding:1px 8px;border-radius:9px;font-size:9.5px;font-weight:800;`+
+          `color:${d.col};background:${d.bg};border:1px solid ${d.bd}`;
+        td.appendChild(pill);
+        if(r._late){
+          const w=sp('',' ⚠');w.style.cssText='color:#dc2626;font-weight:900';
+          w.title='Termenul estimat de recepție a trecut';td.appendChild(w);
+        }
+      } else if(c.k==='comp'){
+        td.style.fontWeight='800';td.style.color='#1e3a5f';
+        td.textContent=r.comp||'';td.title=r.comp||'';
+        _attachItemCtx(td,String(r.comp||''));
+      } else if(['qtyPlanned','qtySent','qtyRecv'].includes(c.k)){
+        const inp=el('input');inp.type='text';inp.inputMode='decimal';
+        inp.value=(it&&it[c.k]!=null&&it[c.k]!=='')?String(it[c.k]):'';
+        inp.placeholder='—';
+        const v=sctNum(inp.value);
+        const okFull=c.k==='qtyRecv'&&v>0&&v>=sctNum(it?.qtySent);
+        inp.style.cssText='width:100%;height:23px;padding:0 5px;border:1.5px solid '+
+          (v>0?(okFull?'#86efac':'#93c5fd'):'#e2e8f0')+
+          ';border-radius:4px;font-size:11px;font-weight:800;text-align:right;font-family:monospace;background:'+
+          (v>0?(okFull?'#f0fdf4':'#eff6ff'):'#fff');
+        const save=()=>{
+          if(!it)return;
+          it[c.k]=inp.value.trim();
+          // prima trimitere completeaza automat data reala, daca lipseste
+          if(c.k==='qtySent'&&sctNum(inp.value)>0&&!it.dateSent)it.dateSent=_isoToday();
+          if(c.k==='qtyRecv'&&sctNum(inp.value)>0&&!it.dateRecv)it.dateRecv=_isoToday();
+          it.updTs=Date.now();sctSave();onChange();
+        };
+        inp.addEventListener('change',save);
+        inp.addEventListener('keydown',e=>{if(e.key==='Enter'){e.preventDefault();inp.blur();}});
+        td.style.padding='2px 5px';td.appendChild(inp);
+      } else if(['dateSentEst','dateSent','dateRecv'].includes(c.k)){
+        const inp=el('input');inp.type='date';
+        inp.value=it?.[c.k]||'';
+        inp.style.cssText='width:100%;height:23px;padding:0 4px;border:1.5px solid '+
+          (inp.value?'#93c5fd':'#e2e8f0')+';border-radius:4px;font-size:10.5px;font-weight:700';
+        inp.addEventListener('change',()=>{
+          if(!it)return;it[c.k]=inp.value;it.updTs=Date.now();sctSave();onChange();
+        });
+        td.style.padding='2px 4px';td.appendChild(inp);
+      } else if(c.k==='_est'){
+        td.textContent=_fmtIso(r._est);
+        if(r._est){
+          const d=_daysBetween(r._est,_isoToday());
+          td.title=it?.dateRecvEst?'Dată introdusă manual'
+            :`Estimare: ${_fmtIso(r.dateSent||r.dateSentEst)} + ${subcoDaysFor(r.supplier)} zile (Config SUBCO)`;
+          td.style.color=d==null?'':d<0?'#dc2626':d<=3?'#b45309':'#15803d';
+          td.style.fontWeight='800';
+        } else td.style.color='#cbd5e1';
+      } else if(c.k==='_at'){
+        td.textContent=r._at>0?fmtN(r._at):'—';
+        td.style.color=r._at>0?'#1d4ed8':'#cbd5e1';
+      } else if(c.k==='atts'){
+        const n=(r.atts||[]).length;
+        const b=el('button');b.textContent=(n?`📎 ${n}`:'📎 adaugă');
+        b.title='Desen, fișiere sau poze pentru această poziție';
+        b.style.cssText='padding:3px 9px;border:1.5px solid '+(n?'#7c3aed':'#cbd5e1')+
+          ';border-radius:6px;background:'+(n?'#f5f3ff':'#fff')+';color:'+(n?'#6d28d9':'#64748b')+
+          ';font-size:10.5px;font-weight:800;cursor:pointer';
+        b.addEventListener('click',()=>sctOpenAtt(it,onChange));
+        td.appendChild(b);
+      } else if(c.k==='act'){
+        const wrapA=dv('');wrapA.style.cssText='display:flex;gap:4px';
+        const mk=(ico,title,col,fn)=>{
+          const b=el('button');b.textContent=ico;b.title=title;
+          b.style.cssText=`width:24px;height:23px;border:1.5px solid ${col};border-radius:5px;background:#fff;cursor:pointer;font-size:11px`;
+          b.addEventListener('click',fn);return b;
+        };
+        wrapA.appendChild(mk('📐','Desen de execuție','#0891b2',()=>{
+          const dn=(typeof getDrawingNoFor==='function')?getDrawingNoFor(r.comp):'';
+          openDrawingSearch(dn||r.comp,r.comp);
+        }));
+        wrapA.appendChild(mk('✎','Modifică poziția','#1d4ed8',()=>sctOpenEdit(it)));
+        wrapA.appendChild(mk('🗑','Șterge poziția','#fca5a5',async()=>{
+          if(!confirm(`Ștergi poziția ${r.comp} — ${r.supplier}?\n\nAtașamentele ei se șterg și ele.`))return;
+          for(const a of (it?.atts||[]))if(S.sbCfg)await sbDeleteObj(S.sbCfg,a.path);
+          S.sctItems=(S.sctItems||[]).filter(x=>x.id!==r.id);
+          await sctSave();onChange();showToast('Poziție ștearsă');
+        }));
+        td.style.padding='2px 5px';td.appendChild(wrapA);
+      } else {
+        const v=r[c.k];
+        td.textContent=(v==null||v==='')?'—':String(v);
+        if(v)td.title=String(v);
+        if(c.k==='supplier'){td.style.fontWeight='700';td.style.color='#334155';}
+      }
+      tr.appendChild(td);
+    });
+    tb2.appendChild(tr);
+  });
+  tbl.appendChild(tb2);
+  wrap.appendChild(tbl);
+  return wrap;
+}
+
+/* ── Adaugare / modificare pozitie ── */
+function sctOpenEdit(item){
+  const isNew=!item;
+  const it=item||{id:sctId(),comp:'',compName:'',supplier:'',fp:'',qtyPlanned:'',qtySent:'',qtyRecv:'',
+    dateSentEst:_isoToday(),dateSent:'',dateRecvEst:'',dateRecv:'',notes:'',atts:[],
+    createdBy:String(S.session?.username||''),createdTs:Date.now()};
+  document.getElementById('sct-ed-ov')?.remove();
+  const ov=dv('');ov.id='sct-ed-ov';
+  ov.style.cssText='position:fixed;inset:0;background:rgba(0,0,0,.45);z-index:9600;display:flex;align-items:center;justify-content:center;padding:14px';
+  const md=dv('');md.style.cssText='background:#fff;border-radius:12px;width:min(620px,97vw);max-height:92vh;display:flex;flex-direction:column;overflow:hidden';
+  const h=dv('');h.style.cssText='padding:14px 18px;border-bottom:2px solid var(--border);display:flex;align-items:center';
+  h.innerHTML=`<b style="font-size:15px;color:#1e3a5f">${isNew?'+ Poziție nouă de subcontractare':'✎ Modifică poziția'}</b>`;
+  const cl=el('button');cl.textContent='✕';
+  cl.style.cssText='margin-left:auto;border:none;background:#f1f5f9;border-radius:7px;width:30px;height:30px;cursor:pointer;font-size:14px';
+  cl.addEventListener('click',()=>ov.remove());h.appendChild(cl);md.appendChild(h);
+  const bd=dv('');bd.style.cssText='padding:14px 18px;overflow:auto';
+  const lb=t=>{const d=dv('');d.style.cssText='font-size:11px;font-weight:800;color:#475569;margin:9px 0 3px';d.textContent=t;return d;};
+  const inStyle='width:100%;height:32px;border:1.5px solid var(--border);border-radius:7px;padding:0 9px;font-size:12.5px';
+
+  // reper, cu sugestii din componentele care au operatie de subcontractare
+  const subList=buildSubcoList();
+  bd.appendChild(lb('Reper (cod MOVEX) *'));
+  const compI=el('input');compI.type='text';compI.value=it.comp||'';compI.setAttribute('list','sct-comp-list');
+  compI.style.cssText=inStyle+';font-family:ui-monospace,monospace;font-weight:700';
+  const dl=el('datalist');dl.id='sct-comp-list';
+  [...new Set(subList.map(x=>x.productNo))].slice(0,900).forEach(c=>{const o=el('option');o.value=c;dl.appendChild(o);});
+  bd.appendChild(compI);bd.appendChild(dl);
+  const nameEcho=dv('');nameEcho.style.cssText='font-size:11px;color:#64748b;margin-top:3px';
+  bd.appendChild(nameEcho);
+
+  bd.appendChild(lb('Subcontractor *'));
+  const supI=el('input');supI.type='text';supI.value=it.supplier||'';supI.setAttribute('list','sct-sup-list');
+  supI.style.cssText=inStyle+';font-weight:700';
+  const dl2=el('datalist');dl2.id='sct-sup-list';
+  buildSubcoSuppliers().forEach(s2=>{const o=el('option');o.value=s2.supplier;dl2.appendChild(o);});
+  bd.appendChild(supI);bd.appendChild(dl2);
+  const daysEcho=dv('');daysEcho.style.cssText='font-size:11px;color:#64748b;margin-top:3px';
+  bd.appendChild(daysEcho);
+
+  const syncEcho=()=>{
+    const c=compI.value.trim();
+    const hit=subList.find(x=>x.productNo===c);
+    const nm=(S.stockIdx?.get(c)?.name)||hit?.prodName||'';
+    nameEcho.textContent=nm?('Denumire: '+nm):(c?'Reper fără denumire în Planning Overview':'');
+    if(hit&&!supI.value.trim()){supI.value=hit.supplier;}
+    const sup=supI.value.trim();
+    if(sup){
+      const d=subcoDaysFor(sup);
+      const pr=subcoProcFor(sup);
+      daysEcho.textContent=`Durată subcontractare: ${d} zile${pr?' · grupă: '+pr:''} (din Config SUBCO)`;
+    } else daysEcho.textContent='';
+  };
+  compI.addEventListener('input',syncEcho);compI.addEventListener('change',syncEcho);
+  supI.addEventListener('input',syncEcho);supI.addEventListener('change',syncEcho);
+
+  const row=(a,b)=>{const d=dv('');d.style.cssText='display:flex;gap:10px';
+    [a,b].forEach(x=>{x.style.flex='1';d.appendChild(x);});return d;};
+  const fld=(label,node)=>{const d=dv('');d.appendChild(lb(label));d.appendChild(node);return d;};
+  const qP=el('input');qP.type='text';qP.inputMode='decimal';qP.value=it.qtyPlanned||'';qP.style.cssText=inStyle+';text-align:right;font-family:monospace;font-weight:800';
+  const dSE=el('input');dSE.type='date';dSE.value=it.dateSentEst||'';dSE.style.cssText=inStyle;
+  bd.appendChild(row(fld('Cantitate planificată *',qP),fld('Data estimată a trimiterii',dSE)));
+  const qS=el('input');qS.type='text';qS.inputMode='decimal';qS.value=it.qtySent||'';qS.style.cssText=qP.style.cssText;
+  const dS=el('input');dS.type='date';dS.value=it.dateSent||'';dS.style.cssText=inStyle;
+  bd.appendChild(row(fld('Cantitate trimisă',qS),fld('Trimis efectiv la',dS)));
+  const qR=el('input');qR.type='text';qR.inputMode='decimal';qR.value=it.qtyRecv||'';qR.style.cssText=qP.style.cssText;
+  const dR=el('input');dR.type='date';dR.value=it.dateRecv||'';dR.style.cssText=inStyle;
+  bd.appendChild(row(fld('Cantitate recepționată',qR),fld('Recepționat la',dR)));
+  const dRE=el('input');dRE.type='date';dRE.value=it.dateRecvEst||'';dRE.style.cssText=inStyle;
+  bd.appendChild(lb('Recepție estimată (gol = calculată automat din zilele subcontractorului)'));
+  bd.appendChild(dRE);
+  bd.appendChild(lb('Produs final (opțional)'));
+  const fpI=el('input');fpI.type='text';fpI.value=it.fp||'';fpI.style.cssText=inStyle+';font-family:ui-monospace,monospace';
+  bd.appendChild(fpI);
+  bd.appendChild(lb('Observații'));
+  const noI=el('textarea');noI.value=it.notes||'';
+  noI.style.cssText='width:100%;min-height:58px;border:1.5px solid var(--border);border-radius:7px;padding:7px 9px;font-size:12.5px;font-family:inherit;resize:vertical';
+  bd.appendChild(noI);
+  const err=dv('');err.style.cssText='font-size:11.5px;font-weight:700;color:#dc2626;margin-top:8px;min-height:15px';
+  bd.appendChild(err);
+  md.appendChild(bd);
+  syncEcho();
+
+  const ft=dv('');ft.style.cssText='padding:11px 18px;border-top:1px solid var(--border);display:flex;gap:9px;justify-content:flex-end';
+  const sv=el('button');sv.textContent=isNew?'Adaugă în registru':'Salvează';
+  sv.style.cssText='padding:9px 18px;border:none;border-radius:7px;background:#1d4ed8;color:#fff;font-weight:800;font-size:12.5px;cursor:pointer';
+  sv.addEventListener('click',async()=>{
+    const comp=compI.value.trim(), sup=supI.value.trim();
+    if(!comp){err.textContent='Completează codul reperului.';return;}
+    if(!sup){err.textContent='Completează subcontractorul.';return;}
+    if(!(sctNum(qP.value)>0)&&!(sctNum(qS.value)>0)){err.textContent='Completează cantitatea planificată sau cea trimisă.';return;}
+    it.comp=comp;it.supplier=sup;
+    it.compName=(S.stockIdx?.get(comp)?.name)||subList.find(x=>x.productNo===comp)?.prodName||it.compName||'';
+    it.qtyPlanned=qP.value.trim();it.qtySent=qS.value.trim();it.qtyRecv=qR.value.trim();
+    it.dateSentEst=dSE.value;it.dateSent=dS.value;it.dateRecv=dR.value;it.dateRecvEst=dRE.value;
+    it.fp=fpI.value.trim();it.notes=noI.value;
+    it.updTs=Date.now();it.updBy=String(S.session?.username||'');
+    if(isNew){S.sctItems=sctItems();S.sctItems.unshift(it);}
+    await sctSave();ov.remove();render();
+    showToast(isNew?'✓ Poziție adăugată':'✓ Poziție salvată');
+  });
+  ft.appendChild(sv);md.appendChild(ft);
+  ov.appendChild(md);ov.addEventListener('click',e=>{if(e.target===ov)ov.remove();});
+  document.body.appendChild(ov);
+  setTimeout(()=>compI.focus(),60);
+}
+
+/* ── Atasamente: fisiere si poze facute pe telefon / tableta ── */
+function sctOpenAtt(it,onChange){
+  if(!it)return;
+  document.getElementById('sct-att-ov')?.remove();
+  const ov=dv('');ov.id='sct-att-ov';
+  ov.style.cssText='position:fixed;inset:0;background:rgba(0,0,0,.5);z-index:9650;display:flex;align-items:center;justify-content:center;padding:14px';
+  const md=dv('');md.style.cssText='background:#fff;border-radius:12px;width:min(680px,97vw);max-height:92vh;display:flex;flex-direction:column;overflow:hidden';
+  const h=dv('');h.style.cssText='padding:13px 18px;border-bottom:2px solid var(--border);display:flex;align-items:center;gap:10px;flex-wrap:wrap';
+  h.innerHTML=`<b style="font-size:14.5px;color:#1e3a5f">📎 ${it.comp} — ${it.supplier}</b>`;
+  const cl=el('button');cl.textContent='✕';
+  cl.style.cssText='margin-left:auto;border:none;background:#f1f5f9;border-radius:7px;width:30px;height:30px;cursor:pointer;font-size:14px';
+  cl.addEventListener('click',()=>ov.remove());h.appendChild(cl);md.appendChild(h);
+
+  const bar=dv('');bar.style.cssText='padding:10px 18px;display:flex;gap:9px;flex-wrap:wrap;border-bottom:1px solid var(--border)';
+  const mkUp=(label,accept,capture,col)=>{
+    const l=el('label');l.textContent=label;
+    l.style.cssText=`padding:8px 14px;border-radius:7px;background:${col};color:#fff;font-size:12.5px;font-weight:800;cursor:pointer`;
+    const i=el('input');i.type='file';i.accept=accept;i.style.display='none';
+    if(capture)i.setAttribute('capture','environment');
+    i.addEventListener('change',async e=>{
+      const files=[...(e.target.files||[])];
+      if(!files.length)return;
+      msg.style.color='#475569';msg.textContent='Se încarcă…';
+      for(const f of files){
+        try{await sctAttUpload(it,f);}
+        catch(err2){msg.style.color='#dc2626';msg.textContent='Eroare la '+f.name+': '+(err2.message||err2);}
+      }
+      i.value='';
+      if(!/Eroare/.test(msg.textContent)){msg.style.color='#15803d';msg.textContent='✓ Încărcat';}
+      draw();onChange&&onChange();
+    });
+    l.appendChild(i);return l;
+  };
+  bar.appendChild(mkUp('📷 Fă o poză','image/*',true,'#7c3aed'));
+  bar.appendChild(mkUp('+ Atașează fișier','image/*,application/pdf',false,'#1d4ed8'));
+  const dwg=el('button');dwg.textContent='📐 Desen de execuție';
+  dwg.style.cssText='padding:8px 14px;border:1.5px solid #0891b2;border-radius:7px;background:#fff;color:#0e7490;font-size:12.5px;font-weight:800;cursor:pointer';
+  dwg.addEventListener('click',()=>{
+    const dn=(typeof getDrawingNoFor==='function')?getDrawingNoFor(it.comp):'';
+    openDrawingSearch(dn||it.comp,it.comp);
+  });
+  bar.appendChild(dwg);
+  md.appendChild(bar);
+  const msg=dv('');msg.style.cssText='padding:0 18px;font-size:11.5px;font-weight:700;min-height:16px';
+  md.appendChild(msg);
+  const body=dv('');body.style.cssText='flex:1;overflow:auto;padding:12px 18px 18px';
+  md.appendChild(body);
+
+  function draw(){
+    body.innerHTML='';
+    const atts=it.atts||[];
+    if(!atts.length){
+      const e=dv('');e.style.cssText='padding:26px;text-align:center;color:#94a3b8;font-size:12.5px';
+      e.textContent='Niciun atașament. Poți face o poză direct de pe telefon sau atașa un fișier.';
+      body.appendChild(e);return;
+    }
+    const grid=dv('');grid.style.cssText='display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:11px';
+    atts.slice().sort((a,b)=>(b.ts||0)-(a.ts||0)).forEach(a=>{
+      const card=dv('');card.style.cssText='border:1.5px solid var(--border);border-radius:9px;overflow:hidden;background:#f8fafc';
+      const ph=dv('');ph.style.cssText='height:104px;display:flex;align-items:center;justify-content:center;background:#eef2f7;cursor:pointer';
+      ph.textContent='…';
+      const isImg=/^image\//.test(a.type||'')||/\.(png|jpe?g|webp|gif)$/i.test(a.name||'');
+      sctAttUrl(a).then(url=>{
+        if(!url){ph.textContent='nu s-a putut încărca';ph.style.fontSize='10.5px';ph.style.color='#dc2626';return;}
+        ph.textContent='';
+        if(isImg){
+          const img=el('img');img.src=url;
+          img.style.cssText='width:100%;height:100%;object-fit:cover';
+          ph.appendChild(img);
+        } else {
+          const ic=dv('');ic.style.cssText='font-size:30px';ic.textContent='📄';ph.appendChild(ic);
+        }
+        ph.addEventListener('click',()=>window.open(url,'_blank'));
+      });
+      card.appendChild(ph);
+      const ft2=dv('');ft2.style.cssText='padding:6px 8px';
+      const nm=dv('');nm.style.cssText='font-size:10.5px;font-weight:700;color:#334155;overflow:hidden;text-overflow:ellipsis;white-space:nowrap';
+      nm.textContent=a.name||'atașament';nm.title=a.name||'';
+      const mt=dv('');mt.style.cssText='font-size:9.5px;color:#94a3b8;margin-top:1px';
+      mt.textContent=new Date(a.ts||0).toLocaleString('ro-RO')+(a.by?' · '+a.by:'');
+      ft2.appendChild(nm);ft2.appendChild(mt);
+      const del=el('button');del.textContent='🗑 Șterge';
+      del.style.cssText='margin-top:5px;width:100%;padding:4px;border:1.5px solid #fca5a5;border-radius:6px;background:#fff;color:#b91c1c;font-size:10.5px;font-weight:800;cursor:pointer';
+      del.addEventListener('click',async()=>{
+        if(!confirm('Ștergi atașamentul "'+(a.name||'')+'"?'))return;
+        await sctAttDelete(it,a);draw();onChange&&onChange();
+      });
+      ft2.appendChild(del);
+      card.appendChild(ft2);grid.appendChild(card);
+    });
+    body.appendChild(grid);
+  }
+  draw();
+  ov.appendChild(md);ov.addEventListener('click',e=>{if(e.target===ov)ov.remove();});
+  document.body.appendChild(ov);
+}
+
+function sctExport(){
+  const rows=sctRows();
+  const aoa=[['Status','Reper','Denumire','Subcontractor','Operatie','Planificat','Trimis','Receptionat',
+              'La subco','Trimitere est.','Trimis la','Receptie est.','Receptionat la','Produs final',
+              'Atasamente','Observatii','Intarziat']];
+  rows.forEach(r=>{
+    aoa.push([_SCT_ST[r._st].l,r.comp||'',r.compName||'',r.supplier||'',r._grp||'',
+      sctNum(r.qtyPlanned),sctNum(r.qtySent),sctNum(r.qtyRecv),r._at,
+      r.dateSentEst||'',r.dateSent||'',r._est||'',r.dateRecv||'',r.fp||'',
+      (r.atts||[]).length,r.notes||'',r._late?'DA':'']);
+  });
+  const wb=XLSX.utils.book_new();
+  const ws=XLSX.utils.aoa_to_sheet(aoa);
+  ws['!cols']=[{wch:18},{wch:18},{wch:26},{wch:20},{wch:13},{wch:10},{wch:9},{wch:12},
+               {wch:9},{wch:13},{wch:12},{wch:13},{wch:14},{wch:18},{wch:12},{wch:30},{wch:10}];
+  XLSX.utils.book_append_sheet(wb,ws,'Subcontractari');
+  XLSX.writeFile(wb,`Subcontractari_${_isoToday()}.xlsx`);
 }
 
 function renderSubco(){
