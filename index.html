@@ -8917,6 +8917,7 @@ function renderSubcoTrack(){
   hd.appendChild(hdc);hd.appendChild(document.createTextNode('Ascunde finalizate'));
   tb.appendChild(hd);
 
+  tb.appendChild(lblQueueBtn(()=>rebuild()));
   const shpB=el('button');shpB.textContent='🚚 Creează shipping list';
   shpB.style.cssText='padding:7px 14px;border:none;border-radius:7px;background:#15803d;color:#fff;font-size:12.5px;font-weight:800;cursor:pointer';
   shpB.addEventListener('click',()=>openShippingList(null));
@@ -8979,6 +8980,7 @@ function sctTiles(){
 }
 
 const SCT_COLS=[
+  {k:'lbl',l:'',w:40},
   {k:'_st',l:'Status',w:132},
   {k:'comp',l:'Reper',w:150},
   {k:'compName',l:'Denumire',w:170},
@@ -9023,7 +9025,22 @@ function sctTable(rows,onChange){
       td.style.cssText=`padding:4px 8px;width:${c.w}px;min-width:${c.w}px;max-width:${c.w}px;`+
         `text-align:${c.n?'right':'left'};overflow:hidden;text-overflow:ellipsis;white-space:nowrap`+
         (c.n?';font-family:monospace;font-weight:700':'');
-      if(c.k==='_st'){
+      if(c.k==='lbl'){
+        // 🖨 la inceput de linie: pune eticheta in coada; daca lipseste
+        // cantitatea trimisa, o cere si o scrie si in tabel
+        td.style.padding='2px 4px';
+        const pb=lblPrintBtn(()=>({
+            comp:r.comp,name:r.compName,qty:sctNum(it?.qtySent),supplier:r.supplier,
+            itemId:r.id,planned:sctNum(it?.qtyPlanned),
+            setQty:v=>{
+              if(!it)return;
+              it.qtySent=String(v);
+              if(!it.dateSent)it.dateSent=_isoToday();
+              it.updTs=Date.now();sctSave();
+            }
+          }),()=>{onChange();showToast('🏷 Etichetă adăugată în coadă');});
+        td.appendChild(pb);
+      } else if(c.k==='_st'){
         const d=_SCT_ST[r._st];
         const pill=sp('',`${d.ico} ${d.l}`);
         pill.style.cssText=`display:inline-block;padding:1px 8px;border-radius:9px;font-size:9.5px;font-weight:800;`+
@@ -9144,6 +9161,213 @@ function sctSuggestions(group){
 }
 
 /* ═══════════════════════════════════════════════════════════════
+   ETICHETE — coada de printare, A4 portrait, 2 etichete pe pagina
+   Eticheta: codul reperului (principal, bold), denumirea si
+   cantitatea trimisa. Coada e locala (per utilizator).
+═══════════════════════════════════════════════════════════════ */
+const LBL_KEY='pps_label_queue';
+function lblQueue(){
+  if(!Array.isArray(S.lblQueue)){
+    try{const d=JSON.parse(localStorage.getItem(LBL_KEY)||'null');S.lblQueue=Array.isArray(d?.q)?d.q:[];}
+    catch{S.lblQueue=[];}
+  }
+  return S.lblQueue;
+}
+function lblSave(){try{localStorage.setItem(LBL_KEY,JSON.stringify({q:S.lblQueue||[]}));}catch{}}
+function lblAdd(o){
+  const q=lblQueue();
+  q.push({id:'l'+Date.now().toString(36)+Math.random().toString(36).slice(2,6),
+    comp:o.comp||'',name:o.name||'',qty:o.qty||0,supplier:o.supplier||'',
+    shipNo:o.shipNo||'',itemId:o.itemId||'',ts:Date.now()});
+  lblSave();
+  return q[q.length-1];
+}
+function lblRemove(id){S.lblQueue=(lblQueue()||[]).filter(x=>x.id!==id);lblSave();}
+function lblCountFor(itemId){return (lblQueue()||[]).filter(x=>x.itemId===itemId).length;}
+
+/* Buton de imprimanta pentru o linie (registru sau shipping list).
+   Daca nu e completata cantitatea trimisa, intreaba cat se trimite. */
+function lblPrintBtn(getCtx,onDone,opts){
+  const o=opts||{};
+  const b=el('button');
+  b.textContent='🖨';
+  b.title='Adaugă etichetă în coada de printare';
+  b.style.cssText=`width:${o.big?30:26}px;height:${o.big?28:23}px;border:1.5px solid #7c3aed;border-radius:6px;`+
+    'background:#f5f3ff;color:#6d28d9;cursor:pointer;font-size:12px;font-weight:800;flex-shrink:0';
+  b.addEventListener('click',e=>{
+    e.stopPropagation();
+    const c=getCtx();
+    if(!c)return;
+    if(!(sctNum(c.qty)>0)){
+      lblAskQty(c,v=>{c.setQty&&c.setQty(v);lblAdd({...c,qty:v});onDone&&onDone();});
+      return;
+    }
+    lblAdd(c);onDone&&onDone();
+  });
+  return b;
+}
+/* Dialog "cate trimiti?" folosit cand cantitatea trimisa lipseste */
+function lblAskQty(c,cb){
+  document.getElementById('lbl-qty-ov')?.remove();
+  const ov=dv('');ov.id='lbl-qty-ov';
+  ov.style.cssText='position:fixed;inset:0;background:rgba(0,0,0,.5);z-index:10120;display:flex;align-items:center;justify-content:center;padding:16px';
+  const md=dv('');md.style.cssText='background:#fff;border-radius:12px;width:min(420px,96vw);overflow:hidden';
+  const h=dv('');h.style.cssText='padding:13px 16px;background:#6d28d9;color:#fff;font-size:14px;font-weight:900';
+  h.textContent='Câte bucăți trimiți?';md.appendChild(h);
+  const bd=dv('');bd.style.cssText='padding:14px 16px';
+  const info=dv('');info.style.cssText='font-size:12.5px;color:#334155;line-height:1.7;margin-bottom:10px';
+  info.innerHTML=`<b style="font-family:ui-monospace,monospace;font-size:13.5px">${str(c.comp)}</b><br>${str(c.name)}`+
+    (c.supplier?`<br><span style="color:#7c3aed;font-weight:800">${str(c.supplier)}</span>`:'')+
+    (c.planned?`<br><span style="color:#64748b">planificat ${fmtN(c.planned)}</span>`:'')+
+    '<br><span style="color:#64748b">Cantitatea se trece și în tabelul Subcontractări.</span>';
+  bd.appendChild(info);
+  const i=el('input');i.type='text';i.inputMode='decimal';i.value=c.planned?String(c.planned):'';
+  i.style.cssText='width:100%;height:46px;border:2px solid #7c3aed;border-radius:9px;padding:0 12px;font-size:20px;font-weight:900;text-align:center;font-family:monospace';
+  bd.appendChild(i);
+  const err=dv('');err.style.cssText='font-size:11.5px;font-weight:700;color:#dc2626;margin-top:7px;min-height:15px';
+  bd.appendChild(err);md.appendChild(bd);
+  const ft=dv('');ft.style.cssText='padding:11px 16px;border-top:1px solid var(--border);display:flex;gap:9px;justify-content:flex-end';
+  const bc=el('button');bc.textContent='Renunță';
+  bc.style.cssText='padding:10px 16px;border:1.5px solid var(--border);border-radius:8px;background:#fff;color:#475569;font-weight:800;font-size:12.5px;cursor:pointer';
+  bc.addEventListener('click',()=>ov.remove());
+  const bo=el('button');bo.textContent='Adaugă eticheta';
+  bo.style.cssText='padding:10px 18px;border:none;border-radius:8px;background:#6d28d9;color:#fff;font-weight:800;font-size:12.5px;cursor:pointer';
+  const commit=()=>{
+    const v=sctNum(i.value);
+    if(!(v>0)){err.textContent='Introdu o cantitate mai mare decât 0.';return;}
+    ov.remove();cb(v);
+  };
+  bo.addEventListener('click',commit);
+  i.addEventListener('keydown',e=>{if(e.key==='Enter'){e.preventDefault();commit();}});
+  ft.appendChild(bc);ft.appendChild(bo);md.appendChild(ft);
+  ov.appendChild(md);ov.addEventListener('click',e=>{if(e.target===ov)ov.remove();});
+  document.body.appendChild(ov);
+  setTimeout(()=>{i.focus();i.select();},60);
+}
+
+/* Butonul cu coada de etichete */
+function lblQueueBtn(onChange){
+  const n=(lblQueue()||[]).length;
+  const b=el('button');
+  b.textContent=`🏷 Coadă etichete${n?' ('+n+')':''}`;
+  b.style.cssText='padding:7px 12px;border:1.5px solid '+(n?'#7c3aed':'#cbd5e1')+
+    ';border-radius:7px;background:'+(n?'#f5f3ff':'#fff')+';color:'+(n?'#6d28d9':'#64748b')+
+    ';font-size:12px;font-weight:800;cursor:pointer';
+  b.addEventListener('click',()=>openLabelQueue(onChange));
+  return b;
+}
+function openLabelQueue(onChange){
+  document.getElementById('lbl-q-ov')?.remove();
+  const ov=dv('');ov.id='lbl-q-ov';
+  ov.style.cssText='position:fixed;inset:0;background:rgba(0,0,0,.5);z-index:10110;display:flex;align-items:center;justify-content:center;padding:14px';
+  const md=dv('');md.style.cssText='background:#fff;border-radius:12px;width:min(640px,97vw);max-height:88vh;display:flex;flex-direction:column;overflow:hidden';
+  const h=dv('');h.style.cssText='padding:13px 18px;border-bottom:2px solid var(--border);display:flex;align-items:center;gap:10px;flex-wrap:wrap';
+  const ht=dv('');ht.style.cssText='font-size:15px;font-weight:900;color:#1e3a5f';
+  h.appendChild(ht);
+  const cl=el('button');cl.textContent='✕';
+  cl.style.cssText='margin-left:auto;border:none;background:#f1f5f9;border-radius:7px;width:30px;height:30px;cursor:pointer;font-size:14px';
+  cl.addEventListener('click',()=>{ov.remove();onChange&&onChange();});h.appendChild(cl);md.appendChild(h);
+  const body=dv('');body.style.cssText='flex:1;overflow:auto;padding:12px 18px 18px';
+  md.appendChild(body);
+  const ft=dv('');ft.style.cssText='padding:11px 18px;border-top:1px solid var(--border);display:flex;gap:9px;align-items:center;flex-wrap:wrap';
+  const info=dv('');info.style.cssText='font-size:11.5px;color:#64748b';
+  ft.appendChild(info);
+  const sp2=dv('');sp2.style.marginLeft='auto';ft.appendChild(sp2);
+  const bClr=el('button');bClr.textContent='Golește coada';
+  bClr.style.cssText='padding:9px 14px;border:1.5px solid #fca5a5;border-radius:8px;background:#fff;color:#b91c1c;font-weight:800;font-size:12.5px;cursor:pointer';
+  bClr.addEventListener('click',()=>{
+    if(!confirm('Golești coada de etichete?'))return;
+    S.lblQueue=[];lblSave();draw();onChange&&onChange();
+  });
+  const bPr=el('button');bPr.textContent='🖨 Printează etichetele';
+  bPr.style.cssText='padding:9px 17px;border:none;border-radius:8px;background:#6d28d9;color:#fff;font-weight:800;font-size:12.5px;cursor:pointer';
+  bPr.addEventListener('click',()=>printLabels(lblQueue()));
+  ft.appendChild(bClr);ft.appendChild(bPr);md.appendChild(ft);
+  function draw(){
+    const q=lblQueue()||[];
+    ht.textContent=`🏷 Coadă etichete (${q.length})`;
+    info.textContent=q.length?`${Math.ceil(q.length/2)} pagini A4, 2 etichete pe pagină`:'';
+    bPr.disabled=!q.length;bPr.style.opacity=q.length?'1':'.5';
+    bClr.disabled=!q.length;bClr.style.opacity=q.length?'1':'.5';
+    body.innerHTML='';
+    if(!q.length){
+      const e=dv('');e.style.cssText='padding:28px;text-align:center;color:#94a3b8;font-size:12.5px;line-height:1.6';
+      e.innerHTML='Coada este goală.<br><span style="font-size:11.5px">Apasă 🖨 la începutul unei linii din Subcontractări sau din shipping list pentru a adăuga o etichetă.</span>';
+      body.appendChild(e);return;
+    }
+    q.forEach((x,i)=>{
+      const c=dv('');
+      c.style.cssText='border:1.5px solid var(--border);border-radius:9px;padding:9px 11px;margin-bottom:7px;display:flex;align-items:center;gap:10px;flex-wrap:wrap';
+      const nr=sp('',String(i+1));
+      nr.style.cssText='width:22px;height:22px;border-radius:50%;background:#ede9fe;color:#6d28d9;font-size:11px;font-weight:900;display:flex;align-items:center;justify-content:center;flex-shrink:0';
+      c.appendChild(nr);
+      const t=dv('');t.style.cssText='font-size:12px;line-height:1.5;min-width:0';
+      t.innerHTML=`<b style="font-family:ui-monospace,monospace;font-size:13px;color:#1e3a5f">${str(x.comp)}</b>`+
+        `<div style="color:#475569;font-size:11px;overflow:hidden;text-overflow:ellipsis">${str(x.name)||'—'}</div>`+
+        `<div style="color:#7c3aed;font-size:10.5px;font-weight:700">${str(x.supplier)}${x.shipNo?' · '+x.shipNo:''}</div>`;
+      c.appendChild(t);
+      const q2=sp('',fmtN(x.qty)+' buc');
+      q2.style.cssText='margin-left:auto;font-size:13px;font-weight:900;color:#15803d;background:#f0fdf4;border-radius:6px;padding:2px 10px;flex-shrink:0';
+      c.appendChild(q2);
+      const rm=el('button');rm.textContent='🗑';
+      rm.style.cssText='width:30px;height:26px;border:1.5px solid #fca5a5;border-radius:6px;background:#fff;color:#b91c1c;cursor:pointer;font-size:11px;flex-shrink:0';
+      rm.addEventListener('click',()=>{lblRemove(x.id);draw();onChange&&onChange();});
+      c.appendChild(rm);
+      body.appendChild(c);
+    });
+  }
+  draw();
+  ov.appendChild(md);ov.addEventListener('click',e=>{if(e.target===ov){ov.remove();onChange&&onChange();}});
+  document.body.appendChild(ov);
+}
+
+/* Printare: A4 portrait, 2 etichete pe pagina */
+function printLabels(list){
+  const q=(list||[]).slice();
+  if(!q.length){showToast('Coada de etichete este goală','err',2500);return;}
+  const esc=s=>String(s??'').replace(/[&<>]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]));
+  const lg=logoGet();
+  let pages='';
+  for(let i=0;i<q.length;i+=2){
+    const pair=q.slice(i,i+2);
+    pages+='<div class="page">'+pair.map(x=>
+      `<div class="lbl">
+        ${lg?`<img class="lg" src="${lg}" alt="">`:'<div class="lg-sp"></div>'}
+        <div class="code">${esc(x.comp)}</div>
+        <div class="name">${esc(x.name)||'&nbsp;'}</div>
+        <div class="qbox"><span>Cantitate trimisă</span><b>${fmtN(x.qty)}</b><i>buc</i></div>
+        <div class="foot">
+          <div>${esc(x.supplier)||''}</div>
+          <div>${x.shipNo?'Shipping list '+esc(x.shipNo)+' · ':''}${new Date(x.ts||Date.now()).toLocaleDateString('ro-RO')}</div>
+        </div>
+      </div>`).join('')+
+      (pair.length===1?'<div class="lbl empty"></div>':'')+'</div>';
+  }
+  const html='<!DOCTYPE html><html lang="ro"><head><meta charset="utf-8"><title>Etichete subcontractare</title><style>'+
+    '@page{size:A4 portrait;margin:8mm}'+
+    '*{box-sizing:border-box}'+
+    'body{font-family:system-ui,-apple-system,Segoe UI,sans-serif;color:#0f172a;margin:0}'+
+    '.page{height:281mm;display:flex;flex-direction:column;gap:5mm;page-break-after:always}'+
+    '.page:last-child{page-break-after:auto}'+
+    '.lbl{flex:1;border:2px solid #0f172a;border-radius:3mm;padding:7mm 8mm;display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center;overflow:hidden}'+
+    '.lbl.empty{border:1px dashed #cbd5e1}'+
+    '.lg{max-height:14mm;max-width:60mm;object-fit:contain;margin-bottom:4mm}'+
+    '.lg-sp{height:2mm}'+
+    '.code{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:42pt;font-weight:900;line-height:1.05;letter-spacing:-.5pt;word-break:break-all}'+
+    '.name{font-size:15pt;font-weight:600;color:#334155;margin-top:3mm;line-height:1.25}'+
+    '.qbox{margin-top:6mm;border:2px solid #0f172a;border-radius:2mm;padding:3mm 9mm;display:flex;align-items:baseline;gap:3mm}'+
+    '.qbox span{font-size:8.5pt;text-transform:uppercase;letter-spacing:.5pt;color:#475569;font-weight:700}'+
+    '.qbox b{font-size:30pt;font-weight:900;line-height:1}'+
+    '.qbox i{font-size:11pt;font-style:normal;color:#475569;font-weight:700}'+
+    '.foot{margin-top:auto;width:100%;display:flex;justify-content:space-between;font-size:9pt;color:#475569;font-weight:700;padding-top:4mm}'+
+    '</style></head><body>'+pages+'</body></html>';
+  const w=window.open('','_blank');
+  if(!w){showToast('Permiteți ferestrele pop-up pentru a printa etichetele','err',3500);return;}
+  w.document.write(html);w.document.close();
+  setTimeout(()=>{try{w.focus();w.print();}catch{}},450);
+}
+
+/* ═══════════════════════════════════════════════════════════════
    SHIPPING LIST — incarcarea reperelor la subcontractori
    Fereastra de incarcare: datele camionului sus, in stanga
    subcontractarile planificate si netrimise (dreptunghiuri), in
@@ -9219,9 +9443,24 @@ function openShippingList(existing){
 
   /* ── cap de fereastra ── */
   const h=dv('');h.style.cssText='padding:12px 16px;background:#1e3a5f;color:#fff;display:flex;align-items:center;gap:12px;flex-wrap:wrap;flex-shrink:0';
+  const titleWrap=dv('');titleWrap.style.cssText='display:flex;flex-direction:column;gap:1px';
   const ttl=dv('');ttl.style.cssText='font-size:15.5px;font-weight:900';
   ttl.textContent=`🚚 Shipping list ${L.no}`+(closed?' · ÎNCHISĂ':'');
-  h.appendChild(ttl);
+  titleWrap.appendChild(ttl);
+  // mentiunea de versiune: a câta modificare, cine si când
+  const verLine=dv('');verLine.style.cssText='font-size:10.5px;font-weight:700;color:#bfdbfe';
+  const drawVer=()=>{
+    const v=L.ver||1;
+    if(v<=1&&!L.editedTs){
+      verLine.textContent=`Versiunea 1, creată de ${L.createdBy||'—'}`+
+        (L.ts?` în data de ${new Date(L.ts).toLocaleString('ro-RO')}`:'');
+    } else {
+      verLine.textContent=`Versiunea ${v}, editat de ${L.editedBy||L.updBy||'—'} în data de `+
+        new Date(L.editedTs||L.ts||Date.now()).toLocaleString('ro-RO');
+    }
+  };
+  drawVer();titleWrap.appendChild(verLine);
+  h.appendChild(titleWrap);
   const dirtyTag=sp('','');dirtyTag.style.cssText='font-size:11px;font-weight:800;color:#fcd34d';
   h.appendChild(dirtyTag);
   const cl=el('button');cl.textContent='✕ Închide';
@@ -9289,8 +9528,24 @@ function openShippingList(existing){
     b.addEventListener('click',fn);return b;
   };
   const spacer=dv('');spacer.style.marginLeft='auto';ft.appendChild(spacer);
-  const bPrint=mkB('🖨 Printează','#475569',()=>shpPrint(L));
+  const bPrint=mkB('🖨 Printează lista','#475569',()=>shpPrint(L));
   ft.appendChild(bPrint);
+  let qBtn=lblQueueBtn(()=>refreshQueueBtn());
+  ft.appendChild(qBtn);
+  function refreshQueueBtn(){
+    const nb=lblQueueBtn(()=>refreshQueueBtn());
+    qBtn.replaceWith(nb);qBtn=nb;drawAll();
+  }
+  const bAllLbl=mkB('🏷 Toate liniile în coadă','#6d28d9',()=>{
+    if(!L.lines.length){alert('Nu ai încărcat nicio componentă.');return;}
+    L.lines.forEach(ln=>{
+      lblAdd({comp:ln.comp,name:ln.name,qty:ln.qty,supplier:ln.supplier,itemId:ln.itemId,shipNo:L.no});
+      ln.lblQty=ln.qty;
+    });
+    markDirty();refreshQueueBtn();
+    showToast(`🏷 ${L.lines.length} etichete adăugate în coadă`);
+  });
+  ft.appendChild(bAllLbl);
   let bClose=null;
   if(!closed){
     bClose=mkB('🔒 Închide încărcarea','#b45309',async()=>{
@@ -9311,13 +9566,21 @@ function openShippingList(existing){
   let dirty=isNew;
   const markDirty=()=>{dirty=true;dirtyTag.textContent='• nesalvat';};
   async function persist(){
+    // fiecare salvare a unei liste existente = o versiune nouă
+    const first=!shpLists().some(x=>x.id===L.id);
+    L.ver=first?(L.ver||1):((L.ver||1)+1);
+    if(!first){L.editedBy=String(S.session?.username||'');L.editedTs=Date.now();}
     L.ts=Date.now();L.updBy=String(S.session?.username||'');
+    if(!Array.isArray(L.hist))L.hist=[];
+    L.hist.push({ver:L.ver,by:String(S.session?.username||''),ts:Date.now(),
+      lines:L.lines.length,qty:L.lines.reduce((a,x)=>a+(x.qty||0),0)});
+    if(L.hist.length>40)L.hist=L.hist.slice(-40);
     const arr=shpLists();
     const i=arr.findIndex(x=>x.id===L.id);
     if(i<0)arr.unshift(L);else arr[i]=L;
     S.shpLists=arr;
     await shpSave();await sctSave();
-    dirty=false;dirtyTag.textContent='';
+    dirty=false;dirtyTag.textContent='';drawVer();
   }
   cl.addEventListener('click',async()=>{
     if(dirty&&!confirm('Închizi fereastra? Modificările nesalvate se pierd.'))return;
@@ -9395,8 +9658,16 @@ function openShippingList(existing){
   /* linie incarcata (dreapta) */
   function lineCard(ln){
     const c=dv('');
-    c.style.cssText='background:#fff;border:1.5px solid #86efac;border-left:4px solid #15803d;border-radius:9px;padding:8px 10px;margin-bottom:7px';
+    // eticheta tiparita pentru alta cantitate => linia trebuie re-etichetata
+    const needLbl=(ln.lblQty!=null&&ln.lblQty!==ln.qty)||!!ln.reLbl;
+    c.style.cssText='background:'+(needLbl?'#fffbeb':'#fff')+';border:1.5px solid '+(needLbl?'#f59e0b':'#86efac')+
+      ';border-left:4px solid '+(needLbl?'#b45309':'#15803d')+';border-radius:9px;padding:8px 10px;margin-bottom:7px';
     const r1=dv('');r1.style.cssText='display:flex;align-items:baseline;gap:8px;flex-wrap:wrap';
+    const pb=lblPrintBtn(()=>({comp:ln.comp,name:ln.name,qty:ln.qty,supplier:ln.supplier,
+        itemId:ln.itemId,shipNo:L.no,planned:ln.qty}),
+      ()=>{ln.lblQty=ln.qty;ln.reLbl=null;markDirty();refreshQueueBtn();},{big:true});
+    pb.title='Adaugă eticheta acestei linii în coada de printare';
+    r1.appendChild(pb);
     const cd=sp('',ln.comp);cd.style.cssText='font-size:12.5px;font-weight:900;color:#14532d;font-family:ui-monospace,monospace';
     const q=sp('',fmtN(ln.qty)+' buc');
     q.style.cssText='margin-left:auto;font-size:13px;font-weight:900;color:#15803d;background:#f0fdf4;border-radius:6px;padding:1px 9px';
@@ -9405,6 +9676,16 @@ function openShippingList(existing){
     nm.textContent=ln.name||'—';c.appendChild(nm);
     const r3=dv('');r3.style.cssText='font-size:10px;color:#7c3aed;margin-top:3px;font-weight:800';
     r3.textContent=ln.supplier||'';c.appendChild(r3);
+    if(needLbl){
+      const w=dv('');w.style.cssText='margin-top:5px;font-size:10.5px;font-weight:800;color:#b45309;background:#fef3c7;border-radius:6px;padding:3px 7px';
+      w.textContent=ln.reLbl
+        ?`⚠ Cantitate schimbată ${fmtN(ln.reLbl.from)} → ${fmtN(ln.reLbl.to)} buc — etichetă nouă pusă în coadă`
+        :`⚠ Eticheta pusă în coadă era pentru ${fmtN(ln.lblQty)} buc — pune una nouă`;
+      c.appendChild(w);
+    } else if(ln.lblQty!=null){
+      const w=dv('');w.style.cssText='margin-top:5px;font-size:10px;font-weight:700;color:#15803d';
+      w.textContent='🏷 eticheta pusă în coadă';c.appendChild(w);
+    }
     if(!closed){
       const bar=dv('');bar.style.cssText='display:flex;gap:6px;margin-top:6px';
       const ed=el('button');ed.textContent='✎ Cantitate';
@@ -9475,14 +9756,25 @@ function openShippingList(existing){
       const it=(sctItems()||[]).find(i=>i.id===x.it.id)||x.it;
       const prev=existingLine?existingLine.qty:0;
       const delta=Math.round((v-prev)*1000)/1000;
-      if(existingLine)existingLine.qty=v;
+      if(existingLine){
+        const had=existingLine.lblQty;
+        existingLine.qty=v;
+        // cantitate schimbata dupa ce s-a scos eticheta -> eticheta nouă, automat in coada
+        if(had!=null&&had!==v){
+          lblAdd({comp:existingLine.comp,name:existingLine.name,qty:v,
+            supplier:existingLine.supplier,itemId:existingLine.itemId,shipNo:L.no});
+          existingLine.lblQty=v;
+          existingLine.reLbl={from:had,to:v};
+          showToast('🏷 Cantitate modificată — etichetă nouă adăugată în coadă',null,3500);
+        }
+      }
       else L.lines.push({itemId:it.id,comp:it.comp,name:it.compName||'',supplier:it.supplier||'',
         qty:v,by:String(S.session?.username||''),ts:Date.now()});
       // cantitatea trimisa din registru urmeaza incarcarea
       it.qtySent=String(Math.max(0,Math.round((sctNum(it.qtySent)+delta)*1000)/1000));
       if(sctNum(it.qtySent)>0&&!it.dateSent)it.dateSent=L.date||_isoToday();
       it.updTs=Date.now();
-      qov.remove();markDirty();drawAll();
+      qov.remove();markDirty();refreshQueueBtn();
     };
     qok.addEventListener('click',commit);
     qi.addEventListener('keydown',e=>{if(e.key==='Enter'){e.preventDefault();commit();}});
