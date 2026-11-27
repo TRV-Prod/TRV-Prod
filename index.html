@@ -8712,10 +8712,19 @@ const SCT_LOCAL='pps_subco_track';
 const SCT_ATT_DIR='subco-att';
 const _SCT_ST={
   plan:{l:'Planificat',ico:'📝',col:'#475569',bg:'#f1f5f9',bd:'#cbd5e1'},
+  pack:{l:'Coletat',ico:'📦',col:'#0e7490',bg:'#ecfeff',bd:'#a5f3fc'},
   out: {l:'La subcontractor',ico:'🚚',col:'#1d4ed8',bg:'#eff6ff',bd:'#bfdbfe'},
-  part:{l:'Recepție parțială',ico:'📦',col:'#b45309',bg:'#fffbeb',bd:'#fcd34d'},
+  part:{l:'Recepție parțială',ico:'📥',col:'#b45309',bg:'#fffbeb',bd:'#fcd34d'},
   done:{l:'Finalizat',ico:'✅',col:'#15803d',bg:'#f0fdf4',bd:'#86efac'},
 };
+/* Reperul a plecat efectiv? Fie are data trimiterii completata manual,
+   fie apare pe o shipping list. Altfel e doar coletat. */
+function sctHasShipping(itemId){
+  return (shpLists()||[]).some(L=>(L.lines||[]).some(x=>x.itemId===itemId));
+}
+function sctIsShipped(it){
+  return !!str(it.dateSent)||sctHasShipping(it.id);
+}
 function sctState(){
   if(!S.sctState)S.sctState={q:'',status:'',supplier:'',group:'',sortCol:'',sortDir:'asc',hideDone:true};
   return S.sctState;
@@ -8764,17 +8773,18 @@ function sctStatus(it){
   if(se>0&&rc>=se&&rc>0)return 'done';
   if(pl>0&&rc>=pl)return 'done';
   if(rc>0)return 'part';
-  if(se>0)return 'out';
+  if(se>0)return sctIsShipped(it)?'out':'pack';
   return 'plan';
 }
 function sctAtSub(it){  // cantitatea aflata efectiv la subcontractor
   return Math.max(0,sctNum(it.qtySent)-sctNum(it.qtyRecv));
 }
 function sctIsLate(it){
-  if(sctStatus(it)==='done')return false;
+  const st=sctStatus(it);
+  if(st==='done'||st==='pack'||st==='plan')return false;
   const est=sctRecvEst(it);
   if(!est)return false;
-  return est<_isoToday()&&sctNum(it.qtySent)>0;
+  return est<_isoToday();
 }
 function sctRows(){
   const st=sctState();
@@ -8905,6 +8915,7 @@ function renderSubcoTrack(){
     chips.appendChild(b);
   };
   mkChip('Toate','','#64748b');
+  mkChip('📦 Coletate','pack','#0e7490');
   mkChip('🚚 La subcontractor','out','#1d4ed8');
   mkChip('⚠ Întârziate','late','#dc2626');
   mkChip('📝 Planificate','plan','#475569');
@@ -8963,6 +8974,8 @@ function sctTiles(){
   const qOut=out.reduce((s2,i)=>s2+i._at,0);
   const late=all.filter(i=>i._late);
   const plan=all.filter(i=>i._st==='plan');
+  const pack=all.filter(i=>i._st==='pack');
+  const qPack=pack.reduce((s2,i)=>s2+i._at,0);
   const box=dv('');box.style.cssText='display:flex;gap:10px;flex-wrap:wrap;margin-bottom:13px';
   const card=(l,v,c,s2)=>{
     const d=dv('');d.style.cssText=`background:#fff;border:1px solid var(--border);border-left:4px solid ${c};border-radius:8px;padding:8px 13px;min-width:146px`;
@@ -8971,6 +8984,8 @@ function sctTiles(){
       ${s2?`<div style="font-size:9.5px;color:#94a3b8;margin-top:1px">${s2}</div>`:''}`;
     return d;
   };
+  box.appendChild(card('Coletate · de expediat',String(pack.length),'#0e7490',
+    pack.length?fmtN(qPack)+' buc pregătite':'niciuna'));
   box.appendChild(card('La subcontractori',String(out.length),'#1d4ed8',fmtN(qOut)+' buc în lucru'));
   box.appendChild(card('Întârziate',String(late.length),'#dc2626',late.length?'depășit termenul estimat':'niciuna'));
   box.appendChild(card('Planificate',String(plan.length),'#475569','încă netrimise'));
@@ -8987,7 +9002,7 @@ const SCT_COLS=[
   {k:'supplier',l:'Subcontractor',w:150},
   {k:'_grp',l:'Operație',w:100},
   {k:'qtyPlanned',l:'Planificat',w:80,n:1},
-  {k:'qtySent',l:'Trimis',w:80,n:1},
+  {k:'qtySent',l:'Trimis/Coletat',w:104,n:1},
   {k:'qtyRecv',l:'Recepționat',w:90,n:1},
   {k:'_at',l:'La subco',w:80,n:1},
   {k:'dateSentEst',l:'Trimitere est.',w:106},
@@ -9034,8 +9049,7 @@ function sctTable(rows,onChange){
             itemId:r.id,planned:sctNum(it?.qtyPlanned),
             setQty:v=>{
               if(!it)return;
-              it.qtySent=String(v);
-              if(!it.dateSent)it.dateSent=_isoToday();
+              it.qtySent=String(v);          // coletat; data trimiterii ramane pe seama shipping list-ului
               it.updTs=Date.now();sctSave();
             }
           }),()=>{onChange();showToast('🏷 Etichetă adăugată în coadă');});
@@ -9067,9 +9081,8 @@ function sctTable(rows,onChange){
         const save=()=>{
           if(!it)return;
           it[c.k]=inp.value.trim();
-          // prima trimitere completeaza automat data reala, daca lipseste
-          if(c.k==='qtySent'&&sctNum(inp.value)>0&&!it.dateSent)it.dateSent=_isoToday();
-          if(c.k==='qtyRecv'&&sctNum(inp.value)>0&&!it.dateRecv)it.dateRecv=_isoToday();
+          // Data trimiterii se completeaza doar manual sau prin shipping list —
+          // o cantitate introdusa aici inseamna doar ca reperul e coletat.
           it.updTs=Date.now();sctSave();onChange();
         };
         inp.addEventListener('change',save);
@@ -9389,45 +9402,54 @@ function printLabels(list){
   if(!q.length){showToast('Coada de etichete este goală','err',2500);return;}
   const esc=s=>String(s??'').replace(/[&<>]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]));
   const lg=logoGet();
+  /* Reperul se scrie cât mai mare permite eticheta: limitat de lățime
+     (max 2 rânduri) și de înălțimea rămasă după cod de bare și cantitate. */
+  /* Reperul stă pe UN singur rând, cât mai mare: dimensiunea se calculează
+     din lățimea disponibilă împărțită la numărul de caractere. */
+  const codeSize=code=>{
+    const n=Math.max(1,String(code||'').length);
+    const availPt=520*0.97;     // ~183 mm utili pe lățime, cu o rezervă de 3%
+    const chW=0.63;             // avansul unui caracter monospace, în em
+    return Math.max(18,Math.min(96,availPt/(n*chW)));
+  };
   let pages='';
   for(let i=0;i<q.length;i+=2){
     const pair=q.slice(i,i+2);
     pages+='<div class="page">'+pair.map(x=>
       `<div class="lbl">
         <div class="main">
-        ${lg?`<img class="lg" src="${lg}" alt="">`:''}
-        <div class="code">${esc(x.comp)}</div>
+        <div class="code" style="font-size:${codeSize(x.comp).toFixed(1)}pt">${esc(x.comp)}</div>
         <div class="name">${esc(x.name)||'&nbsp;'}</div>
-        <div class="bcwrap">${barcodeSvg(x.comp,{heightMm:19,moduleMm:0.45,maxMm:170})}</div>
+        <div class="bcwrap">${barcodeSvg(String(x.comp)+'|'+fmtN(x.qty),{heightMm:24,moduleMm:0.52,maxMm:182})}</div>
         <div class="qbox"><span>Cantitate trimisă</span><b>${fmtN(x.qty)}</b><i>buc</i></div>
         </div>
         <div class="foot">
           <div>${esc(x.supplier)||''}</div>
-          <div>${x.shipNo?'Shipping list '+esc(x.shipNo)+' · ':''}${new Date(x.ts||Date.now()).toLocaleDateString('ro-RO')}</div>
+          <div>${x.shipNo?'Shipping list '+esc(x.shipNo):''}</div>
         </div>
       </div>`).join('')+
       (pair.length===1?'<div class="lbl empty"></div>':'')+'</div>';
   }
-  const html='<!DOCTYPE html><html lang="ro"><head><meta charset="utf-8"><title>Etichete subcontractare</title><style>'+
-    '@page{size:A4 portrait;margin:8mm}'+
+  const html='<!DOCTYPE html><html lang="ro"><head><meta charset="utf-8"><title> </title><style>'+
+    '@page{size:A4 portrait;margin:6mm}'+
     '*{box-sizing:border-box}'+
     'body{font-family:system-ui,-apple-system,Segoe UI,sans-serif;color:#0f172a;margin:0}'+
-    '.page{height:281mm;display:flex;flex-direction:column;gap:5mm;page-break-after:always}'+
+    '.page{height:284mm;display:flex;flex-direction:column;gap:5mm;page-break-after:always}'+
     '.page:last-child{page-break-after:auto}'+
-    '.lbl{flex:1;border:2px solid #0f172a;border-radius:3mm;padding:6mm 8mm;display:flex;flex-direction:column;text-align:center;overflow:hidden}'+
+    '.lbl{flex:1;border:2px solid #0f172a;border-radius:3mm;padding:4mm 3mm;display:flex;flex-direction:column;text-align:center;overflow:hidden}'+
     '.main{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;width:100%}'+
     '.lbl.empty{border:1px dashed #cbd5e1}'+
-    '.lg{max-height:15mm;max-width:66mm;object-fit:contain;margin-bottom:5mm}'+
-    '.lg-sp{height:2mm}'+
-    '.code{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:40pt;font-weight:900;line-height:1.05;letter-spacing:-.5pt;word-break:break-all}'+
-    '.name{font-size:15pt;font-weight:600;color:#334155;margin-top:3mm;line-height:1.25}'+
-    '.bcwrap{margin-top:5mm;text-align:center}'+
+    
+    
+    '.code{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-weight:900;line-height:1.02;letter-spacing:-.5pt;white-space:nowrap;width:100%;overflow:hidden}'+
+    '.name{font-size:15pt;font-weight:700;color:#334155;margin-top:2.5mm;line-height:1.15}'+
+    '.bcwrap{margin-top:4mm;text-align:center}'+
     '.bc{display:block;margin:0 auto}'+
-    '.qbox{margin-top:5mm;border:2px solid #0f172a;border-radius:2mm;padding:3mm 9mm;display:flex;align-items:baseline;gap:3mm}'+
-    '.qbox span{font-size:8.5pt;text-transform:uppercase;letter-spacing:.5pt;color:#475569;font-weight:700}'+
-    '.qbox b{font-size:30pt;font-weight:900;line-height:1}'+
-    '.qbox i{font-size:11pt;font-style:normal;color:#475569;font-weight:700}'+
-    '.foot{width:100%;border-top:1px solid #cbd5e1;display:flex;justify-content:space-between;font-size:9pt;color:#475569;font-weight:700;padding-top:4mm}'+
+    '.qbox{margin-top:5mm;border:2.5px solid #0f172a;border-radius:2mm;padding:1.5mm 9mm;display:flex;align-items:baseline;gap:4mm}'+
+    '.qbox span{font-size:10pt;text-transform:uppercase;letter-spacing:.5pt;color:#475569;font-weight:700}'+
+    '.qbox b{font-size:60pt;font-weight:900;line-height:1}'+
+    '.qbox i{font-size:16pt;font-style:normal;color:#475569;font-weight:700}'+
+    '.foot{width:100%;border-top:1px solid #cbd5e1;display:flex;justify-content:space-between;font-size:8.5pt;color:#475569;font-weight:700;padding-top:2mm}'+
     '</style></head><body>'+pages+'</body></html>';
   const w=window.open('','_blank');
   if(!w){showToast('Permiteți ferestrele pop-up pentru a printa etichetele','err',3500);return;}
@@ -10695,7 +10717,7 @@ function sctOpenAtt(it,onChange){
 
 function sctExport(){
   const rows=sctRows();
-  const aoa=[['Status','Reper','Denumire','Subcontractor','Operatie','Planificat','Trimis','Receptionat',
+  const aoa=[['Status','Reper','Denumire','Subcontractor','Operatie','Planificat','Trimis/Coletat','Receptionat',
               'La subco','Trimitere est.','Trimis la','Receptie est.','Receptionat la','Produs final',
               'Atasamente','Observatii','Intarziat']];
   rows.forEach(r=>{
