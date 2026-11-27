@@ -8920,84 +8920,99 @@ function sctOpenEdit(item){
     createdBy:String(S.session?.username||''),createdTs:Date.now()};
   const attsAtOpen=(it.atts||[]).map(a=>a.id);
   document.getElementById('sct-ed-ov')?.remove();
+  document.getElementById('sct-sug-pop')?.remove();
+
+  /* pe telefon / tableta formularul ocupa tot ecranul si are câmpuri mari */
+  const touch=(window.matchMedia&&window.matchMedia('(pointer:coarse)').matches)||window.innerWidth<820;
+  const FH=touch?42:32;                 // inaltime câmp
+  const FS=touch?15:12.5;               // corpul textului (15px: iOS nu mai face zoom)
+  const inStyle=`width:100%;height:${FH}px;border:1.5px solid var(--border);border-radius:8px;padding:0 10px;font-size:${FS}px`;
+
   const ov=dv('');ov.id='sct-ed-ov';
-  ov.style.cssText='position:fixed;inset:0;background:rgba(0,0,0,.45);z-index:9600;display:flex;align-items:center;justify-content:center;padding:14px';
-  const md=dv('');md.style.cssText='background:#fff;border-radius:12px;width:min(1020px,98vw);max-height:93vh;display:flex;flex-direction:column;overflow:hidden';
-  const h=dv('');h.style.cssText='padding:13px 18px;border-bottom:2px solid var(--border);display:flex;align-items:center';
-  h.innerHTML=`<b style="font-size:15px;color:#1e3a5f">${isNew?'+ Poziție nouă de subcontractare':'✎ Modifică poziția'}</b>`;
+  ov.style.cssText='position:fixed;inset:0;background:rgba(0,0,0,.45);z-index:9600;display:flex;'+
+    (touch?'align-items:stretch;justify-content:stretch;padding:0':'align-items:center;justify-content:center;padding:14px');
+  const md=dv('');
+  md.style.cssText=touch
+    ?'background:#fff;width:100%;height:100%;display:flex;flex-direction:column;overflow:hidden'
+    :'background:#fff;border-radius:12px;width:min(680px,97vw);max-height:93vh;display:flex;flex-direction:column;overflow:hidden';
+  const h=dv('');h.style.cssText=`padding:${touch?'14px 16px':'13px 18px'};border-bottom:2px solid var(--border);display:flex;align-items:center;flex-shrink:0`;
+  h.innerHTML=`<b style="font-size:${touch?16:15}px;color:#1e3a5f">${isNew?'+ Poziție nouă de subcontractare':'✎ Modifică poziția'}</b>`;
   const cl=el('button');cl.textContent='✕';
-  cl.style.cssText='margin-left:auto;border:none;background:#f1f5f9;border-radius:7px;width:30px;height:30px;cursor:pointer;font-size:14px';
+  cl.style.cssText=`margin-left:auto;border:none;background:#f1f5f9;border-radius:8px;width:${touch?38:30}px;height:${touch?38:30}px;cursor:pointer;font-size:15px`;
+
   let _dirty=false;
+  const killPop=()=>{document.getElementById('sct-sug-pop')?.remove();};
   const closeAsk=async()=>{
     const newAtts=(it.atts||[]).filter(a=>!attsAtOpen.includes(a.id));
     if((_dirty||newAtts.length)&&!confirm('Închizi formularul? Datele completate se pierd.'))return;
-    // atasamentele urcate pentru o pozitie abandonata nu rămân în bucket
     if(isNew&&newAtts.length){for(const a of newAtts){try{await sctAttDelete(it,a);}catch{}}}
-    ov.remove();document.removeEventListener('keydown',onKey);
+    killPop();ov.remove();
+    document.removeEventListener('keydown',onKey);
+    window.removeEventListener('resize',onMove,true);
+    window.removeEventListener('scroll',onMove,true);
   };
-  const onKey=e=>{if(e.key==='Escape'){e.preventDefault();closeAsk();}};
+  const onKey=e=>{
+    if(e.key!=='Escape')return;
+    e.preventDefault();
+    if(document.getElementById('sct-sug-pop')){killPop();return;}   // Esc inchide mai intai balonul
+    closeAsk();
+  };
   document.addEventListener('keydown',onKey);
   cl.addEventListener('click',closeAsk);h.appendChild(cl);md.appendChild(h);
 
-  /* corp: formular in stanga, propuneri in dreapta */
-  const cols=dv('');cols.style.cssText='flex:1;display:flex;min-height:0;overflow:hidden';
-  const bd=dv('');bd.style.cssText='flex:1;padding:14px 18px;overflow:auto;min-width:0';
+  const bd=dv('');bd.style.cssText=`flex:1;padding:${touch?'12px 16px 20px':'14px 18px'};overflow:auto;-webkit-overflow-scrolling:touch`;
   bd.addEventListener('input',()=>{_dirty=true;});
   bd.addEventListener('change',()=>{_dirty=true;});
-  const side=dv('');
-  side.style.cssText='width:320px;flex-shrink:0;border-left:1.5px solid var(--border);background:#f8fafc;display:none;flex-direction:column;overflow:hidden';
-  cols.appendChild(bd);cols.appendChild(side);md.appendChild(cols);
+  md.appendChild(bd);
 
-  const lb=t=>{const d=dv('');d.style.cssText='font-size:11px;font-weight:800;color:#475569;margin:9px 0 3px';d.textContent=t;return d;};
-  const inStyle='width:100%;height:32px;border:1.5px solid var(--border);border-radius:7px;padding:0 9px;font-size:12.5px';
+  const lb=t=>{const d=dv('');d.style.cssText=`font-size:${touch?12:11}px;font-weight:800;color:#475569;margin:${touch?'12px 0 4px':'9px 0 3px'}`;d.textContent=t;return d;};
   const subList=buildSubcoList();
 
-  /* 1. GRUPA DE SUBCONTRACTARE — primul câmp */
+  /* 1. GRUPA DE SUBCONTRACTARE */
   bd.appendChild(lb('Grupă de subcontractare'));
   const allGroups=sctGroups();
-  const grpWrap=dv('');grpWrap.style.cssText='display:flex;gap:7px;align-items:center;flex-wrap:wrap';
   const grpSel=el('input');grpSel.type='text';
   grpSel.value=it.group||subcoProcFor(it.supplier)||'';
   grpSel.placeholder=allGroups.length?'alege o grupă sau scrie una nouă':'ex: Anodizare, Zincare, Nitrocarburare';
   grpSel.setAttribute('list','sct-grp-list');
-  grpSel.style.cssText=inStyle+';font-weight:800;flex:1;min-width:180px';
+  grpSel.style.cssText=inStyle+';font-weight:800';
   const dl0=el('datalist');dl0.id='sct-grp-list';
   allGroups.forEach(g=>{const o=el('option');o.value=g;dl0.appendChild(o);});
-  grpWrap.appendChild(grpSel);grpWrap.appendChild(dl0);
-  // butoane rapide pentru grupele existente
-  if(allGroups.length){
-    allGroups.slice(0,8).forEach(g=>{
-      const b2=el('button');b2.textContent=g;
-      b2.style.cssText='padding:5px 10px;border:1.5px solid #ddd6fe;border-radius:14px;background:#f5f3ff;color:#6d28d9;font-size:11px;font-weight:800;cursor:pointer';
-      b2.addEventListener('click',()=>{grpSel.value=g;grpSel.dispatchEvent(new Event('change'));});
-      grpWrap.appendChild(b2);
-    });
-  }
-  bd.appendChild(grpWrap);
-  const grpHint=dv('');grpHint.style.cssText='font-size:10.5px;margin-top:3px';
+  bd.appendChild(grpSel);bd.appendChild(dl0);
+  const grpHint=dv('');grpHint.style.cssText=`font-size:${touch?11.5:10.5}px;margin-top:3px`;
   if(allGroups.length){
     grpHint.style.color='#64748b';
-    grpHint.textContent='Alege grupa, apoi click pe „Reper" pentru propuneri de repere care pleacă la acea grupă.';
+    grpHint.textContent='Atinge câmpul „Reper" pentru propunerile din această grupă.';
   } else {
     grpHint.style.color='#b45309';
-    grpHint.textContent='Nicio grupă definită încă — o poți scrie liber aici, sau o configurezi în Planificare Subco → Config SUBCO, în dreptul fiecărui subcontractor.';
+    grpHint.textContent='Nicio grupă definită — o poți scrie liber, sau o configurezi în Planificare Subco → Config SUBCO.';
   }
   bd.appendChild(grpHint);
 
-  /* 2. REPER */
+  /* 2. REPER — cu balon de propuneri */
   bd.appendChild(lb('Reper (cod MOVEX) *'));
+  const compRow=dv('');compRow.style.cssText='display:flex;gap:7px;align-items:center';
   const compI=el('input');compI.type='text';compI.value=it.comp||'';
-  compI.placeholder='alege din listă sau scrie manual (prototip nou)';
-  compI.style.cssText=inStyle+';font-family:ui-monospace,monospace;font-weight:700';
-  bd.appendChild(compI);
-  const nameEcho=dv('');nameEcho.style.cssText='font-size:11px;color:#64748b;margin-top:3px';
+  compI.autocomplete='off';
+  compI.placeholder='atinge pentru propuneri sau scrie manual';
+  compI.style.cssText=inStyle+';font-family:ui-monospace,monospace;font-weight:700;flex:1;min-width:0';
+  const sugB=el('button');sugB.textContent='▾';sugB.title='Propuneri de repere';
+  sugB.style.cssText=`width:${FH}px;height:${FH}px;flex-shrink:0;border:1.5px solid #93c5fd;border-radius:8px;background:#eff6ff;color:#1d4ed8;font-size:14px;font-weight:900;cursor:pointer`;
+  compRow.appendChild(compI);compRow.appendChild(sugB);
+  bd.appendChild(compRow);
+  const nameEcho=dv('');nameEcho.style.cssText=`font-size:${touch?11.5:11}px;color:#64748b;margin-top:3px`;
   bd.appendChild(nameEcho);
 
   /* 3. SUBCONTRACTOR */
   bd.appendChild(lb('Subcontractor *'));
+  const supRow=dv('');supRow.style.cssText='display:flex;gap:7px;align-items:center';
   const supI=el('input');supI.type='text';supI.value=it.supplier||'';supI.setAttribute('list','sct-sup-list');
+  supI.autocomplete='off';
   supI.placeholder='alege sau scrie un subcontractor nou';
-  supI.style.cssText=inStyle+';font-weight:700';
+  supI.style.cssText=inStyle+';font-weight:700;flex:1;min-width:0';
+  const supB=el('button');supB.textContent='▾';supB.title='Subcontractori propuși';
+  supB.style.cssText=`width:${FH}px;height:${FH}px;flex-shrink:0;border:1.5px solid #c4b5fd;border-radius:8px;background:#f5f3ff;color:#6d28d9;font-size:14px;font-weight:900;cursor:pointer`;
+  supRow.appendChild(supI);supRow.appendChild(supB);
   const dl2=el('datalist');dl2.id='sct-sup-list';
   const fillSupList=()=>{
     dl2.innerHTML='';
@@ -9007,38 +9022,221 @@ function sctOpenEdit(item){
       .forEach(s2=>{const o=el('option');o.value=s2.supplier;dl2.appendChild(o);});
   };
   fillSupList();
-  bd.appendChild(supI);bd.appendChild(dl2);
-  const daysEcho=dv('');daysEcho.style.cssText='font-size:11px;color:#64748b;margin-top:3px';
+  bd.appendChild(supRow);bd.appendChild(dl2);
+  const daysEcho=dv('');daysEcho.style.cssText=`font-size:${touch?11.5:11}px;color:#64748b;margin-top:3px`;
   bd.appendChild(daysEcho);
 
+  /* Subcontractorii cunoscuti pentru un reper (din BOW) */
+  const supsForComp=c=>{
+    if(!c)return [];
+    return [...new Set(subList.filter(x=>x.productNo===c).map(x=>x.supplier))];
+  };
+  /* Daca utilizatorul sterge sau modifica manual subcontractorul, nu i-l mai
+     rescriem — poate trimite la unul nou, inca nedefinit in BOW. */
+  let supTouched=!!(it.supplier||'').trim();
   const syncEcho=()=>{
     const c=compI.value.trim();
     const hit=subList.find(x=>x.productNo===c);
     const nm=(S.stockIdx?.get(c)?.name)||hit?.prodName||'';
-    nameEcho.textContent=nm?('Denumire: '+nm)
-      :(c?'Reper nou — nu există în BOM/BOW sau în Planning Overview':'');
+    nameEcho.textContent=nm?('Denumire: '+nm):(c?'Reper nou — nu există în BOM/BOW sau în Planning Overview':'');
     nameEcho.style.color=nm?'#64748b':(c?'#b45309':'#64748b');
-    if(hit&&!supI.value.trim())supI.value=hit.supplier;
+    const cands=supsForComp(c);
+    if(!supTouched&&!supI.value.trim()&&cands.length===1)supI.value=cands[0];
     const sup=supI.value.trim();
     if(sup){
       const d=subcoDaysFor(sup),pr=subcoProcFor(sup);
-      daysEcho.textContent=`Durată subcontractare: ${d} zile${pr?' · grupă: '+pr:''} (din Config SUBCO)`;
-    } else daysEcho.textContent='Subcontractor nou — durata implicită este '+(S.subcoCfg?.defaultDays??10)+' zile.';
+      const known=buildSubcoSuppliers().some(x=>x.supplier===sup);
+      daysEcho.textContent=(known?'':'Subcontractor nou · ')+
+        `durată ${d} zile${pr?' · grupă: '+pr:''}`+(known?' (din Config SUBCO)':' (durata implicită)');
+      daysEcho.style.color=known?'#64748b':'#b45309';
+    } else {
+      daysEcho.style.color=cands.length>1?'#1d4ed8':'#64748b';
+      daysEcho.textContent=cands.length>1
+        ?`Reperul are ${cands.length} subcontractori în structură — atinge ▾ pentru a alege, sau scrie unul nou.`
+        :'Scrie subcontractorul sau atinge ▾ pentru propuneri.';
+    }
   };
-  compI.addEventListener('input',()=>{syncEcho();drawSide();});
+
+  /* ── balonul de propuneri, ancorat la câmpul Reper ── */
+  let _justPicked=0;      // nu redeschide niciun balon imediat dupa o selectie
+  function openPop(){
+    if(Date.now()-_justPicked<500)return;
+    killPop();
+    const pop=dv('');pop.id='sct-sug-pop';
+    pop.style.cssText='position:fixed;z-index:9700;background:#fff;border:1.5px solid #93c5fd;border-radius:11px;'+
+      'box-shadow:0 16px 44px rgba(15,23,42,.25);display:flex;flex-direction:column;overflow:hidden';
+    const ph=dv('');ph.style.cssText=`padding:${touch?'9px 12px':'7px 11px'};background:#eff6ff;border-bottom:1px solid #bfdbfe;display:flex;align-items:center;gap:8px`;
+    const pt=sp('','');pt.style.cssText=`font-size:${touch?12.5:11.5}px;font-weight:900;color:#1d4ed8`;
+    const pc=el('button');pc.textContent='✕';
+    pc.style.cssText=`margin-left:auto;border:none;background:#dbeafe;color:#1d4ed8;border-radius:6px;width:${touch?30:24}px;height:${touch?30:24}px;cursor:pointer;font-size:12px;font-weight:800`;
+    pc.addEventListener('click',killPop);
+    ph.appendChild(pt);ph.appendChild(pc);pop.appendChild(ph);
+    const pl=dv('');pl.style.cssText='overflow:auto;-webkit-overflow-scrolling:touch;flex:1';
+    pop.appendChild(pl);
+    document.body.appendChild(pop);
+
+    const fill=()=>{
+      const g=grpSel.value.trim();
+      const q=compI.value.trim().toLowerCase();
+      let sug=sctSuggestions(g);
+      if(q)sug=sug.filter(x=>x.comp.toLowerCase().includes(q)||String(x.name).toLowerCase().includes(q)
+        ||String(x.supplier).toLowerCase().includes(q));
+      pt.textContent=(g?`Repere „${g}"`:'Repere cu subcontractare')+` · ${sug.length}`;
+      pl.innerHTML='';
+      if(!sug.length){
+        const e=dv('');e.style.cssText=`padding:16px 12px;font-size:${touch?12.5:11.5}px;color:#94a3b8;text-align:center`;
+        e.textContent=g?'Niciun reper în BOM/BOW pentru această grupă — scrie codul manual.'
+                       :'Nicio potrivire — scrie codul manual.';
+        pl.appendChild(e);return;
+      }
+      sug.slice(0,300).forEach(x=>{
+        const r=dv('');
+        r.style.cssText=`padding:${touch?'10px 12px':'7px 11px'};border-bottom:1px solid #eef2f7;cursor:pointer`;
+        r.innerHTML=`<div style="font-size:${touch?13.5:12}px;font-weight:800;color:#1e3a5f;font-family:ui-monospace,monospace">${x.comp}</div>
+          <div style="font-size:${touch?12:10.5}px;color:#475569;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${x.name||'—'}</div>
+          <div style="font-size:${touch?11:9.5}px;color:#7c3aed;margin-top:1px">${x.supplier}${x.group?' · '+x.group:''}${x.fps.length?' · '+x.fps.length+' PF':''}</div>`;
+        const pick=e=>{
+          e.preventDefault();e.stopPropagation();
+          compI.value=x.comp;
+          supI.value=x.supplier;supTouched=true;   // alegere deliberata din lista
+          if(!grpSel.value.trim()&&x.group){grpSel.value=x.group;fillSupList();}
+          if(x.fps.length===1)fpI.value=x.fps[0];
+          _dirty=true;syncEcho();_justPicked=Date.now();killPop();
+          setTimeout(()=>supI.focus(),30);
+        };
+        r.addEventListener('pointerdown',pick);
+        pl.appendChild(r);
+      });
+      if(sug.length>300){
+        const m=dv('');m.style.cssText='padding:8px;font-size:10.5px;color:#94a3b8;text-align:center';
+        m.textContent='… și '+(sug.length-300)+' altele — scrie câteva caractere ca să filtrezi';
+        pl.appendChild(m);
+      }
+    };
+    pop._fill=fill;
+    fill();
+    placeAt(compI);
+  }
+  let _popAnchor=null;
+  function placeAt(anchor){_popAnchor=anchor;place();}
+  function place(){
+    const pop=document.getElementById('sct-sug-pop');
+    if(!pop)return;
+    const r=(_popAnchor||compI).getBoundingClientRect();
+    const w=touch?Math.min(window.innerWidth-16,520):Math.max(r.width,300);
+    pop.style.width=w+'px';
+    pop.style.left=Math.max(8,Math.min(r.left,window.innerWidth-w-8))+'px';
+    const below=window.innerHeight-r.bottom-10;
+    const above=r.top-10;
+    const maxH=Math.min(touch?window.innerHeight*0.52:360,Math.max(below,above));
+    pop.style.maxHeight=maxH+'px';
+    if(below>=Math.min(220,maxH)||below>=above){pop.style.top=(r.bottom+6)+'px';pop.style.bottom='';}
+    else{pop.style.top='';pop.style.bottom=(window.innerHeight-r.top+6)+'px';}
+  }
+  const onMove=()=>place();
+  window.addEventListener('resize',onMove,true);
+  window.addEventListener('scroll',onMove,true);
+  /* click in afara balonului il inchide */
+  document.addEventListener('pointerdown',e=>{
+    const pop=document.getElementById('sct-sug-pop');
+    if(!pop)return;
+    if(pop.contains(e.target)||e.target===compI||e.target===sugB
+       ||e.target===supI||e.target===supB)return;
+    killPop();
+  },true);
+
+  /* ── balon pentru subcontractor ── */
+  function openSupPop(){
+    if(Date.now()-_justPicked<500)return;
+    killPop();
+    const pop=dv('');pop.id='sct-sug-pop';
+    pop.style.cssText='position:fixed;z-index:9700;background:#fff;border:1.5px solid #c4b5fd;border-radius:11px;'+
+      'box-shadow:0 16px 44px rgba(15,23,42,.25);display:flex;flex-direction:column;overflow:hidden';
+    const ph=dv('');ph.style.cssText=`padding:${touch?'9px 12px':'7px 11px'};background:#f5f3ff;border-bottom:1px solid #ddd6fe;display:flex;align-items:center;gap:8px`;
+    const pt=sp('','');pt.style.cssText=`font-size:${touch?12.5:11.5}px;font-weight:900;color:#6d28d9`;
+    const pc=el('button');pc.textContent='✕';
+    pc.style.cssText=`margin-left:auto;border:none;background:#ede9fe;color:#6d28d9;border-radius:6px;width:${touch?30:24}px;height:${touch?30:24}px;cursor:pointer;font-size:12px;font-weight:800`;
+    pc.addEventListener('click',killPop);
+    ph.appendChild(pt);ph.appendChild(pc);pop.appendChild(ph);
+    const pl=dv('');pl.style.cssText='overflow:auto;-webkit-overflow-scrolling:touch;flex:1';
+    pop.appendChild(pl);document.body.appendChild(pop);
+    const fill=()=>{
+      const c=compI.value.trim(),g=grpSel.value.trim();
+      const q=supI.value.trim().toLowerCase();
+      const own=supsForComp(c);
+      const all=buildSubcoSuppliers().filter(x=>!g||subcoProcFor(x.supplier)===g);
+      const list=[];
+      own.forEach(sn=>list.push({supplier:sn,tag:'din structura reperului',hi:true}));
+      all.forEach(x=>{if(!own.includes(x.supplier))list.push({supplier:x.supplier,tag:''});});
+      const fl=q?list.filter(x=>x.supplier.toLowerCase().includes(q)):list;
+      pt.textContent=`Subcontractori · ${fl.length}`;
+      pl.innerHTML='';
+      if(!fl.length){
+        const e=dv('');e.style.cssText=`padding:16px 12px;font-size:${touch?12.5:11.5}px;color:#94a3b8;text-align:center`;
+        e.textContent='Nicio potrivire — scrie numele subcontractorului nou.';
+        pl.appendChild(e);return;
+      }
+      fl.slice(0,300).forEach(x=>{
+        const r=dv('');
+        r.style.cssText=`padding:${touch?'10px 12px':'7px 11px'};border-bottom:1px solid #eef2f7;cursor:pointer`+
+          (x.hi?';background:#f5f3ff':'');
+        const pr=subcoProcFor(x.supplier);
+        r.innerHTML=`<div style="font-size:${touch?13.5:12}px;font-weight:800;color:#1e3a5f">${x.supplier}</div>
+          <div style="font-size:${touch?11:9.5}px;color:#6d28d9;margin-top:1px">${subcoDaysFor(x.supplier)} zile${pr?' · '+pr:''}${x.tag?' · '+x.tag:''}</div>`;
+        r.addEventListener('pointerdown',e=>{
+          e.preventDefault();e.stopPropagation();
+          supI.value=x.supplier;supTouched=true;
+          if(!grpSel.value.trim()){const g2=subcoProcFor(x.supplier);if(g2){grpSel.value=g2;fillSupList();}}
+          _dirty=true;_justPicked=Date.now();syncEcho();killPop();
+        });
+        pl.appendChild(r);
+      });
+    };
+    pop._fill=fill;fill();placeAt(supI);
+  }
+  supB.addEventListener('click',()=>{
+    if(document.getElementById('sct-sug-pop'))killPop();else openSupPop();
+  });
+  supI.addEventListener('focus',()=>{
+    // precompletare din structura; daca sunt mai multe, deschidem balonul
+    const cands=supsForComp(compI.value.trim());
+    if(!supI.value.trim()&&cands.length>1)openSupPop();
+  });
+
+  compI.addEventListener('focus',openPop);
+  compI.addEventListener('click',()=>{if(!document.getElementById('sct-sug-pop'))openPop();});
+  sugB.addEventListener('click',()=>{
+    if(document.getElementById('sct-sug-pop'))killPop();
+    else{openPop();compI.focus();}
+  });
+  compI.addEventListener('input',()=>{
+    syncEcho();
+    const pop=document.getElementById('sct-sug-pop');
+    if(pop&&pop._fill)pop._fill();else openPop();
+  });
   compI.addEventListener('change',syncEcho);
-  supI.addEventListener('input',syncEcho);supI.addEventListener('change',syncEcho);
-  compI.addEventListener('focus',()=>{side.style.display='flex';drawSide();});
+  supI.addEventListener('input',()=>{
+    supTouched=true;                 // inclusiv cand il golesti: nu-l mai rescriem
+    syncEcho();
+    const pop=document.getElementById('sct-sug-pop');
+    if(pop&&pop._fill&&pop.style.borderColor!=='')pop._fill();
+  });
+  supI.addEventListener('change',syncEcho);
   const onGrp=()=>{
-    it.group=grpSel.value.trim();_dirty=true;
-    fillSupList();side.style.display='flex';drawSide();syncEcho();
+    it.group=grpSel.value.trim();_dirty=true;fillSupList();syncEcho();
+    const pop=document.getElementById('sct-sug-pop');
+    if(pop&&pop._fill)pop._fill();
   };
   grpSel.addEventListener('change',onGrp);
   grpSel.addEventListener('input',onGrp);
 
   /* 4. cantitati si date */
-  const row=(a,b2)=>{const d=dv('');d.style.cssText='display:flex;gap:10px';
-    [a,b2].forEach(x=>{x.style.flex='1';x.style.minWidth='0';d.appendChild(x);});return d;};
+  const row=(a,b2)=>{
+    const d=dv('');
+    d.style.cssText=touch?'display:block':'display:flex;gap:10px';
+    [a,b2].forEach(x=>{if(!touch){x.style.flex='1';x.style.minWidth='0';}d.appendChild(x);});
+    return d;
+  };
   const fld=(label,node)=>{const d=dv('');d.appendChild(lb(label));d.appendChild(node);return d;};
   const qStyle=inStyle+';text-align:right;font-family:monospace;font-weight:800';
   const qP=el('input');qP.type='text';qP.inputMode='decimal';qP.value=it.qtyPlanned||'';qP.style.cssText=qStyle;
@@ -9051,28 +9249,29 @@ function sctOpenEdit(item){
   const dR=el('input');dR.type='date';dR.value=it.dateRecv||'';dR.style.cssText=inStyle;
   bd.appendChild(row(fld('Cantitate recepționată',qR),fld('Recepționat la',dR)));
   const dRE=el('input');dRE.type='date';dRE.value=it.dateRecvEst||'';dRE.style.cssText=inStyle;
-  bd.appendChild(lb('Recepție estimată (gol = calculată automat din zilele subcontractorului)'));
+  bd.appendChild(lb('Recepție estimată (gol = calculată automat)'));
   bd.appendChild(dRE);
   bd.appendChild(lb('Produs final (opțional)'));
   const fpI=el('input');fpI.type='text';fpI.value=it.fp||'';fpI.style.cssText=inStyle+';font-family:ui-monospace,monospace';
   bd.appendChild(fpI);
   bd.appendChild(lb('Observații'));
   const noI=el('textarea');noI.value=it.notes||'';
-  noI.style.cssText='width:100%;min-height:52px;border:1.5px solid var(--border);border-radius:7px;padding:7px 9px;font-size:12.5px;font-family:inherit;resize:vertical';
+  noI.style.cssText=`width:100%;min-height:${touch?64:52}px;border:1.5px solid var(--border);border-radius:8px;padding:8px 10px;font-size:${FS}px;font-family:inherit;resize:vertical`;
   bd.appendChild(noI);
 
-  /* 5. ATASAMENTE — direct in formular */
+  /* 5. ATASAMENTE */
   const attSec=dv('');
-  attSec.style.cssText='margin-top:14px;border:1.5px solid var(--border);border-radius:9px;padding:10px 12px;background:#f8fafc';
-  const ah=dv('');ah.style.cssText='font-size:11.5px;font-weight:900;color:#1e3a5f;margin-bottom:7px';
+  attSec.style.cssText='margin-top:14px;border:1.5px solid var(--border);border-radius:10px;padding:11px 12px;background:#f8fafc';
+  const ah=dv('');ah.style.cssText=`font-size:${touch?12.5:11.5}px;font-weight:900;color:#1e3a5f;margin-bottom:8px`;
   ah.textContent='📎 Desen de execuție, fișiere și poze';
   attSec.appendChild(ah);
   const abar=dv('');abar.style.cssText='display:flex;gap:8px;flex-wrap:wrap';
-  const amsg=dv('');amsg.style.cssText='font-size:11px;font-weight:700;margin-top:6px;min-height:14px';
+  const amsg=dv('');amsg.style.cssText=`font-size:${touch?12:11}px;font-weight:700;margin-top:7px;min-height:14px`;
   const agrid=dv('');agrid.style.cssText='display:flex;gap:8px;flex-wrap:wrap;margin-top:8px';
+  const btnCss=`padding:${touch?'11px 15px':'7px 12px'};border-radius:8px;font-size:${touch?13.5:12}px;font-weight:800;cursor:pointer`;
   const mkUp=(label,accept,capture,col)=>{
     const l=el('label');l.textContent=label;
-    l.style.cssText=`padding:7px 12px;border-radius:7px;background:${col};color:#fff;font-size:12px;font-weight:800;cursor:pointer`;
+    l.style.cssText=btnCss+`;background:${col};color:#fff`;
     const i=el('input');i.type='file';i.accept=accept;i.style.display='none';i.multiple=!capture;
     if(capture)i.setAttribute('capture','environment');
     l.appendChild(i);
@@ -9081,9 +9280,7 @@ function sctOpenEdit(item){
       if(!S.sbCfg){amsg.style.color='#dc2626';amsg.textContent='Fără conexiune Supabase — atașamentele nu pot fi salvate.';return;}
       amsg.style.color='#475569';amsg.textContent='Se încarcă…';
       let bad='';
-      for(const f of files){
-        try{await sctAttUpload(it,f);}catch(err){bad=(err.message||String(err));}
-      }
+      for(const f of files){try{await sctAttUpload(it,f);}catch(err){bad=(err.message||String(err));}}
       i.value='';
       if(bad){amsg.style.color='#dc2626';amsg.textContent='Eroare: '+bad;}
       else{amsg.style.color='#15803d';amsg.textContent='✓ Încărcat';}
@@ -9093,8 +9290,8 @@ function sctOpenEdit(item){
   };
   abar.appendChild(mkUp('📷 Fă o poză','image/*',true,'#7c3aed'));
   abar.appendChild(mkUp('+ Atașează fișier','image/*,application/pdf',false,'#1d4ed8'));
-  const dwgB=el('button');dwgB.textContent='📐 Vezi desenul de execuție';
-  dwgB.style.cssText='padding:7px 12px;border:1.5px solid #0891b2;border-radius:7px;background:#fff;color:#0e7490;font-size:12px;font-weight:800;cursor:pointer';
+  const dwgB=el('button');dwgB.textContent='📐 Desen';
+  dwgB.style.cssText=btnCss+';border:1.5px solid #0891b2;background:#fff;color:#0e7490';
   dwgB.addEventListener('click',()=>{
     const c=compI.value.trim();
     if(!c){amsg.style.color='#b45309';amsg.textContent='Completează mai întâi codul reperului.';return;}
@@ -9108,11 +9305,12 @@ function sctOpenEdit(item){
     const atts=it.atts||[];
     if(!atts.length){
       const e=sp('','Niciun atașament încă.');
-      e.style.cssText='font-size:11px;color:#94a3b8';agrid.appendChild(e);return;
+      e.style.cssText=`font-size:${touch?12:11}px;color:#94a3b8`;agrid.appendChild(e);return;
     }
+    const cw=touch?108:96;
     atts.slice().sort((a,b2)=>(b2.ts||0)-(a.ts||0)).forEach(a=>{
-      const card=dv('');card.style.cssText='width:96px;border:1.5px solid var(--border);border-radius:8px;overflow:hidden;background:#fff';
-      const ph=dv('');ph.style.cssText='height:66px;display:flex;align-items:center;justify-content:center;background:#eef2f7;cursor:pointer;font-size:10px;color:#94a3b8';
+      const card=dv('');card.style.cssText=`width:${cw}px;border:1.5px solid var(--border);border-radius:9px;overflow:hidden;background:#fff`;
+      const ph=dv('');ph.style.cssText=`height:${touch?76:66}px;display:flex;align-items:center;justify-content:center;background:#eef2f7;cursor:pointer;font-size:10px;color:#94a3b8`;
       ph.textContent='…';
       const isImg=/^image\//.test(a.type||'')||/\.(png|jpe?g|webp|gif)$/i.test(a.name||'');
       sctAttUrl(a).then(url=>{
@@ -9123,11 +9321,11 @@ function sctOpenEdit(item){
         ph.addEventListener('click',()=>window.open(url,'_blank'));
       });
       card.appendChild(ph);
-      const nm=dv('');nm.style.cssText='font-size:9px;padding:3px 4px;color:#334155;overflow:hidden;text-overflow:ellipsis;white-space:nowrap';
+      const nm=dv('');nm.style.cssText='font-size:9.5px;padding:3px 4px;color:#334155;overflow:hidden;text-overflow:ellipsis;white-space:nowrap';
       nm.textContent=a.name||'atașament';nm.title=a.name||'';
       card.appendChild(nm);
       const del=el('button');del.textContent='🗑';
-      del.style.cssText='width:100%;padding:2px;border:none;border-top:1px solid var(--border);background:#fff;color:#b91c1c;font-size:10px;cursor:pointer';
+      del.style.cssText=`width:100%;padding:${touch?5:2}px;border:none;border-top:1px solid var(--border);background:#fff;color:#b91c1c;font-size:11px;cursor:pointer`;
       del.addEventListener('click',async()=>{
         if(!confirm('Ștergi atașamentul?'))return;
         await sctAttDelete(it,a);drawAtts();
@@ -9137,68 +9335,20 @@ function sctOpenEdit(item){
   }
   drawAtts();
   bd.appendChild(attSec);
-  const err=dv('');err.style.cssText='font-size:11.5px;font-weight:700;color:#dc2626;margin-top:8px;min-height:15px';
+  const err=dv('');err.style.cssText=`font-size:${touch?12.5:11.5}px;font-weight:700;color:#dc2626;margin-top:8px;min-height:15px`;
   bd.appendChild(err);
   syncEcho();
 
-  /* panoul lateral de propuneri */
-  const sh=dv('');sh.style.cssText='padding:10px 12px;border-bottom:1.5px solid var(--border);background:#fff';
-  const shT=dv('');shT.style.cssText='font-size:11.5px;font-weight:900;color:#1e3a5f';
-  sh.appendChild(shT);
-  const sQ=el('input');sQ.type='text';sQ.placeholder='filtrează propunerile…';
-  sQ.style.cssText='width:100%;height:27px;border:1.5px solid var(--border);border-radius:6px;padding:0 8px;font-size:11.5px;margin-top:6px';
-  sh.appendChild(sQ);
-  side.appendChild(sh);
-  const sList=dv('');sList.style.cssText='flex:1;overflow:auto;padding:6px';
-  side.appendChild(sList);
-  sQ.addEventListener('input',()=>drawSide());
-  function drawSide(){
-    const g=grpSel.value.trim();
-    let sug=sctSuggestions(g);
-    const q=(sQ.value||'').trim().toLowerCase();
-    if(q)sug=sug.filter(x=>x.comp.toLowerCase().includes(q)||String(x.name).toLowerCase().includes(q)
-      ||String(x.supplier).toLowerCase().includes(q));
-    shT.textContent=g?`Repere pentru „${g}" (${sug.length})`:`Toate reperele cu subcontractare (${sug.length})`;
-    sList.innerHTML='';
-    if(!sug.length){
-      const e=dv('');e.style.cssText='padding:16px 8px;font-size:11px;color:#94a3b8;text-align:center';
-      e.textContent=g?'Niciun reper definit în BOM/BOW pentru această grupă. Scrie codul manual.'
-                     :'Nicio operație de subcontractare în BOW.';
-      sList.appendChild(e);return;
-    }
-    sug.slice(0,400).forEach(x=>{
-      const r=dv('');
-      r.style.cssText='padding:6px 8px;border-bottom:1px solid #eef2f7;cursor:pointer;border-radius:6px';
-      const sel=compI.value.trim()===x.comp;
-      if(sel)r.style.background='#eff6ff';
-      r.innerHTML=`<div style="font-size:11.5px;font-weight:800;color:#1e3a5f;font-family:ui-monospace,monospace">${x.comp}</div>
-        <div style="font-size:10.5px;color:#475569;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${x.name||'—'}</div>
-        <div style="font-size:9.5px;color:#7c3aed;margin-top:1px">${x.supplier}${x.group?' · '+x.group:''}${x.fps.length?' · '+x.fps.length+' PF':''}</div>`;
-      r.addEventListener('mouseenter',()=>{if(!sel)r.style.background='#f1f5f9';});
-      r.addEventListener('mouseleave',()=>{r.style.background=sel?'#eff6ff':'';});
-      r.addEventListener('click',()=>{
-        compI.value=x.comp;supI.value=x.supplier;
-        if(x.fps.length===1)fpI.value=x.fps[0];
-        _dirty=true;syncEcho();drawSide();
-      });
-      sList.appendChild(r);
-    });
-    if(sug.length>400){
-      const m=dv('');m.style.cssText='padding:8px;font-size:10.5px;color:#94a3b8;text-align:center';
-      m.textContent='… și '+(sug.length-400)+' altele — folosește filtrul';
-      sList.appendChild(m);
-    }
-  }
-  if(grpSel.value.trim()){side.style.display='flex';drawSide();}
-
-  /* footer */
-  const ft=dv('');ft.style.cssText='padding:11px 18px;border-top:1px solid var(--border);display:flex;gap:9px;justify-content:flex-end';
+  /* footer lipit jos */
+  const ft=dv('');
+  ft.style.cssText=`padding:${touch?'11px 16px':'11px 18px'};border-top:1px solid var(--border);display:flex;gap:9px;justify-content:flex-end;flex-shrink:0;background:#fff`;
   const cancel=el('button');cancel.textContent='Renunță';
-  cancel.style.cssText='padding:9px 16px;border:1.5px solid var(--border);border-radius:7px;background:#fff;color:#475569;font-weight:800;font-size:12.5px;cursor:pointer';
+  cancel.style.cssText=`padding:${touch?'13px 18px':'9px 16px'};border:1.5px solid var(--border);border-radius:8px;background:#fff;color:#475569;font-weight:800;font-size:${touch?14:12.5}px;cursor:pointer`;
   cancel.addEventListener('click',closeAsk);
   const sv=el('button');sv.textContent=isNew?'Adaugă în registru':'Salvează';
-  sv.style.cssText='padding:9px 18px;border:none;border-radius:7px;background:#1d4ed8;color:#fff;font-weight:800;font-size:12.5px;cursor:pointer';
+  sv.style.cssText=`padding:${touch?'13px 22px':'9px 18px'};border:none;border-radius:8px;background:#1d4ed8;color:#fff;font-weight:800;font-size:${touch?14:12.5}px;cursor:pointer;${touch?'flex:1':''}`;
   sv.addEventListener('click',async()=>{
+    killPop();
     const comp=compI.value.trim(), sup=supI.value.trim();
     if(!comp){err.textContent='Completează codul reperului.';compI.focus();return;}
     if(!sup){err.textContent='Completează subcontractorul.';supI.focus();return;}
@@ -9211,7 +9361,10 @@ function sctOpenEdit(item){
     it.updTs=Date.now();it.updBy=String(S.session?.username||'');
     if(isNew){S.sctItems=sctItems();S.sctItems.unshift(it);}
     _dirty=false;
-    await sctSave();ov.remove();document.removeEventListener('keydown',onKey);render();
+    await sctSave();
+    ov.remove();document.removeEventListener('keydown',onKey);
+    window.removeEventListener('resize',onMove,true);window.removeEventListener('scroll',onMove,true);
+    render();
     showToast(isNew?'✓ Poziție adăugată':'✓ Poziție salvată');
   });
   ft.appendChild(cancel);ft.appendChild(sv);md.appendChild(ft);
@@ -9222,7 +9375,7 @@ function sctOpenEdit(item){
     setTimeout(()=>{md.style.boxShadow='';},260);
   });
   document.body.appendChild(ov);
-  setTimeout(()=>compI.focus(),60);
+  if(!touch)setTimeout(()=>compI.focus(),60);   // pe mobil nu deschidem tastatura din start
 }
 
 /* ── Atasamente: fisiere si poze facute pe telefon / tableta ── */
