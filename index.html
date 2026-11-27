@@ -9161,6 +9161,68 @@ function sctSuggestions(group){
 }
 
 /* ═══════════════════════════════════════════════════════════════
+   COD DE BARE Code 128 (set B) — generat local, fara biblioteci,
+   ca etichetele sa se poata printa si fara internet.
+═══════════════════════════════════════════════════════════════ */
+const C128_PAT=['212222','222122','222221','121223','121322','131222','122213','122312','132212','221213',
+'221312','231212','112232','122132','122231','113222','123122','123221','223211','221132',
+'221231','213212','223112','312131','311222','321122','321221','312212','322112','322211',
+'212123','212321','232121','111323','131123','131321','112313','132113','132311','211313',
+'231113','231311','112133','112331','132131','113123','113321','133121','313121','211331',
+'231131','213113','213311','213131','311123','311321','331121','312113','312311','332111',
+'314111','221411','431111','111224','111422','121124','121421','141122','141221','112214',
+'112412','122114','122411','142112','142211','241211','221114','413111','241112','134111',
+'111242','121142','121241','114212','124112','124211','411212','421112','421211','212141',
+'214121','412121','111143','111341','131141','114113','114311','411113','411311','113141',
+'114131','311141','411131','211412','211214','211232','2331112'];
+/* Intoarce {modules:[lungimi], total} pentru Code 128B */
+function code128B(text){
+  const s=String(text==null?'':text).replace(/[^\x20-\x7E]/g,'');
+  if(!s)return null;
+  const vals=[];
+  for(const ch of s){
+    const v=ch.charCodeAt(0)-32;
+    if(v<0||v>94)continue;
+    vals.push(v);
+  }
+  if(!vals.length)return null;
+  const START_B=104, STOP=106;
+  let sum=START_B;
+  vals.forEach((v,i)=>{sum+=v*(i+1);});
+  const check=sum%103;
+  const seq=[START_B,...vals,check,STOP];
+  const widths=[];
+  seq.forEach(v=>{for(const d of C128_PAT[v])widths.push(parseInt(d,10));});
+  return {widths,text:s,total:widths.reduce((a,b)=>a+b,0)};
+}
+/* SVG cu bare; quiet zone de 10 module pe fiecare parte */
+function barcodeSvg(text,opts){
+  const o=opts||{};
+  const bc=code128B(text);
+  if(!bc)return '';
+  const quiet=10;
+  const totalMod=bc.total+quiet*2;
+  const H=o.heightMm||18;              // inaltimea barelor, mm
+  const mm=o.moduleMm||0.4;            // latimea unui modul, mm
+  const maxW=o.maxMm||0;               // limita de latime
+  let modW=mm;
+  if(maxW&&totalMod*modW>maxW)modW=maxW/totalMod;
+  const W=totalMod*modW;
+  let x=quiet, bars='';
+  bc.widths.forEach((w,i)=>{
+    if(i%2===0)bars+=`<rect x="${x}" y="0" width="${w}" height="100" fill="#000"/>`;
+    x+=w;
+  });
+  const txt=o.showText===false?'':
+    `<text x="${totalMod/2}" y="118" text-anchor="middle" font-family="ui-monospace,Menlo,monospace" `+
+    `font-size="13" letter-spacing="1.2" fill="#000">${String(bc.text).replace(/[&<>]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]))}</text>`;
+  const vbH=o.showText===false?100:124;
+  return `<svg class="bc" viewBox="0 0 ${totalMod} ${vbH}" width="${W.toFixed(2)}mm" `+
+    `height="${(H*(vbH/100)).toFixed(2)}mm" preserveAspectRatio="none" xmlns="http://www.w3.org/2000/svg" shape-rendering="crispEdges">`+
+    bars+txt+'</svg>';
+}
+
+/* ═══════════════════════════════════════════════════════════════
    ETICHETE — coada de printare, A4 portrait, 2 etichete pe pagina
    Eticheta: codul reperului (principal, bold), denumirea si
    cantitatea trimisa. Coada e locala (per utilizator).
@@ -9332,10 +9394,13 @@ function printLabels(list){
     const pair=q.slice(i,i+2);
     pages+='<div class="page">'+pair.map(x=>
       `<div class="lbl">
-        ${lg?`<img class="lg" src="${lg}" alt="">`:'<div class="lg-sp"></div>'}
+        <div class="main">
+        ${lg?`<img class="lg" src="${lg}" alt="">`:''}
         <div class="code">${esc(x.comp)}</div>
         <div class="name">${esc(x.name)||'&nbsp;'}</div>
+        <div class="bcwrap">${barcodeSvg(x.comp,{heightMm:19,moduleMm:0.45,maxMm:170})}</div>
         <div class="qbox"><span>Cantitate trimisă</span><b>${fmtN(x.qty)}</b><i>buc</i></div>
+        </div>
         <div class="foot">
           <div>${esc(x.supplier)||''}</div>
           <div>${x.shipNo?'Shipping list '+esc(x.shipNo)+' · ':''}${new Date(x.ts||Date.now()).toLocaleDateString('ro-RO')}</div>
@@ -9349,17 +9414,20 @@ function printLabels(list){
     'body{font-family:system-ui,-apple-system,Segoe UI,sans-serif;color:#0f172a;margin:0}'+
     '.page{height:281mm;display:flex;flex-direction:column;gap:5mm;page-break-after:always}'+
     '.page:last-child{page-break-after:auto}'+
-    '.lbl{flex:1;border:2px solid #0f172a;border-radius:3mm;padding:7mm 8mm;display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center;overflow:hidden}'+
+    '.lbl{flex:1;border:2px solid #0f172a;border-radius:3mm;padding:6mm 8mm;display:flex;flex-direction:column;text-align:center;overflow:hidden}'+
+    '.main{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;width:100%}'+
     '.lbl.empty{border:1px dashed #cbd5e1}'+
-    '.lg{max-height:14mm;max-width:60mm;object-fit:contain;margin-bottom:4mm}'+
+    '.lg{max-height:15mm;max-width:66mm;object-fit:contain;margin-bottom:5mm}'+
     '.lg-sp{height:2mm}'+
-    '.code{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:42pt;font-weight:900;line-height:1.05;letter-spacing:-.5pt;word-break:break-all}'+
+    '.code{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:40pt;font-weight:900;line-height:1.05;letter-spacing:-.5pt;word-break:break-all}'+
     '.name{font-size:15pt;font-weight:600;color:#334155;margin-top:3mm;line-height:1.25}'+
-    '.qbox{margin-top:6mm;border:2px solid #0f172a;border-radius:2mm;padding:3mm 9mm;display:flex;align-items:baseline;gap:3mm}'+
+    '.bcwrap{margin-top:5mm;text-align:center}'+
+    '.bc{display:block;margin:0 auto}'+
+    '.qbox{margin-top:5mm;border:2px solid #0f172a;border-radius:2mm;padding:3mm 9mm;display:flex;align-items:baseline;gap:3mm}'+
     '.qbox span{font-size:8.5pt;text-transform:uppercase;letter-spacing:.5pt;color:#475569;font-weight:700}'+
     '.qbox b{font-size:30pt;font-weight:900;line-height:1}'+
     '.qbox i{font-size:11pt;font-style:normal;color:#475569;font-weight:700}'+
-    '.foot{margin-top:auto;width:100%;display:flex;justify-content:space-between;font-size:9pt;color:#475569;font-weight:700;padding-top:4mm}'+
+    '.foot{width:100%;border-top:1px solid #cbd5e1;display:flex;justify-content:space-between;font-size:9pt;color:#475569;font-weight:700;padding-top:4mm}'+
     '</style></head><body>'+pages+'</body></html>';
   const w=window.open('','_blank');
   if(!w){showToast('Permiteți ferestrele pop-up pentru a printa etichetele','err',3500);return;}
