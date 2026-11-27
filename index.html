@@ -8850,6 +8850,7 @@ function renderSubcoTrack(){
   if(!S._sctLoaded){
     S._sctLoaded=true;
     sctLoadRemote().then(()=>{if(S.tab==='subcotrack')render();});
+    shpLoadRemote().then(()=>{if(S.tab==='subcotrack')render();});
   }
   // Grupele si zilele vin din Config SUBCO; pana acum se incarcau doar la
   // deschiderea paginii "Planificare Subco", deci selectorul era gol.
@@ -8916,6 +8917,16 @@ function renderSubcoTrack(){
   hd.appendChild(hdc);hd.appendChild(document.createTextNode('Ascunde finalizate'));
   tb.appendChild(hd);
 
+  const shpB=el('button');shpB.textContent='🚚 Creează shipping list';
+  shpB.style.cssText='padding:7px 14px;border:none;border-radius:7px;background:#15803d;color:#fff;font-size:12.5px;font-weight:800;cursor:pointer';
+  shpB.addEventListener('click',()=>openShippingList(null));
+  tb.appendChild(shpB);
+  const shpA=el('button');
+  const nOpen=(shpLists()||[]).filter(l=>!l.closed).length;
+  shpA.textContent='📄 Shipping lists'+(nOpen?` (${nOpen} în lucru)`:'');
+  shpA.style.cssText='padding:7px 12px;border:1.5px solid #16a34a;border-radius:7px;background:#fff;color:#15803d;font-size:12px;font-weight:800;cursor:pointer';
+  shpA.addEventListener('click',()=>openShippingArchive());
+  tb.appendChild(shpA);
   const rfB=el('button');rfB.textContent='⟲ Reîncarcă';
   rfB.style.cssText='padding:6px 12px;border:1.5px solid var(--border);border-radius:7px;background:#fff;font-size:12px;font-weight:800;color:#334155;cursor:pointer';
   rfB.addEventListener('click',async()=>{await sctLoadRemote();rebuild();showToast('✓ Registru reîncărcat');});
@@ -9130,6 +9141,546 @@ function sctSuggestions(group){
   });
   return [...m.values()].map(x=>({...x,fps:[...x.fps]}))
     .sort((a,b)=>a.comp.localeCompare(b.comp));
+}
+
+/* ═══════════════════════════════════════════════════════════════
+   SHIPPING LIST — incarcarea reperelor la subcontractori
+   Fereastra de incarcare: datele camionului sus, in stanga
+   subcontractarile planificate si netrimise (dreptunghiuri), in
+   dreapta ce s-a incarcat efectiv. Mutarea unei componente cere
+   cantitatea, care se scrie si in registrul mare (Cantitate trimisa).
+═══════════════════════════════════════════════════════════════ */
+const SHP_FILE='data-subco-ship.json';
+const SHP_LOCAL='pps_subco_ship';
+
+function shpLists(){
+  if(!Array.isArray(S.shpLists)){
+    try{const d=JSON.parse(localStorage.getItem(SHP_LOCAL)||'null');S.shpLists=Array.isArray(d?.lists)?d.lists:[];}
+    catch{S.shpLists=[];}
+  }
+  return S.shpLists;
+}
+function shpSaveLocal(){try{localStorage.setItem(SHP_LOCAL,JSON.stringify({lists:S.shpLists||[]}));}catch{}}
+async function shpSave(){
+  shpSaveLocal();
+  if(!S.sbCfg)return;
+  clearTimeout(S._shpSaveT);
+  S._shpSaveT=setTimeout(async()=>{
+    try{await sbUpload(S.sbCfg,SHP_FILE,{lists:S.shpLists||[],ts:Date.now()});}
+    catch(e){showToast('⚠ Salvare shipping list eșuată: '+(e.message||e),'err',5000);}
+  },500);
+}
+async function shpLoadRemote(){
+  if(!S.sbCfg)return;
+  try{
+    const d=await sbDownload(S.sbCfg,SHP_FILE,25000);
+    if(d&&Array.isArray(d.lists)){S.shpLists=d.lists;shpSaveLocal();}
+  }catch(e){/* nu exista inca */}
+}
+function shpNextNo(){
+  const y=new Date().getFullYear();
+  const n=(shpLists()||[]).filter(l=>String(l.no||'').endsWith('/'+y)).length+1;
+  return String(n).padStart(3,'0')+'/'+y;
+}
+/* Pozitiile planificate dar netrimise complet */
+function shpOpenPositions(){
+  return (sctItems()||[])
+    .map(it=>{
+      const pl=sctNum(it.qtyPlanned),se=sctNum(it.qtySent);
+      return {it,rest:Math.max(0,Math.round((pl-se)*1000)/1000),planned:pl,sent:se};
+    })
+    .filter(x=>x.rest>0)
+    .sort((a,b)=>String(a.it.supplier||'').localeCompare(String(b.it.supplier||''),'ro')
+      ||String(a.it.dateSentEst||'9999').localeCompare(String(b.it.dateSentEst||'9999'))
+      ||String(a.it.comp||'').localeCompare(String(b.it.comp||'')));
+}
+
+/* ── Fereastra de incarcare ── */
+function openShippingList(existing){
+  document.getElementById('shp-ov')?.remove();
+  const touch=(window.matchMedia&&window.matchMedia('(pointer:coarse)').matches)||window.innerWidth<900;
+  const isNew=!existing;
+  const L=existing||{
+    id:'s'+Date.now().toString(36)+Math.random().toString(36).slice(2,6),
+    no:shpNextNo(),date:_isoToday(),
+    truck:{plate:'',trailer:'',carrier:'',driver:'',phone:'',notes:''},
+    lines:[],createdBy:String(S.session?.username||''),ts:Date.now()
+  };
+  if(!L.truck)L.truck={};
+  if(!Array.isArray(L.lines))L.lines=[];
+  const closed=!!L.closed;
+
+  const ov=dv('');ov.id='shp-ov';
+  ov.style.cssText='position:fixed;inset:0;background:rgba(15,23,42,.55);z-index:9680;display:flex;'+
+    (touch?'padding:0':'padding:12px')+';align-items:stretch;justify-content:center';
+  const md=dv('');
+  md.style.cssText='background:#f8fafc;'+(touch?'width:100%;':'width:min(1280px,99vw);border-radius:12px;')+
+    'display:flex;flex-direction:column;overflow:hidden;max-height:100%';
+
+  /* ── cap de fereastra ── */
+  const h=dv('');h.style.cssText='padding:12px 16px;background:#1e3a5f;color:#fff;display:flex;align-items:center;gap:12px;flex-wrap:wrap;flex-shrink:0';
+  const ttl=dv('');ttl.style.cssText='font-size:15.5px;font-weight:900';
+  ttl.textContent=`🚚 Shipping list ${L.no}`+(closed?' · ÎNCHISĂ':'');
+  h.appendChild(ttl);
+  const dirtyTag=sp('','');dirtyTag.style.cssText='font-size:11px;font-weight:800;color:#fcd34d';
+  h.appendChild(dirtyTag);
+  const cl=el('button');cl.textContent='✕ Închide';
+  cl.style.cssText='margin-left:auto;border:1.5px solid rgba(255,255,255,.35);background:rgba(255,255,255,.12);color:#fff;border-radius:8px;padding:7px 13px;cursor:pointer;font-size:12.5px;font-weight:800';
+  h.appendChild(cl);md.appendChild(h);
+
+  /* ── datele camionului + subcontractorii ── */
+  const top=dv('');top.style.cssText='padding:11px 16px;background:#fff;border-bottom:2px solid var(--border);flex-shrink:0';
+  const grid=dv('');
+  grid.style.cssText=`display:grid;grid-template-columns:repeat(auto-fit,minmax(${touch?'140px':'170px'},1fr));gap:9px`;
+  const fld=(label,key,ph,wide)=>{
+    const w=dv('');if(wide)w.style.gridColumn='1 / -1';
+    const lb=dv('');lb.style.cssText='font-size:10px;font-weight:800;color:#64748b;text-transform:uppercase;margin-bottom:3px';
+    lb.textContent=label;w.appendChild(lb);
+    const i=el('input');i.type=key==='date'?'date':'text';
+    i.value=(key==='date'?(L.date||''):(L.truck[key]||''));
+    i.placeholder=ph||'';i.disabled=closed;
+    i.style.cssText=`width:100%;height:${touch?38:31}px;border:1.5px solid var(--border);border-radius:7px;padding:0 9px;font-size:${touch?14:12.5}px;font-weight:700`+
+      (closed?';background:#f1f5f9;color:#64748b':'');
+    i.addEventListener('input',()=>{
+      if(key==='date')L.date=i.value;else L.truck[key]=i.value;
+      markDirty();
+    });
+    w.appendChild(i);return w;
+  };
+  grid.appendChild(fld('Data încărcării','date'));
+  grid.appendChild(fld('Nr. camion','plate','ex: B 123 ABC'));
+  grid.appendChild(fld('Nr. remorcă','trailer','opțional'));
+  grid.appendChild(fld('Transportator','carrier','firma de transport'));
+  grid.appendChild(fld('Șofer','driver','nume șofer'));
+  grid.appendChild(fld('Telefon','phone',''));
+  grid.appendChild(fld('Observații','notes','',true));
+  top.appendChild(grid);
+  const supBar=dv('');supBar.style.cssText='margin-top:9px;display:flex;gap:7px;align-items:center;flex-wrap:wrap;min-height:24px';
+  top.appendChild(supBar);
+  md.appendChild(top);
+
+  /* ── doua coloane ── */
+  const cols=dv('');
+  cols.style.cssText='flex:1;display:flex;'+(touch?'flex-direction:column;':'')+'gap:10px;padding:11px 16px 14px;overflow:hidden;min-height:0';
+  const mkPane=(title,hint,bg,bd)=>{
+    const pane=dv('');
+    pane.style.cssText=`flex:1;min-width:0;min-height:${touch?'220px':'0'};display:flex;flex-direction:column;background:#fff;border:2px solid ${bd};border-radius:11px;overflow:hidden`;
+    const ph=dv('');ph.style.cssText=`padding:8px 12px;background:${bg};border-bottom:1.5px solid ${bd};flex-shrink:0`;
+    const t=dv('');t.style.cssText='font-size:12.5px;font-weight:900;color:#1e3a5f';t.textContent=title;
+    const s2=dv('');s2.style.cssText='font-size:10.5px;color:#64748b;margin-top:1px';s2.textContent=hint;
+    ph.appendChild(t);ph.appendChild(s2);pane.appendChild(ph);
+    const body=dv('');body.style.cssText='flex:1;overflow:auto;padding:9px;min-height:0';
+    pane.appendChild(body);
+    return {pane,body,head:t};
+  };
+  const left=mkPane('Planificate · netrimise','Trage o componentă în dreapta pentru a o încărca','#eff6ff','#bfdbfe');
+  const right=mkPane('Încărcat în camion','Reperul, denumirea și cantitatea încărcată','#f0fdf4','#86efac');
+  cols.appendChild(left.pane);cols.appendChild(right.pane);
+  md.appendChild(cols);
+
+  /* ── bara de jos ── */
+  const ft=dv('');ft.style.cssText='padding:10px 16px;background:#fff;border-top:2px solid var(--border);display:flex;gap:9px;align-items:center;flex-wrap:wrap;flex-shrink:0';
+  const totTag=dv('');totTag.style.cssText='font-size:12px;font-weight:800;color:#334155';
+  ft.appendChild(totTag);
+  const mkB=(t,col,fn,fill)=>{
+    const b=el('button');b.textContent=t;
+    b.style.cssText=`padding:${touch?'12px 17px':'9px 15px'};border-radius:8px;font-size:${touch?13.5:12.5}px;font-weight:800;cursor:pointer;`+
+      (fill?`border:none;background:${col};color:#fff`:`border:1.5px solid ${col};background:#fff;color:${col}`);
+    b.addEventListener('click',fn);return b;
+  };
+  const spacer=dv('');spacer.style.marginLeft='auto';ft.appendChild(spacer);
+  const bPrint=mkB('🖨 Printează','#475569',()=>shpPrint(L));
+  ft.appendChild(bPrint);
+  let bClose=null;
+  if(!closed){
+    bClose=mkB('🔒 Închide încărcarea','#b45309',async()=>{
+      if(!L.lines.length){alert('Nu ai încărcat nicio componentă.');return;}
+      if(!confirm('Închizi încărcarea?\n\nDupă închidere nu se mai pot adăuga componente în această listă. Cantitățile rămân în registru.'))return;
+      L.closed=true;L.closedBy=String(S.session?.username||'');L.closedTs=Date.now();
+      await persist();ov.remove();render();showToast('✓ Shipping list '+L.no+' închisă');
+    });
+    ft.appendChild(bClose);
+  }
+  const bSave=mkB(isNew?'💾 Salvează lista':'💾 Salvează','#1d4ed8',async()=>{
+    await persist();showToast('✓ Shipping list '+L.no+' salvată');
+  },true);
+  ft.appendChild(bSave);
+  md.appendChild(ft);
+
+  /* ── logica ── */
+  let dirty=isNew;
+  const markDirty=()=>{dirty=true;dirtyTag.textContent='• nesalvat';};
+  async function persist(){
+    L.ts=Date.now();L.updBy=String(S.session?.username||'');
+    const arr=shpLists();
+    const i=arr.findIndex(x=>x.id===L.id);
+    if(i<0)arr.unshift(L);else arr[i]=L;
+    S.shpLists=arr;
+    await shpSave();await sctSave();
+    dirty=false;dirtyTag.textContent='';
+  }
+  cl.addEventListener('click',async()=>{
+    if(dirty&&!confirm('Închizi fereastra? Modificările nesalvate se pierd.'))return;
+    ov.remove();render();
+  });
+  /* click in afara NU inchide fereastra */
+  ov.addEventListener('click',e=>{
+    if(e.target!==ov)return;
+    md.style.transition='box-shadow .15s';md.style.boxShadow='0 0 0 3px #93c5fd';
+    setTimeout(()=>{md.style.boxShadow='';},260);
+  });
+  document.addEventListener('keydown',function esc(e){
+    if(e.key!=='Escape')return;
+    if(!document.getElementById('shp-ov')){document.removeEventListener('keydown',esc);return;}
+    if(document.getElementById('shp-qty-ov'))return;
+    e.preventDefault();cl.click();
+  });
+
+  const lineFor=itId=>L.lines.find(x=>x.itemId===itId);
+  const restOf=x=>{
+    const extra=lineFor(x.it.id)?.qty||0;
+    return Math.max(0,Math.round((x.planned-x.sent-extra)*1000)/1000);
+  };
+
+  function drawSuppliers(){
+    supBar.innerHTML='';
+    const lbl=sp('','Subcontractori:');
+    lbl.style.cssText='font-size:10px;font-weight:800;color:#64748b;text-transform:uppercase';
+    supBar.appendChild(lbl);
+    const sups=[...new Set(L.lines.map(x=>x.supplier).filter(Boolean))];
+    if(!sups.length){
+      const e=sp('','— se completează din componentele încărcate —');
+      e.style.cssText='font-size:11.5px;color:#94a3b8';supBar.appendChild(e);return;
+    }
+    sups.forEach(s2=>{
+      const n=L.lines.filter(x=>x.supplier===s2).reduce((a,x)=>a+x.qty,0);
+      const c=sp('',`${s2} · ${fmtN(n)} buc`);
+      c.style.cssText='font-size:11.5px;font-weight:800;color:#5b21b6;background:#f5f3ff;border:1.5px solid #ddd6fe;border-radius:14px;padding:3px 11px';
+      supBar.appendChild(c);
+    });
+  }
+
+  /* dreptunghi de componenta (stanga) */
+  function card(x){
+    const rest=restOf(x);
+    const c=dv('');c.dataset.itemId=x.it.id;
+    c.style.cssText='background:#fff;border:1.5px solid #cbd5e1;border-left:4px solid #1d4ed8;border-radius:9px;'+
+      `padding:8px 10px;margin-bottom:7px;cursor:${closed?'default':'grab'};touch-action:none;`+
+      (rest<=0?'opacity:.45':'');
+    const r1=dv('');r1.style.cssText='display:flex;align-items:baseline;gap:8px;flex-wrap:wrap';
+    const cd=sp('',x.it.comp||'');cd.style.cssText='font-size:12.5px;font-weight:900;color:#1e3a5f;font-family:ui-monospace,monospace';
+    const loaded=lineFor(x.it.id)?.qty||0;
+    const full=rest<=0&&loaded>0;
+    const q=sp('',full?('✓ încărcat '+fmtN(loaded)):(fmtN(rest)+' buc'));
+    q.style.cssText='margin-left:auto;font-size:12px;font-weight:900;border-radius:6px;padding:1px 8px;'+
+      (full?'color:#15803d;background:#f0fdf4':'color:#1d4ed8;background:#eff6ff');
+    r1.appendChild(cd);r1.appendChild(q);c.appendChild(r1);
+    if(full){c.style.borderLeftColor='#15803d';c.style.opacity='';}
+    const nm=dv('');nm.style.cssText='font-size:11px;color:#475569;margin-top:2px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap';
+    nm.textContent=x.it.compName||'—';c.appendChild(nm);
+    const r3=dv('');r3.style.cssText='font-size:10px;color:#7c3aed;margin-top:3px;display:flex;gap:8px;flex-wrap:wrap';
+    r3.innerHTML=`<span style="font-weight:800">${x.it.supplier||'?'}</span>`+
+      (x.it.dateSentEst?`<span style="color:#64748b">trimitere est. ${_fmtIso(x.it.dateSentEst)}</span>`:'')+
+      (x.sent>0?`<span style="color:#b45309">deja trimis ${fmtN(x.sent)}</span>`:'');
+    c.appendChild(r3);
+    if(!closed&&(rest>0||loaded>0)){
+      const add=el('button');add.textContent=rest>0?'+ Încarcă':'✎ Modifică cantitatea';
+      add.style.cssText='margin-top:6px;width:100%;padding:5px;border:1.5px solid #16a34a;border-radius:7px;background:#f0fdf4;color:#15803d;font-size:11px;font-weight:800;cursor:pointer';
+      add.addEventListener('click',e=>{e.stopPropagation();askQty(x,lineFor(x.it.id)||null);});
+      c.appendChild(add);
+      wireDrag(c,x);
+    }
+    return c;
+  }
+  /* linie incarcata (dreapta) */
+  function lineCard(ln){
+    const c=dv('');
+    c.style.cssText='background:#fff;border:1.5px solid #86efac;border-left:4px solid #15803d;border-radius:9px;padding:8px 10px;margin-bottom:7px';
+    const r1=dv('');r1.style.cssText='display:flex;align-items:baseline;gap:8px;flex-wrap:wrap';
+    const cd=sp('',ln.comp);cd.style.cssText='font-size:12.5px;font-weight:900;color:#14532d;font-family:ui-monospace,monospace';
+    const q=sp('',fmtN(ln.qty)+' buc');
+    q.style.cssText='margin-left:auto;font-size:13px;font-weight:900;color:#15803d;background:#f0fdf4;border-radius:6px;padding:1px 9px';
+    r1.appendChild(cd);r1.appendChild(q);c.appendChild(r1);
+    const nm=dv('');nm.style.cssText='font-size:11px;color:#475569;margin-top:2px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap';
+    nm.textContent=ln.name||'—';c.appendChild(nm);
+    const r3=dv('');r3.style.cssText='font-size:10px;color:#7c3aed;margin-top:3px;font-weight:800';
+    r3.textContent=ln.supplier||'';c.appendChild(r3);
+    if(!closed){
+      const bar=dv('');bar.style.cssText='display:flex;gap:6px;margin-top:6px';
+      const ed=el('button');ed.textContent='✎ Cantitate';
+      ed.style.cssText='flex:1;padding:5px;border:1.5px solid #93c5fd;border-radius:7px;background:#eff6ff;color:#1d4ed8;font-size:11px;font-weight:800;cursor:pointer';
+      ed.addEventListener('click',()=>{
+        const x=shpOpenPositions().find(p=>p.it.id===ln.itemId)
+          ||{it:(sctItems()||[]).find(i=>i.id===ln.itemId)||{},planned:0,sent:0};
+        askQty(x,ln);
+      });
+      const rm=el('button');rm.textContent='🗑';
+      rm.style.cssText='width:36px;padding:5px;border:1.5px solid #fca5a5;border-radius:7px;background:#fff;color:#b91c1c;font-size:11px;font-weight:800;cursor:pointer';
+      rm.addEventListener('click',()=>{
+        if(!confirm(`Scoți ${ln.comp} (${fmtN(ln.qty)} buc) din încărcare?`))return;
+        const it=(sctItems()||[]).find(i=>i.id===ln.itemId);
+        if(it){
+          it.qtySent=String(Math.max(0,Math.round((sctNum(it.qtySent)-ln.qty)*1000)/1000)||'');
+          if(!sctNum(it.qtySent))it.dateSent='';
+          it.updTs=Date.now();
+        }
+        L.lines=L.lines.filter(z=>z!==ln);
+        markDirty();drawAll();
+      });
+      bar.appendChild(ed);bar.appendChild(rm);c.appendChild(bar);
+    }
+    return c;
+  }
+
+  /* ── cerere de cantitate ── */
+  function askQty(x,existingLine){
+    document.getElementById('shp-qty-ov')?.remove();
+    const rest=restOf(x)+(existingLine?existingLine.qty:0);
+    const qov=dv('');qov.id='shp-qty-ov';
+    qov.style.cssText='position:fixed;inset:0;background:rgba(0,0,0,.5);z-index:9720;display:flex;align-items:center;justify-content:center;padding:16px';
+    const qmd=dv('');qmd.style.cssText='background:#fff;border-radius:12px;width:min(420px,96vw);overflow:hidden';
+    const qh=dv('');qh.style.cssText='padding:13px 16px;background:#1e3a5f;color:#fff;font-size:14px;font-weight:900';
+    qh.textContent='Câte bucăți ai încărcat?';qmd.appendChild(qh);
+    const qb=dv('');qb.style.cssText='padding:14px 16px';
+    const info=dv('');info.style.cssText='font-size:12.5px;color:#334155;line-height:1.7;margin-bottom:10px';
+    info.innerHTML=`<b style="font-family:ui-monospace,monospace;font-size:13.5px">${x.it.comp||''}</b><br>`+
+      `${x.it.compName||''}<br><span style="color:#7c3aed;font-weight:800">${x.it.supplier||''}</span>`+
+      `<br><span style="color:#64748b">planificat ${fmtN(x.planned)} · deja trimis ${fmtN(x.sent)} · rămas ${fmtN(rest)}</span>`;
+    qb.appendChild(info);
+    const qi=el('input');qi.type='text';qi.inputMode='decimal';
+    qi.value=String(existingLine?existingLine.qty:(rest||''));
+    qi.style.cssText='width:100%;height:46px;border:2px solid #1d4ed8;border-radius:9px;padding:0 12px;font-size:20px;font-weight:900;text-align:center;font-family:monospace';
+    qb.appendChild(qi);
+    const qerr=dv('');qerr.style.cssText='font-size:11.5px;font-weight:700;color:#dc2626;margin-top:7px;min-height:15px';
+    qb.appendChild(qerr);
+    const quick=dv('');quick.style.cssText='display:flex;gap:6px;margin-top:8px;flex-wrap:wrap';
+    [['tot restul',rest],['jumătate',Math.round(rest/2*100)/100]].forEach(([t,v])=>{
+      if(!(v>0))return;
+      const b=el('button');b.textContent=`${t} (${fmtN(v)})`;
+      b.style.cssText='padding:5px 10px;border:1.5px solid var(--border);border-radius:7px;background:#fff;font-size:11.5px;font-weight:800;color:#475569;cursor:pointer';
+      b.addEventListener('click',()=>{qi.value=String(v);qi.focus();});
+      quick.appendChild(b);
+    });
+    qb.appendChild(quick);qmd.appendChild(qb);
+    const qf=dv('');qf.style.cssText='padding:11px 16px;border-top:1px solid var(--border);display:flex;gap:9px;justify-content:flex-end';
+    const qc=el('button');qc.textContent='Renunță';
+    qc.style.cssText='padding:10px 16px;border:1.5px solid var(--border);border-radius:8px;background:#fff;color:#475569;font-weight:800;font-size:12.5px;cursor:pointer';
+    qc.addEventListener('click',()=>qov.remove());
+    const qok=el('button');qok.textContent=existingLine?'Modifică':'Adaugă în camion';
+    qok.style.cssText='padding:10px 18px;border:none;border-radius:8px;background:#15803d;color:#fff;font-weight:800;font-size:12.5px;cursor:pointer';
+    const commit=()=>{
+      const v=sctNum(qi.value);
+      if(!(v>0)){qerr.textContent='Introdu o cantitate mai mare decât 0.';return;}
+      if(v>rest&&!confirm(`Încarci ${fmtN(v)} buc, mai mult decât restul planificat (${fmtN(rest)}).\n\nContinui?`))return;
+      const it=(sctItems()||[]).find(i=>i.id===x.it.id)||x.it;
+      const prev=existingLine?existingLine.qty:0;
+      const delta=Math.round((v-prev)*1000)/1000;
+      if(existingLine)existingLine.qty=v;
+      else L.lines.push({itemId:it.id,comp:it.comp,name:it.compName||'',supplier:it.supplier||'',
+        qty:v,by:String(S.session?.username||''),ts:Date.now()});
+      // cantitatea trimisa din registru urmeaza incarcarea
+      it.qtySent=String(Math.max(0,Math.round((sctNum(it.qtySent)+delta)*1000)/1000));
+      if(sctNum(it.qtySent)>0&&!it.dateSent)it.dateSent=L.date||_isoToday();
+      it.updTs=Date.now();
+      qov.remove();markDirty();drawAll();
+    };
+    qok.addEventListener('click',commit);
+    qi.addEventListener('keydown',e=>{if(e.key==='Enter'){e.preventDefault();commit();}});
+    qf.appendChild(qc);qf.appendChild(qok);qmd.appendChild(qf);
+    qov.appendChild(qmd);
+    qov.addEventListener('click',e=>{if(e.target===qov)qov.remove();});
+    document.body.appendChild(qov);
+    setTimeout(()=>{qi.focus();qi.select();},60);
+  }
+
+  /* ── drag & drop pe pointer events (merge si pe tableta) ── */
+  function wireDrag(cardEl,x){
+    let ghost=null,dragging=false,sx=0,sy=0;
+    const onDown=e=>{
+      if(e.button!==undefined&&e.button!==0)return;
+      if(e.target.tagName==='BUTTON')return;
+      sx=e.clientX;sy=e.clientY;dragging=false;
+      cardEl.setPointerCapture?.(e.pointerId);
+      const move=ev=>{
+        if(!dragging){
+          if(Math.hypot(ev.clientX-sx,ev.clientY-sy)<6)return;
+          dragging=true;
+          ghost=cardEl.cloneNode(true);
+          ghost.style.cssText+=';position:fixed;z-index:9900;pointer-events:none;width:'+cardEl.offsetWidth+
+            'px;opacity:.92;box-shadow:0 14px 34px rgba(15,23,42,.3);transform:rotate(-1.5deg)';
+          document.body.appendChild(ghost);
+          cardEl.style.opacity='.35';
+          right.pane.style.borderColor='#15803d';right.pane.style.background='#f0fdf4';
+        }
+        ghost.style.left=(ev.clientX-cardEl.offsetWidth/2)+'px';
+        ghost.style.top=(ev.clientY-22)+'px';
+        const over=right.pane.getBoundingClientRect();
+        const inside=ev.clientX>=over.left&&ev.clientX<=over.right&&ev.clientY>=over.top&&ev.clientY<=over.bottom;
+        right.pane.style.boxShadow=inside?'inset 0 0 0 3px #22c55e':'';
+      };
+      const up=ev=>{
+        cardEl.releasePointerCapture?.(e.pointerId);
+        cardEl.removeEventListener('pointermove',move);
+        cardEl.removeEventListener('pointerup',up);
+        cardEl.removeEventListener('pointercancel',up);
+        right.pane.style.boxShadow='';right.pane.style.borderColor='#86efac';right.pane.style.background='#fff';
+        cardEl.style.opacity='';
+        if(ghost){ghost.remove();ghost=null;}
+        if(!dragging)return;
+        const over=right.pane.getBoundingClientRect();
+        if(ev.clientX>=over.left&&ev.clientX<=over.right&&ev.clientY>=over.top&&ev.clientY<=over.bottom){
+          const ex=lineFor(x.it.id);
+          askQty(x,ex||null);
+        }
+      };
+      cardEl.addEventListener('pointermove',move);
+      cardEl.addEventListener('pointerup',up);
+      cardEl.addEventListener('pointercancel',up);
+    };
+    cardEl.addEventListener('pointerdown',onDown);
+  }
+
+  function drawAll(){
+    const pos=shpOpenPositions();
+    // componentele deja incarcate integral nu mai apar in stanga
+    const list=pos.filter(x=>restOf(x)>0||lineFor(x.it.id));
+    left.body.innerHTML='';
+    left.head.textContent=`Planificate · netrimise (${list.length})`;
+    if(!list.length){
+      const e=dv('');e.style.cssText='padding:22px 10px;text-align:center;color:#94a3b8;font-size:12px';
+      e.textContent='Nicio poziție planificată și netrimisă. Adaugă poziții din registrul Subcontractări.';
+      left.body.appendChild(e);
+    } else {
+      let curSup=null;
+      list.forEach(x=>{
+        if(x.it.supplier!==curSup){
+          curSup=x.it.supplier;
+          const sh=dv('');sh.style.cssText='font-size:10.5px;font-weight:900;color:#6d28d9;text-transform:uppercase;margin:4px 0 5px;letter-spacing:.04em';
+          sh.textContent=curSup||'(fără subcontractor)';
+          left.body.appendChild(sh);
+        }
+        left.body.appendChild(card(x));
+      });
+    }
+    right.body.innerHTML='';
+    right.head.textContent=`Încărcat în camion (${L.lines.length})`;
+    if(!L.lines.length){
+      const e=dv('');e.style.cssText='padding:26px 12px;text-align:center;color:#94a3b8;font-size:12px;line-height:1.6;border:2px dashed #cbd5e1;border-radius:10px';
+      e.innerHTML='<div style="font-size:26px;margin-bottom:6px">🚚</div>Trage aici componentele încărcate<br><span style="font-size:11px">sau apasă „+ Încarcă" pe o componentă</span>';
+      right.body.appendChild(e);
+    } else {
+      L.lines.slice().sort((a,b)=>String(a.supplier).localeCompare(String(b.supplier),'ro')
+        ||String(a.comp).localeCompare(String(b.comp))).forEach(ln=>right.body.appendChild(lineCard(ln)));
+    }
+    const tq=L.lines.reduce((a,x)=>a+x.qty,0);
+    totTag.textContent=`${L.lines.length} poziții · ${fmtN(tq)} buc încărcate`+
+      (L.lines.length?` · ${[...new Set(L.lines.map(x=>x.supplier))].length} subcontractori`:'');
+    drawSuppliers();
+  }
+  drawAll();
+  ov.appendChild(md);
+  document.body.appendChild(ov);
+}
+
+/* ── Lista shipping list-urilor salvate ── */
+function openShippingArchive(){
+  document.getElementById('shp-arch-ov')?.remove();
+  const ov=dv('');ov.id='shp-arch-ov';
+  ov.style.cssText='position:fixed;inset:0;background:rgba(0,0,0,.5);z-index:9660;display:flex;align-items:center;justify-content:center;padding:14px';
+  const md=dv('');md.style.cssText='background:#fff;border-radius:12px;width:min(820px,97vw);max-height:88vh;display:flex;flex-direction:column;overflow:hidden';
+  const h=dv('');h.style.cssText='padding:13px 18px;border-bottom:2px solid var(--border);display:flex;align-items:center';
+  h.innerHTML='<b style="font-size:15px;color:#1e3a5f">📄 Shipping lists</b>';
+  const cl=el('button');cl.textContent='✕';
+  cl.style.cssText='margin-left:auto;border:none;background:#f1f5f9;border-radius:7px;width:30px;height:30px;cursor:pointer;font-size:14px';
+  cl.addEventListener('click',()=>ov.remove());h.appendChild(cl);md.appendChild(h);
+  const body=dv('');body.style.cssText='flex:1;overflow:auto;padding:12px 18px 18px';
+  const draw=()=>{
+    body.innerHTML='';
+    const arr=(shpLists()||[]).slice().sort((a,b)=>(b.ts||0)-(a.ts||0));
+    if(!arr.length){
+      const e=dv('');e.style.cssText='padding:26px;text-align:center;color:#94a3b8;font-size:12.5px';
+      e.textContent='Nicio încărcare salvată încă.';body.appendChild(e);return;
+    }
+    arr.forEach(L=>{
+      const c=dv('');c.style.cssText='border:1.5px solid var(--border);border-radius:9px;padding:10px 12px;margin-bottom:8px;display:flex;align-items:center;gap:10px;flex-wrap:wrap';
+      const q=L.lines?.reduce((a,x)=>a+(x.qty||0),0)||0;
+      const info=dv('');info.style.cssText='font-size:12px;color:#334155;line-height:1.5';
+      info.innerHTML=`<b style="font-size:13px;color:#1e3a5f">${L.no}</b>`+
+        (L.closed?' <span style="font-size:9.5px;font-weight:800;color:#b45309;background:#fffbeb;border:1px solid #fcd34d;border-radius:5px;padding:1px 6px">închisă</span>':
+                  ' <span style="font-size:9.5px;font-weight:800;color:#1d4ed8;background:#eff6ff;border:1px solid #bfdbfe;border-radius:5px;padding:1px 6px">în lucru</span>')+
+        `<div style="color:#64748b;font-size:11px;margin-top:2px">${_fmtIso(L.date)} · ${L.truck?.plate||'camion nespecificat'}`+
+        `${L.truck?.carrier?' · '+L.truck.carrier:''} · ${L.lines?.length||0} poziții · ${fmtN(q)} buc`+
+        `${L.createdBy?' · '+L.createdBy:''}</div>`;
+      c.appendChild(info);
+      const sp2=dv('');sp2.style.marginLeft='auto';c.appendChild(sp2);
+      const mk=(t,col,fn)=>{const b=el('button');b.textContent=t;
+        b.style.cssText=`padding:6px 11px;border:1.5px solid ${col};border-radius:7px;background:#fff;color:${col};font-size:11.5px;font-weight:800;cursor:pointer`;
+        b.addEventListener('click',fn);return b;};
+      c.appendChild(mk(L.closed?'👁 Vezi':'✎ Continuă','#1d4ed8',()=>{ov.remove();openShippingList(L);}));
+      c.appendChild(mk('🖨','#475569',()=>shpPrint(L)));
+      c.appendChild(mk('🗑','#fca5a5',async()=>{
+        if(!confirm(`Ștergi shipping list ${L.no}?\n\nCantitățile deja trecute în registru NU se modifică.`))return;
+        S.shpLists=(S.shpLists||[]).filter(x=>x.id!==L.id);
+        await shpSave();draw();
+      }));
+      body.appendChild(c);
+    });
+  };
+  draw();md.appendChild(body);
+  ov.appendChild(md);ov.addEventListener('click',e=>{if(e.target===ov)ov.remove();});
+  document.body.appendChild(ov);
+}
+
+function shpPrint(L){
+  const esc=s=>String(s??'').replace(/[&<>]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]));
+  const bySup=new Map();
+  (L.lines||[]).forEach(x=>{
+    if(!bySup.has(x.supplier||'—'))bySup.set(x.supplier||'—',[]);
+    bySup.get(x.supplier||'—').push(x);
+  });
+  let blocks='';
+  bySup.forEach((arr,sup)=>{
+    const q=arr.reduce((a,x)=>a+(x.qty||0),0);
+    blocks+=`<h2>${esc(sup)} — ${arr.length} poziții, ${fmtN(q)} buc</h2>
+      <table><thead><tr><th>Reper</th><th>Denumire</th><th class="n">Cantitate</th></tr></thead><tbody>`+
+      arr.sort((a,b)=>String(a.comp).localeCompare(String(b.comp)))
+         .map(x=>`<tr><td class="c">${esc(x.comp)}</td><td>${esc(x.name)}</td><td class="n">${fmtN(x.qty)}</td></tr>`).join('')+
+      `<tr class="tot"><td colspan="2">Total ${esc(sup)}</td><td class="n">${fmtN(q)}</td></tr></tbody></table>`;
+  });
+  const t=L.truck||{};
+  const tq=(L.lines||[]).reduce((a,x)=>a+(x.qty||0),0);
+  const html='<!DOCTYPE html><html lang="ro"><head><meta charset="utf-8"><title>Shipping list '+esc(L.no)+'</title><style>'+
+    '@page{size:A4;margin:12mm}body{font-family:system-ui,-apple-system,Segoe UI,sans-serif;color:#0f172a;margin:0;font-size:11px}'+
+    PRINT_HEAD_CSS+
+    '.tr{display:grid;grid-template-columns:repeat(3,1fr);gap:6px 14px;border:1px solid #cbd5e1;border-radius:6px;padding:8px 10px;margin-bottom:10px}'+
+    '.tr div span{display:block;font-size:8.5px;color:#64748b;text-transform:uppercase;font-weight:700}'+
+    '.tr div b{font-size:11.5px}'+
+    'h2{font-size:12px;margin:12px 0 5px;color:#1e3a5f;border-bottom:1.5px solid #1e3a5f;padding-bottom:2px}'+
+    'table{border-collapse:collapse;width:100%;margin-bottom:6px}'+
+    'th{background:#1e3a5f;color:#fff;padding:4px 7px;text-align:left;font-size:9px;text-transform:uppercase}'+
+    'td{padding:4px 7px;border-bottom:1px solid #e2e8f0}td.c{font-family:ui-monospace,monospace;font-weight:700}'+
+    'td.n,th.n{text-align:right}tr.tot td{font-weight:800;background:#eef2ff}'+
+    '.sig{display:grid;grid-template-columns:repeat(3,1fr);gap:20px;margin-top:26px;font-size:10px}'+
+    '.sig div{border-top:1px solid #334155;padding-top:4px;text-align:center;color:#475569}'+
+    '</style></head><body>'+
+    printHeaderHtml('Shipping list '+L.no,'Încărcare la subcontractori · '+_fmtIso(L.date)+
+      ' · total '+(L.lines||[]).length+' poziții, '+fmtN(tq)+' buc'+(L.closed?' · ÎNCHISĂ':''))+
+    '<div class="tr">'+
+      `<div><span>Data încărcării</span><b>${esc(_fmtIso(L.date))}</b></div>`+
+      `<div><span>Nr. camion</span><b>${esc(t.plate||'—')}</b></div>`+
+      `<div><span>Nr. remorcă</span><b>${esc(t.trailer||'—')}</b></div>`+
+      `<div><span>Transportator</span><b>${esc(t.carrier||'—')}</b></div>`+
+      `<div><span>Șofer</span><b>${esc(t.driver||'—')}</b></div>`+
+      `<div><span>Telefon</span><b>${esc(t.phone||'—')}</b></div>`+
+    '</div>'+
+    (t.notes?`<div style="font-size:10.5px;margin-bottom:10px"><b>Observații:</b> ${esc(t.notes)}</div>`:'')+
+    (blocks||'<div style="padding:20px;text-align:center;color:#94a3b8">Nicio componentă încărcată.</div>')+
+    '<div class="sig"><div>Întocmit'+(L.createdBy?' — '+esc(L.createdBy):'')+'</div><div>Predat (gestionar)</div><div>Primit (șofer)</div></div>'+
+    '</body></html>';
+  const w=window.open('','_blank');
+  if(!w){showToast('Permiteți ferestrele pop-up pentru a printa','err',3500);return;}
+  w.document.write(html);w.document.close();
+  setTimeout(()=>{try{w.focus();w.print();}catch{}},400);
 }
 
 /* ── Incarcare multipla + drag & drop / lipire din clipboard ── */
