@@ -8244,6 +8244,144 @@ function supMigrateKeys(){
   return ch;
 }
 
+/* ═══ Verificare furnizori subcontractare direct din BOW ═══
+   Afiseaza rândurile brute din fisier pentru un reper si semnaleaza
+   reperele care au furnizori diferiti pe operatiile de subcontractare. */
+function bowRowsFor(code){
+  const c=str(code).toUpperCase();
+  if(!Array.isArray(S.bowData))return [];
+  return S.bowData.filter(r=>str(r['Product no']).toUpperCase()===c);
+}
+function subcoSupplierAudit(){
+  const m=new Map();     // reper -> Map(furnizorCurat -> {raw:Set, fps:Set, ops:Set})
+  if(!Array.isArray(S.bowData))return [];
+  for(const r of S.bowData){
+    if(!_isSubcoOp(r))continue;
+    const pno=str(r['Product no']||'');if(!pno)continue;
+    const raw=_bowCol(r,'Supplier');
+    const sup=supClean(raw)||'(nespecificat)';
+    if(!m.has(pno))m.set(pno,new Map());
+    const e=m.get(pno);
+    if(!e.has(sup))e.set(sup,{raw:new Set(),fps:new Set(),ops:new Set()});
+    const x=e.get(sup);
+    if(raw)x.raw.add(raw);
+    x.fps.add(str(r['Final product']||''));
+    x.ops.add(str(r['Ope seq']||''));
+  }
+  const out=[];
+  m.forEach((sups,pno)=>{
+    if(sups.size<2)return;
+    out.push({productNo:pno,prodName:(S.stockIdx?.get(pno)?.name)||'',
+      sups:[...sups.entries()].map(([sup,x])=>({sup,raw:[...x.raw],fps:[...x.fps],ops:[...x.ops]}))
+        .sort((a,b)=>b.fps.length-a.fps.length||a.sup.localeCompare(b.sup,'ro'))});
+  });
+  return out.sort((a,b)=>a.productNo.localeCompare(b.productNo));
+}
+function openBowInspect(code){
+  document.getElementById('bow-insp-ov')?.remove();
+  const ov=dv('');ov.id='bow-insp-ov';
+  ov.style.cssText='position:fixed;inset:0;background:rgba(0,0,0,.5);z-index:10100;display:flex;align-items:center;justify-content:center;padding:14px';
+  const md=dv('');md.style.cssText='background:#fff;border-radius:12px;width:min(1000px,98vw);max-height:90vh;display:flex;flex-direction:column;overflow:hidden';
+  const h=dv('');h.style.cssText='padding:13px 18px;border-bottom:2px solid var(--border);display:flex;align-items:center;gap:10px;flex-wrap:wrap';
+  h.innerHTML=`<b style="font-size:15px;color:#1e3a5f">🔍 BOW — rândurile reperului <span style="font-family:ui-monospace,monospace">${str(code)}</span></b>`;
+  const cl=el('button');cl.textContent='✕';
+  cl.style.cssText='margin-left:auto;border:none;background:#f1f5f9;border-radius:7px;width:30px;height:30px;cursor:pointer;font-size:14px';
+  cl.addEventListener('click',()=>ov.remove());h.appendChild(cl);md.appendChild(h);
+  const body=dv('');body.style.cssText='flex:1;overflow:auto;padding:12px 18px 20px';
+  const rows=bowRowsFor(code);
+  if(!rows.length){
+    const e=dv('');e.style.cssText='padding:26px;text-align:center;color:#94a3b8;font-size:13px';
+    e.textContent='Niciun rând în BOW pentru acest cod. Verifică dacă fișierul BOW este încărcat și dacă reperul este scris corect.';
+    body.appendChild(e);
+  } else {
+    const subco=rows.filter(_isSubcoOp);
+    const sums=dv('');sums.style.cssText='font-size:12px;color:#334155;margin-bottom:10px;line-height:1.6';
+    const sups=[...new Set(subco.map(r=>supClean(_bowCol(r,'Supplier'))||'(nespecificat)'))];
+    sums.innerHTML=`${rows.length} rânduri în total · <b>${subco.length}</b> operații de subcontractare · `+
+      `furnizori: ${sups.map(x=>`<b style="color:${sups.length>1?'#b45309':'#15803d'}">${x}</b>`).join(', ')||'—'}`+
+      (sups.length>1?'<div style="color:#b45309;font-weight:700;margin-top:4px">⚠ Reperul are furnizori diferiți în BOW — aplicația afișează ce scrie în fișier, pe fiecare produs final.</div>':'');
+    body.appendChild(sums);
+    const tbl=el('table');tbl.style.cssText='border-collapse:collapse;width:100%;font-size:11px';
+    const cols=['Final product','Product seq','Ope seq','Operation no','Ope name','Supplier (brut)','Supplier (curat)','Text_line1','Text_line2','Run time','Setup time'];
+    const hr=el('tr');hr.style.cssText='background:#1e3a5f;color:#fff';
+    cols.forEach(c=>{const th=el('th');th.textContent=c;
+      th.style.cssText='padding:6px 8px;text-align:left;font-size:9.5px;font-weight:700;text-transform:uppercase;white-space:nowrap';hr.appendChild(th);});
+    tbl.appendChild(hr);
+    rows.sort((a,b)=>str(a['Final product']).localeCompare(str(b['Final product']))
+      ||(parseFloat(a['Ope seq'])||0)-(parseFloat(b['Ope seq'])||0));
+    rows.forEach((r,i)=>{
+      const isS=_isSubcoOp(r);
+      const tr=el('tr');
+      tr.style.cssText=`border-bottom:1px solid #f1f5f9;background:${isS?'#eff6ff':(i%2?'#f8fafc':'#fff')}`;
+      const raw=_bowCol(r,'Supplier');
+      [str(r['Final product']),str(r['Product seq']),str(r['Ope seq']),str(r['Operation no']),
+       str(r['Ope name']||r['Ope descr']),raw,raw?supClean(raw):'',_bowCol(r,'Text_line1'),_bowCol(r,'Text_line2'),
+       str(r['Run time']),str(r['Setup time'])].forEach((v,ci)=>{
+        const td=el('td');td.textContent=v||'';
+        td.style.cssText='padding:5px 8px;white-space:nowrap'+
+          (isS&&(ci===5||ci===6)?';font-weight:900;color:#1d4ed8':'')+
+          (isS&&ci===4?';font-weight:800;color:#1e3a5f':'');
+        tr.appendChild(td);
+      });
+      tbl.appendChild(tr);
+    });
+    body.appendChild(tbl);
+    const note=dv('');note.style.cssText='margin-top:9px;font-size:10.5px;color:#64748b;line-height:1.6';
+    note.innerHTML='Rândurile albastre sunt operațiile de subcontractare. Aplicația ia furnizorul exact din coloana <code>Supplier</code> a acelui rând. '+
+      'Dacă aici scrie altceva decât în MOVEX, fișierul BOW încărcat este vechi — reîncarcă-l din Fisiere.';
+    body.appendChild(note);
+  }
+  md.appendChild(body);
+  ov.appendChild(md);ov.addEventListener('click',e=>{if(e.target===ov)ov.remove();});
+  document.body.appendChild(ov);
+}
+function openSubcoAudit(){
+  const list=subcoSupplierAudit();
+  document.getElementById('bow-audit-ov')?.remove();
+  const ov=dv('');ov.id='bow-audit-ov';
+  ov.style.cssText='position:fixed;inset:0;background:rgba(0,0,0,.5);z-index:10090;display:flex;align-items:center;justify-content:center;padding:14px';
+  const md=dv('');md.style.cssText='background:#fff;border-radius:12px;width:min(880px,98vw);max-height:90vh;display:flex;flex-direction:column;overflow:hidden';
+  const h=dv('');h.style.cssText='padding:13px 18px;border-bottom:2px solid var(--border);display:flex;align-items:center';
+  h.innerHTML='<b style="font-size:15px;color:#1e3a5f">⚠ Repere cu furnizori diferiți în BOW</b>';
+  const cl=el('button');cl.textContent='✕';
+  cl.style.cssText='margin-left:auto;border:none;background:#f1f5f9;border-radius:7px;width:30px;height:30px;cursor:pointer;font-size:14px';
+  cl.addEventListener('click',()=>ov.remove());h.appendChild(cl);md.appendChild(h);
+  const body=dv('');body.style.cssText='flex:1;overflow:auto;padding:12px 18px 20px';
+  if(!list.length){
+    const e=dv('');e.style.cssText='padding:26px;text-align:center;color:#15803d;font-size:13px;font-weight:700';
+    e.textContent='✓ Fiecare reper are un singur furnizor de subcontractare în BOW.';
+    body.appendChild(e);
+  } else {
+    const intro=dv('');intro.style.cssText='font-size:12px;color:#334155;margin-bottom:11px;line-height:1.6';
+    intro.innerHTML=`<b>${list.length}</b> repere au operații de subcontractare către furnizori diferiți, în funcție de produsul final. `+
+      'Aplicația afișează pentru fiecare linie furnizorul scris în BOW pe acel produs final — nu alege ea unul. '+
+      'Dacă una din variante e greșită, corectează în MOVEX și reîncarcă BOW.';
+    body.appendChild(intro);
+    list.forEach(r=>{
+      const card=dv('');card.style.cssText='border:1.5px solid #fcd34d;background:#fffbeb;border-radius:9px;padding:10px 12px;margin-bottom:9px';
+      const t=dv('');t.style.cssText='font-size:12.5px;font-weight:900;color:#1e3a5f;display:flex;align-items:center;gap:9px;flex-wrap:wrap';
+      t.innerHTML=`<span style="font-family:ui-monospace,monospace">${r.productNo}</span>
+        <span style="font-weight:600;color:#64748b;font-size:11.5px">${r.prodName||''}</span>`;
+      const b=el('button');b.textContent='🔍 Vezi rândurile din BOW';
+      b.style.cssText='margin-left:auto;padding:4px 10px;border:1.5px solid #1d4ed8;border-radius:6px;background:#fff;color:#1d4ed8;font-size:11px;font-weight:800;cursor:pointer';
+      b.addEventListener('click',()=>openBowInspect(r.productNo));
+      t.appendChild(b);card.appendChild(t);
+      r.sups.forEach(x=>{
+        const ln=dv('');ln.style.cssText='font-size:11.5px;color:#334155;margin-top:5px;line-height:1.5';
+        ln.innerHTML=`<b style="color:#b45309">${x.sup}</b>`+
+          (x.raw.length?` <span style="color:#94a3b8;font-family:ui-monospace,monospace;font-size:10.5px">(${x.raw.join(', ')})</span>`:'')+
+          ` · ope seq ${x.ops.join(', ')} · ${x.fps.length} produs${x.fps.length>1?'e':''} final${x.fps.length>1?'e':''}: `+
+          `<span style="font-family:ui-monospace,monospace;font-size:10.5px">${x.fps.slice(0,8).join(', ')}${x.fps.length>8?' …':''}</span>`;
+        card.appendChild(ln);
+      });
+      body.appendChild(card);
+    });
+  }
+  md.appendChild(body);
+  ov.appendChild(md);ov.addEventListener('click',e=>{if(e.target===ov)ov.remove();});
+  document.body.appendChild(ov);
+}
+
 function buildSubcoList(){
   const out=[];
   if(!Array.isArray(S.bowData))return out;
@@ -8994,6 +9132,50 @@ function sctSuggestions(group){
     .sort((a,b)=>a.comp.localeCompare(b.comp));
 }
 
+/* ── Incarcare multipla + drag & drop / lipire din clipboard ── */
+function sctPickFiles(list){
+  return [...(list||[])].filter(f=>/^image\//.test(f.type||'')
+    ||/\.(png|jpe?g|webp|gif|bmp|heic|pdf)$/i.test(f.name||''));
+}
+async function sctUploadMany(it,files,setMsg,onDone){
+  const all=[...(files||[])];
+  if(!all.length)return;
+  const ok=sctPickFiles(all);
+  if(!ok.length){setMsg('Doar imagini sau PDF pot fi atașate.','err');return;}
+  if(!S.sbCfg){setMsg('Fără conexiune Supabase — atașamentele nu pot fi salvate.','err');return;}
+  setMsg(`Se încarcă ${ok.length} fișier${ok.length>1?'e':''}…`,'info');
+  let bad='',n=0;
+  for(const f of ok){
+    try{await sctAttUpload(it,f);n++;}catch(e){bad=(e.message||String(e));}
+  }
+  const skipped=all.length-ok.length;
+  if(bad)setMsg('Eroare: '+bad,'err');
+  else setMsg(`✓ ${n} atașat${n>1?'e':''}`+(skipped?` · ${skipped} ignorat${skipped>1?'e':''} (tip nepermis)`:''),'ok');
+  onDone&&onDone();
+}
+/* zone: elementul care accepta drop-ul; hi: elementul evidentiat */
+function sctWireDrop(zone,hi,getItem,setMsg,onDone){
+  let depth=0;
+  const hasFiles=e=>{
+    const dt=e.dataTransfer;if(!dt)return false;
+    return [...(dt.types||[])].includes('Files');
+  };
+  const show=on=>{
+    if(!hi)return;
+    hi.style.borderColor=on?'#7c3aed':'';
+    hi.style.background=on?'#f5f3ff':'';
+    hi.style.boxShadow=on?'inset 0 0 0 2px #c4b5fd':'';
+  };
+  zone.addEventListener('dragenter',e=>{if(!hasFiles(e))return;e.preventDefault();depth++;show(true);});
+  zone.addEventListener('dragover',e=>{if(!hasFiles(e))return;e.preventDefault();try{e.dataTransfer.dropEffect='copy';}catch{}});
+  zone.addEventListener('dragleave',e=>{if(!hasFiles(e))return;depth--;if(depth<=0){depth=0;show(false);}});
+  zone.addEventListener('drop',async e=>{
+    if(!hasFiles(e))return;
+    e.preventDefault();e.stopPropagation();depth=0;show(false);
+    await sctUploadMany(getItem(),e.dataTransfer.files,setMsg,onDone);
+  });
+}
+
 /* ── Adaugare / modificare pozitie ── */
 function sctOpenEdit(item){
   const isNew=!item;
@@ -9030,6 +9212,7 @@ function sctOpenEdit(item){
     if(isNew&&newAtts.length){for(const a of newAtts){try{await sctAttDelete(it,a);}catch{}}}
     killPop();ov.remove();
     document.removeEventListener('keydown',onKey);
+    document.removeEventListener('paste',onPaste);
     window.removeEventListener('resize',onMove,true);
     window.removeEventListener('scroll',onMove,true);
   };
@@ -9359,15 +9542,8 @@ function sctOpenEdit(item){
     if(capture)i.setAttribute('capture','environment');
     l.appendChild(i);
     i.addEventListener('change',async e=>{
-      const files=[...(e.target.files||[])];if(!files.length)return;
-      if(!S.sbCfg){amsg.style.color='#dc2626';amsg.textContent='Fără conexiune Supabase — atașamentele nu pot fi salvate.';return;}
-      amsg.style.color='#475569';amsg.textContent='Se încarcă…';
-      let bad='';
-      for(const f of files){try{await sctAttUpload(it,f);}catch(err){bad=(err.message||String(err));}}
-      i.value='';
-      if(bad){amsg.style.color='#dc2626';amsg.textContent='Eroare: '+bad;}
-      else{amsg.style.color='#15803d';amsg.textContent='✓ Încărcat';}
-      drawAtts();
+      const files=[...(e.target.files||[])];i.value='';
+      await sctUploadMany(it,files,setAMsg,afterUp);
     });
     return l;
   };
@@ -9386,7 +9562,33 @@ function sctOpenEdit(item){
     openDrawingSearch(dn||c,c);
   });
   abar.appendChild(dwgB);
-  attSec.appendChild(abar);attSec.appendChild(amsg);attSec.appendChild(agrid);
+  attSec.appendChild(abar);
+  /* zona de drag & drop pentru poze (si lipire din clipboard) */
+  const drop=dv('');drop.id='sct-drop';
+  drop.style.cssText=`margin-top:9px;border:2px dashed #cbd5e1;border-radius:9px;padding:${touch?'14px 10px':'12px 10px'};`+
+    `text-align:center;font-size:${touch?12:11.5}px;color:#64748b;transition:background .12s,border-color .12s;cursor:default`;
+  drop.innerHTML=touch
+    ?'<b style="color:#475569">Trage pozele aici</b><div style="margin-top:2px;font-size:11px">sau folosește butoanele de mai sus</div>'
+    :'<b style="color:#475569">Trage pozele sau fișierele aici</b>'+
+     '<div style="margin-top:2px;font-size:10.5px">ori lipește din clipboard cu Ctrl+V (captură de ecran, poză copiată)</div>';
+  attSec.appendChild(drop);
+  attSec.appendChild(amsg);attSec.appendChild(agrid);
+  const setAMsg=(t,k)=>{
+    amsg.textContent=t;
+    amsg.style.color=k==='err'?'#dc2626':k==='ok'?'#15803d':'#475569';
+  };
+  const afterUp=()=>{_dirty=true;drawAtts();};
+  // drop pe zona dedicata si pe tot formularul, cu evidentierea zonei
+  sctWireDrop(drop,drop,()=>it,setAMsg,afterUp);
+  sctWireDrop(md,drop,()=>it,setAMsg,afterUp);
+  // lipire din clipboard cat timp formularul e deschis
+  const onPaste=e=>{
+    const f=sctPickFiles(e.clipboardData?.files||[]);
+    if(!f.length)return;
+    e.preventDefault();
+    sctUploadMany(it,f,setAMsg,afterUp);
+  };
+  document.addEventListener('paste',onPaste);
   function drawAtts(){
     agrid.innerHTML='';
     const atts=it.atts||[];
@@ -9450,6 +9652,7 @@ function sctOpenEdit(item){
     _dirty=false;
     await sctSave();
     ov.remove();document.removeEventListener('keydown',onKey);
+    document.removeEventListener('paste',onPaste);
     window.removeEventListener('resize',onMove,true);window.removeEventListener('scroll',onMove,true);
     render();
     showToast(isNew?'✓ Poziție adăugată':'✓ Poziție salvată');
@@ -9476,7 +9679,8 @@ function sctOpenAtt(it,onChange){
   h.innerHTML=`<b style="font-size:14.5px;color:#1e3a5f">📎 ${it.comp} — ${it.supplier}</b>`;
   const cl=el('button');cl.textContent='✕';
   cl.style.cssText='margin-left:auto;border:none;background:#f1f5f9;border-radius:7px;width:30px;height:30px;cursor:pointer;font-size:14px';
-  cl.addEventListener('click',()=>ov.remove());h.appendChild(cl);md.appendChild(h);
+  cl.addEventListener('click',()=>{ov.remove();document.removeEventListener('paste',onPasteG);});
+  h.appendChild(cl);md.appendChild(h);
 
   const bar=dv('');bar.style.cssText='padding:10px 18px;display:flex;gap:9px;flex-wrap:wrap;border-bottom:1px solid var(--border)';
   const mkUp=(label,accept,capture,col)=>{
@@ -9485,16 +9689,8 @@ function sctOpenAtt(it,onChange){
     const i=el('input');i.type='file';i.accept=accept;i.style.display='none';
     if(capture)i.setAttribute('capture','environment');
     i.addEventListener('change',async e=>{
-      const files=[...(e.target.files||[])];
-      if(!files.length)return;
-      msg.style.color='#475569';msg.textContent='Se încarcă…';
-      for(const f of files){
-        try{await sctAttUpload(it,f);}
-        catch(err2){msg.style.color='#dc2626';msg.textContent='Eroare la '+f.name+': '+(err2.message||err2);}
-      }
-      i.value='';
-      if(!/Eroare/.test(msg.textContent)){msg.style.color='#15803d';msg.textContent='✓ Încărcat';}
-      draw();onChange&&onChange();
+      const files=[...(e.target.files||[])];i.value='';
+      await sctUploadMany(it,files,setGMsg,()=>{draw();onChange&&onChange();});
     });
     l.appendChild(i);return l;
   };
@@ -9514,6 +9710,22 @@ function sctOpenAtt(it,onChange){
   md.appendChild(msg);
   const body=dv('');body.style.cssText='flex:1;overflow:auto;padding:12px 18px 18px';
   md.appendChild(body);
+  /* drag & drop + lipire din clipboard si aici */
+  const dropG=dv('');dropG.id='sct-drop-g';
+  dropG.style.cssText='margin:0 18px 10px;border:2px dashed #cbd5e1;border-radius:9px;padding:11px;'+
+    'text-align:center;font-size:11.5px;color:#64748b;transition:background .12s,border-color .12s';
+  dropG.innerHTML='<b style="color:#475569">Trage pozele sau fișierele aici</b>'+
+    '<div style="margin-top:2px;font-size:10.5px">ori lipește din clipboard cu Ctrl+V</div>';
+  md.insertBefore(dropG,body);
+  const setGMsg=(t,k)=>{msg.textContent=t;msg.style.color=k==='err'?'#dc2626':k==='ok'?'#15803d':'#475569';};
+  sctWireDrop(dropG,dropG,()=>it,setGMsg,()=>{draw();onChange&&onChange();});
+  sctWireDrop(md,dropG,()=>it,setGMsg,()=>{draw();onChange&&onChange();});
+  const onPasteG=e=>{
+    const f=sctPickFiles(e.clipboardData?.files||[]);
+    if(!f.length)return;e.preventDefault();
+    sctUploadMany(it,f,setGMsg,()=>{draw();onChange&&onChange();});
+  };
+  document.addEventListener('paste',onPasteG);
 
   function draw(){
     body.innerHTML='';
@@ -9565,7 +9777,8 @@ function sctOpenAtt(it,onChange){
     body.appendChild(grid);
   }
   draw();
-  ov.appendChild(md);ov.addEventListener('click',e=>{if(e.target===ov)ov.remove();});
+  ov.appendChild(md);
+  ov.addEventListener('click',e=>{if(e.target===ov){ov.remove();document.removeEventListener('paste',onPasteG);}});
   document.body.appendChild(ov);
 }
 
@@ -9624,7 +9837,27 @@ function renderSubco(){
   }
 
   if((st.sub||'plan')==='cfg')      _subcoRenderCfg(page);
-  else if(st.sub==='list')          _subcoRenderTable(page,buildSubcoList(),SUBCO_LIST_COLS,'list');
+  else if(st.sub==='list'){
+    const aud=subcoSupplierAudit();
+    const abar=dv('');abar.style.cssText='padding:8px 16px;display:flex;gap:9px;align-items:center;flex-wrap:wrap;border-bottom:1px solid var(--border);background:#f8fafc';
+    const bIns=el('button');bIns.textContent='🔍 Verifică un reper în BOW';
+    bIns.style.cssText='padding:6px 12px;border:1.5px solid #1d4ed8;border-radius:7px;background:#fff;color:#1d4ed8;font-size:12px;font-weight:800;cursor:pointer';
+    bIns.addEventListener('click',()=>{
+      const c=prompt('Codul reperului de verificat în BOW:','');
+      if(c&&c.trim())openBowInspect(c.trim());
+    });
+    abar.appendChild(bIns);
+    const bAud=el('button');
+    bAud.textContent=aud.length?`⚠ ${aud.length} repere cu furnizori diferiți în BOW`:'✓ Furnizori consecvenți în BOW';
+    bAud.style.cssText='padding:6px 12px;border:1.5px solid '+(aud.length?'#f59e0b':'#86efac')+
+      ';border-radius:7px;background:#fff;color:'+(aud.length?'#b45309':'#15803d')+';font-size:12px;font-weight:800;cursor:pointer';
+    bAud.addEventListener('click',()=>openSubcoAudit());
+    abar.appendChild(bAud);
+    const note=sp('','Furnizorul afișat este cel din coloana Supplier a operației de subcontractare, pe produsul final respectiv.');
+    note.style.cssText='font-size:10.5px;color:#94a3b8';abar.appendChild(note);
+    page.appendChild(abar);
+    _subcoRenderTable(page,buildSubcoList(),SUBCO_LIST_COLS,'list');
+  }
   else                              _subcoRenderPlan(page);
   return page;
 }
