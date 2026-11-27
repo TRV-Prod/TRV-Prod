@@ -7427,8 +7427,9 @@ async function openDrawingSearch(drawingNo,movexCode){
   if(!drawingNo){showToast('Nu s-a putut determina numărul de desen','err',2500);return;}
 
   document.getElementById('dwg-result-overlay')?.remove();
+  document.getElementById('sct-sug-pop')?.remove();   // balonul de propuneri nu sta peste desen
   const ov=dv('');ov.id='dwg-result-overlay';
-  ov.style.cssText='position:fixed;inset:0;background:rgba(0,0,0,.55);z-index:9500;display:flex;align-items:center;justify-content:center;padding:14px';
+  ov.style.cssText='position:fixed;inset:0;background:rgba(0,0,0,.55);z-index:10050;display:flex;align-items:center;justify-content:center;padding:14px';
   const modal=dv('');modal.style.cssText='background:#fff;border-radius:12px;box-shadow:0 24px 70px rgba(0,0,0,.4);width:min(1000px,97vw);height:min(88vh,900px);display:flex;flex-direction:column;overflow:hidden';
 
   const hdr=dv('');hdr.style.cssText='background:#0369a1;color:#fff;padding:11px 18px;display:flex;justify-content:space-between;align-items:center;flex-shrink:0;gap:10px';
@@ -7767,7 +7768,7 @@ function mkDrawingBtn(itemNo,compact){
 function openDrawingsPathSettings(){
   document.getElementById('dwg-path-overlay')?.remove();
   const ov=dv('');ov.id='dwg-path-overlay';
-  ov.style.cssText='position:fixed;inset:0;background:rgba(0,0,0,.5);z-index:9400;display:flex;align-items:center;justify-content:center;padding:16px';
+  ov.style.cssText='position:fixed;inset:0;background:rgba(0,0,0,.5);z-index:10060;display:flex;align-items:center;justify-content:center;padding:16px';
   const modal=dv('');modal.style.cssText='background:#fff;border-radius:10px;box-shadow:0 20px 60px rgba(0,0,0,.3);width:min(620px,95vw);overflow:hidden';
   const hdr=dv('');hdr.style.cssText='background:#0369a1;color:#fff;padding:12px 18px;font-weight:800;font-size:14px;display:flex;justify-content:space-between;align-items:center';
   hdr.innerHTML='<span>📐 Cale folder desene</span>';
@@ -8169,6 +8170,39 @@ async function loadSubcoCfgRemote(){
 }
 
 /* ── Lista componentelor cu operatie de Subcontracting ── */
+/* Numele subcontractorilor vin ca "1234TV-NUME SUBCONTRACTOR".
+   Pastram doar denumirea de dupa cratima; prefixul trebuie sa arate ca un
+   cod (sa conţină o cifra), ca sa nu stricam nume de tipul "SC X-TRADE". */
+function supClean(v){
+  const t=str(v);
+  const m=t.match(/^\s*([A-Za-z0-9._\/]{1,14})\s*-\s*(\S.*)$/);
+  if(m&&/[0-9]/.test(m[1]))return m[2].trim();
+  return t;
+}
+/* Trecerea configurarii si a registrului la numele curate (o singura data) */
+function supMigrateKeys(){
+  const cfg=S.subcoCfg;
+  let ch=false;
+  if(cfg){
+    ['days','groups','sent','done'].forEach(k=>{
+      const o=cfg[k];if(!o||typeof o!=='object')return;
+      Object.keys(o).forEach(key=>{
+        const c=supClean(key);
+        if(c===key)return;
+        if(o[c]===undefined||o[c]===null||o[c]==='')o[c]=o[key];
+        delete o[key];ch=true;
+      });
+    });
+  }
+  if(Array.isArray(S.sctItems)){
+    S.sctItems.forEach(it=>{
+      const c=supClean(it.supplier);
+      if(c!==it.supplier){it.supplier=c;ch=true;}
+    });
+  }
+  return ch;
+}
+
 function buildSubcoList(){
   const out=[];
   if(!Array.isArray(S.bowData))return out;
@@ -8182,7 +8216,7 @@ function buildSubcoList(){
     const opSeq=str(r['Ope seq']||'');
     const k=`${fp}__${pno}__${opSeq}`;
     if(seen.has(k))continue;seen.add(k);
-    const supplier=_bowCol(r,'Supplier')||'(nespecificat)';
+    const supplier=supClean(_bowCol(r,'Supplier'))||'(nespecificat)';
     out.push({
       fp, fpName:fpName.get(fp)||'',
       productNo:pno,
@@ -8530,7 +8564,10 @@ async function sctLoadRemote(){
   if(!S.sbCfg)return;
   try{
     const d=await sbDownload(S.sbCfg,SCT_FILE,25000);
-    if(d&&Array.isArray(d.items)){S.sctItems=d.items;sctSaveLocal();}
+    if(d&&Array.isArray(d.items)){
+      S.sctItems=d.items;
+      if(supMigrateKeys())sctSave();else sctSaveLocal();
+    }
   }catch(e){/* lipsa fisierului = registru gol */}
 }
 function sctId(){return 'p'+Date.now().toString(36)+Math.random().toString(36).slice(2,7);}
@@ -8639,8 +8676,11 @@ function renderSubcoTrack(){
   // deschiderea paginii "Planificare Subco", deci selectorul era gol.
   if(!S._subcoLoaded){
     S._subcoLoaded=true;
-    loadSubcoCfgLocal();
-    loadSubcoCfgRemote().then(()=>{if(S.tab==='subcotrack')render();});
+    loadSubcoCfgLocal();supMigrateKeys();
+    loadSubcoCfgRemote().then(()=>{
+      if(supMigrateKeys()){saveSubcoCfg();sctSave();}
+      if(S.tab==='subcotrack')render();
+    });
   }
 
   const hdr=dv('');hdr.style.cssText='padding:11px 16px 9px;border-bottom:2px solid var(--border);background:#fff;flex-shrink:0';
@@ -9059,8 +9099,9 @@ function sctOpenEdit(item){
 
   /* ── balonul de propuneri, ancorat la câmpul Reper ── */
   let _justPicked=0;      // nu redeschide niciun balon imediat dupa o selectie
+  const dwgOpen=()=>!!document.getElementById('dwg-result-overlay')||!!document.getElementById('dwg-path-overlay');
   function openPop(){
-    if(Date.now()-_justPicked<500)return;
+    if(Date.now()-_justPicked<500||dwgOpen())return;
     killPop();
     const pop=dv('');pop.id='sct-sug-pop';
     pop.style.cssText='position:fixed;z-index:9700;background:#fff;border:1.5px solid #93c5fd;border-radius:11px;'+
@@ -9147,7 +9188,7 @@ function sctOpenEdit(item){
 
   /* ── balon pentru subcontractor ── */
   function openSupPop(){
-    if(Date.now()-_justPicked<500)return;
+    if(Date.now()-_justPicked<500||dwgOpen())return;
     killPop();
     const pop=dv('');pop.id='sct-sug-pop';
     pop.style.cssText='position:fixed;z-index:9700;background:#fff;border:1.5px solid #c4b5fd;border-radius:11px;'+
@@ -9293,6 +9334,7 @@ function sctOpenEdit(item){
   const dwgB=el('button');dwgB.textContent='📐 Desen';
   dwgB.style.cssText=btnCss+';border:1.5px solid #0891b2;background:#fff;color:#0e7490';
   dwgB.addEventListener('click',()=>{
+    killPop();
     const c=compI.value.trim();
     if(!c){amsg.style.color='#b45309';amsg.textContent='Completează mai întâi codul reperului.';return;}
     const dn=(typeof getDrawingNoFor==='function')?getDrawingNoFor(c):'';
@@ -9498,8 +9540,11 @@ function renderSubco(){
   const st=S.subcoState;
   if(!S._subcoLoaded){
     S._subcoLoaded=true;
-    loadSubcoCfgLocal();
-    loadSubcoCfgRemote().then(()=>{if(S.tab==='subco')render();});
+    loadSubcoCfgLocal();supMigrateKeys();
+    loadSubcoCfgRemote().then(()=>{
+      if(supMigrateKeys())saveSubcoCfg();
+      if(S.tab==='subco')render();
+    });
   }
   const page=dv('cnt');page.style.cssText='flex:1;display:flex;flex-direction:column;overflow:hidden';
 
@@ -11382,7 +11427,7 @@ function _planSubcoText(itemNo){
       for(const bo of rowsB){
         const on=str(bo['Ope name']||bo['Ope descr']||'').toLowerCase();
         if(on==='subcontracting'||on.includes('subco')){
-          const sup=str(bo['Supplier']||'').trim();
+          const sup=supClean(bo['Supplier']);
           const t1=str(bo['Text_line1']||'').trim();
           if(sup)subs.add(sup);else if(t1)subs.add(t1);
         }
@@ -11445,7 +11490,7 @@ function getPlanRows(){
             for(const bo of rowsB){
               const on=str(bo['Ope name']||bo['Ope descr']||'').toLowerCase();
               if(on==='subcontracting'||on.includes('subco')){
-                const sup=str(bo['Supplier']||'').toLowerCase();
+                const sup=supClean(bo['Supplier']).toLowerCase();
                 const t1=str(bo['Text_line1']||'').toLowerCase();
                 if(sup.includes(q)||t1.includes(q)){found=true;break;}
               }
@@ -11600,7 +11645,7 @@ function _buildPlanTbody(wrap){
             for(const bo of rowsB){
               const on=str(bo['Ope name']||bo['Ope descr']||'').toLowerCase();
               if(on==='subcontracting'||on.includes('subco')){
-                const sup=str(bo['Supplier']||'').trim();
+                const sup=supClean(bo['Supplier']);
                 const t1=str(bo['Text_line1']||'').trim();
                 if(sup)subs.add(sup);else if(t1)subs.add(t1);
               }
@@ -11670,7 +11715,7 @@ function _buildPlanTbody(wrap){
             const opName=str(bo['Ope name']||bo['Ope descr']||'').toLowerCase();
             if(opName==='subcontracting'||opName.includes('subco')){
               subcoTxt=str(bo['Text_line1']||'').trim();
-              subcoSup=str(bo['Supplier']||'').trim();
+              subcoSup=supClean(bo['Supplier']);
               if(subcoTxt||subcoSup)break;
             }
           }
@@ -20410,7 +20455,7 @@ function _pushComponentRow(fpItemNo,matNo,fpCustomer,fd,unitsNeeded,obRows,
     runT:parseFloat(String(op['Run time']||'0').replace(',','.'))||0,
     setupT:parseFloat(String(op['Setup time']||'0').replace(',','.'))||0,
     isSubco:(str(op['Ope name']||op['Ope descr']||'')).toLowerCase()==='subcontracting',
-    t1:str(op['Text_line1']||'').trim(),sup:str(op['Supplier']||'').trim(),
+    t1:str(op['Text_line1']||'').trim(),sup:supClean(op['Supplier']),
   })).sort((a,b)=>b.productSeq!==a.productSeq?(b.productSeq-a.productSeq):(a.seq-b.seq));
 
   const stock=S.stockIdx?.get(matNo)||{onHand:0,wipByWC:{},totalWIP:0};
