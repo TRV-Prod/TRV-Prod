@@ -7460,7 +7460,8 @@ async function openDrawingSearch(drawingNo,movexCode){
   hdrLeft.insertBefore(srchWrap,hdrLeft.firstChild);
   hdr.appendChild(hdrLeft);
   const cb=el('button');cb.textContent='✕';cb.style.cssText='border:none;background:rgba(255,255,255,.2);color:#fff;width:30px;height:30px;border-radius:5px;cursor:pointer;font-size:15px;flex-shrink:0';
-  cb.addEventListener('click',()=>ov.remove());hdr.appendChild(cb);modal.appendChild(hdr);
+  cb.addEventListener('click',()=>{ov.remove();S._sctAttachTarget=null;S._sctOnAttach=null;});
+  hdr.appendChild(cb);modal.appendChild(hdr);
 
   const body=dv('');body.style.cssText='flex:1;display:flex;overflow:hidden';
   modal.appendChild(body);
@@ -7471,6 +7472,7 @@ async function openDrawingSearch(drawingNo,movexCode){
   const viewCol=dv('');viewCol.style.cssText='flex:1;min-width:0;display:flex;flex-direction:column;background:#1a1a2e;overflow:hidden';
   const zBar=dv('');zBar.style.cssText='display:flex;align-items:center;gap:6px;padding:5px 10px;background:#0f172a;flex-shrink:0;flex-wrap:wrap';
   let dZoom=1;
+  let curFile=null,curName='';        // fisierul deschis acum (pentru atasare)
   const zLbl=dv('');zLbl.style.cssText='color:#64748b;font-size:10.5px;font-weight:800;min-width:42px;text-align:center;font-family:monospace';
   zLbl.textContent='100%';
   const applyDZoom=(z)=>{
@@ -7502,10 +7504,47 @@ async function openDrawingSearch(drawingNo,movexCode){
     const f=viewPane.querySelector('.dwg-scalable');if(!f)return;
     const w=f.naturalWidth||f.width;if(w)applyDZoom((viewPane.clientWidth-24)/w);
   }));
+  /* Incarcare in baza de date, pe poziţia din Subcontractari — desenul devine
+     vizibil tuturor utilizatorilor, nu doar de pe laptopul care are folderul local. */
+  const attTarget=S._sctAttachTarget||null;
+  let attBtn=null,attMsg=null,updAttachBtn=null;
+  if(attTarget){
+    attBtn=el('button');
+    attBtn.style.cssText='height:26px;padding:0 12px;border:1px solid #16a34a;background:#15803d;color:#fff;border-radius:4px;cursor:pointer;font-size:11px;font-weight:800';
+    attMsg=dv('');attMsg.style.cssText='font-size:10px;font-weight:700;color:#94a3b8;white-space:nowrap';
+    updAttachBtn=()=>{
+      const has=!!curFile;
+      attBtn.disabled=!has;
+      attBtn.style.opacity=has?'1':'.45';
+      attBtn.style.cursor=has?'pointer':'not-allowed';
+      attBtn.textContent=has?'⬆ Încarcă în baza de date':'⬆ Alege un desen din listă';
+      const already=(attTarget.atts||[]).filter(a=>a.kind==='drawing').length;
+      attMsg.textContent=already?`poziția are ${already} desen(e) atașat(e)`
+        :(has?`→ ${attTarget.comp||'poziția curentă'}`:'');
+      attMsg.style.color=already?'#fbbf24':'#94a3b8';
+    };
+    attBtn.addEventListener('click',async()=>{
+      if(!curFile)return;
+      attBtn.disabled=true;attMsg.style.color='#93c5fd';attMsg.textContent='Se încarcă…';
+      try{
+        const a=await sctAttUpload(attTarget,curFile);
+        a.kind='drawing';a.name=curName||a.name;
+        await sctSave();
+        attMsg.style.color='#86efac';attMsg.textContent='✓ Vizibil pentru toți utilizatorii';
+        showToast('✓ Desen încărcat în baza de date pentru '+(attTarget.comp||'poziție'));
+        if(typeof S._sctOnAttach==='function')S._sctOnAttach();
+      }catch(e){
+        attMsg.style.color='#fca5a5';attMsg.textContent='Eroare: '+(e.message||e);
+      }
+      attBtn.disabled=false;updAttachBtn();
+    });
+    zBar.appendChild(attBtn);zBar.appendChild(attMsg);
+  }
   const zHint=dv('');zHint.style.cssText='margin-left:auto;color:#475569;font-size:9.5px;white-space:nowrap';
   zHint.textContent='Scroll = zoom · trage = deplasare · pinch pe tabletă';
   zBar.appendChild(zHint);
   viewCol.appendChild(zBar);
+  if(updAttachBtn)updAttachBtn();
 
   const viewPane=dv('');viewPane.style.cssText='flex:1;min-height:0;background:#1a1a2e;color:#64748b;font-size:13px;overflow:auto;position:relative;display:flex;align-items:center;justify-content:center';
   viewPane.innerHTML='<div style="text-align:center"><div style="font-size:36px;margin-bottom:8px">📄</div>Click pe un fișier pentru previzualizare</div>';
@@ -7621,6 +7660,8 @@ async function openDrawingSearch(drawingNo,movexCode){
           if(!handle){viewPane.innerHTML='<div style="color:#f59e0b;padding:20px;text-align:center">Permisiune expirată.<br>Folosiți "Reindexează" pentru a reselecta folderul.</div>';return;}
           const fh=await handle.getFileHandle(fname);
           const file=await fh.getFile();
+          curFile=file;curName=fname;
+          if(updAttachBtn)updAttachBtn();
           const url=URL.createObjectURL(file);
           viewPane.innerHTML='';
           const wmCode=movexCode||drawingNo;
@@ -8905,8 +8946,9 @@ function sctTable(rows,onChange){
           b.style.cssText=`width:24px;height:23px;border:1.5px solid ${col};border-radius:5px;background:#fff;cursor:pointer;font-size:11px`;
           b.addEventListener('click',fn);return b;
         };
-        wrapA.appendChild(mk('📐','Desen de execuție','#0891b2',()=>{
+        wrapA.appendChild(mk('📐','Desen de execuție — îl poți încărca în baza de date','#0891b2',()=>{
           const dn=(typeof getDrawingNoFor==='function')?getDrawingNoFor(r.comp):'';
+          S._sctAttachTarget=it;S._sctOnAttach=()=>onChange();
           openDrawingSearch(dn||r.comp,r.comp);
         }));
         wrapA.appendChild(mk('✎','Modifică poziția','#1d4ed8',()=>sctOpenEdit(it)));
@@ -9337,7 +9379,10 @@ function sctOpenEdit(item){
     killPop();
     const c=compI.value.trim();
     if(!c){amsg.style.color='#b45309';amsg.textContent='Completează mai întâi codul reperului.';return;}
+    if(!it.comp)it.comp=c;               // ca atasamentul sa stie pe ce reper e
     const dn=(typeof getDrawingNoFor==='function')?getDrawingNoFor(c):'';
+    S._sctAttachTarget=it;
+    S._sctOnAttach=()=>{_dirty=true;drawAtts();amsg.style.color='#15803d';amsg.textContent='✓ Desen încărcat în baza de date';};
     openDrawingSearch(dn||c,c);
   });
   abar.appendChild(dwgB);
@@ -9459,6 +9504,8 @@ function sctOpenAtt(it,onChange){
   dwg.style.cssText='padding:8px 14px;border:1.5px solid #0891b2;border-radius:7px;background:#fff;color:#0e7490;font-size:12.5px;font-weight:800;cursor:pointer';
   dwg.addEventListener('click',()=>{
     const dn=(typeof getDrawingNoFor==='function')?getDrawingNoFor(it.comp):'';
+    S._sctAttachTarget=it;
+    S._sctOnAttach=()=>{draw();onChange&&onChange();};
     openDrawingSearch(dn||it.comp,it.comp);
   });
   bar.appendChild(dwg);
@@ -9481,6 +9528,11 @@ function sctOpenAtt(it,onChange){
       const card=dv('');card.style.cssText='border:1.5px solid var(--border);border-radius:9px;overflow:hidden;background:#f8fafc';
       const ph=dv('');ph.style.cssText='height:104px;display:flex;align-items:center;justify-content:center;background:#eef2f7;cursor:pointer';
       ph.textContent='…';
+      if(a.kind==='drawing'){
+        const bd2=sp('','📐 desen');
+        bd2.style.cssText='position:absolute;top:4px;left:4px;background:#0891b2;color:#fff;font-size:8.5px;font-weight:800;padding:1px 6px;border-radius:5px;z-index:2';
+        card.style.position='relative';card.appendChild(bd2);
+      }
       const isImg=/^image\//.test(a.type||'')||/\.(png|jpe?g|webp|gif)$/i.test(a.name||'');
       sctAttUrl(a).then(url=>{
         if(!url){ph.textContent='nu s-a putut încărca';ph.style.fontSize='10.5px';ph.style.color='#dc2626';return;}
